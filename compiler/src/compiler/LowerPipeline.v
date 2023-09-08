@@ -746,7 +746,7 @@ Section LowerPipeline.
           { rewrite Nat2Z.inj_mul, Z2Nat.id by blia.
             replace (Z.of_nat (Datatypes.length stack_trash))
               with (word.unsigned (word.sub stack_pastend stack_start) / bytes_per_word)
-              by assumption.
+              by (symmetry;assumption).
             rewrite <- Z_div_exact_2; try trivial.
             eapply Z.lt_gt; assumption. }
           intros w.
@@ -765,7 +765,7 @@ Section LowerPipeline.
             end.
             replace (Z.of_nat (Datatypes.length stack_trash))
               with (word.unsigned (word.sub stack_pastend stack_start) / bytes_per_word)
-              by assumption.
+              by (symmetry;assumption).
             rewrite <- Z_div_exact_2. 3: assumption.
             2: eapply Z.lt_gt; assumption.
             rewrite word.of_Z_unsigned.
