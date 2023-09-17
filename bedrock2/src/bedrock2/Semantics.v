@@ -11,185 +11,25 @@ Require Export bedrock2.Memory.
 Require Import Coq.Lists.List.
 
 (* BW is not needed on the rhs, but helps infer width *)
-Definition io_event {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
-  (mem * String.string * list word) * (mem * list word).
+Definition io_input {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
+  (mem * String.string * list word).
+Definition io_output {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
+  (mem * list word).
 
 Section WithIOEvent.
   Context {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte}.
 
+  Definition io_event : Type := io_input * io_output.
   Definition io_trace : Type := list io_event.
-
-  Inductive event  : Type :=
-  | IO : io_event -> event
-  | branch : bool -> event
-  | read : access_size -> word -> event
-  | write : access_size -> word -> event
-  | salloc : word -> event.
-
-  Definition trace : Type := list event.
 
   Inductive abstract_trace : Type :=
   | empty
-  | cons_IO (e: io_event) (after : abstract_trace)
+  | cons_IO (e: io_input) (after : io_output -> abstract_trace)
   | cons_branch (b : bool) (after : abstract_trace)
   | cons_read (sz : access_size) (a : word) (after : abstract_trace)
   | cons_write (sz : access_size) (a : word) (after : abstract_trace)
   | cons_salloc (after : word -> abstract_trace).
-
-  Inductive abs_tr_eq : abstract_trace -> abstract_trace -> Prop :=
-  | empty_eq : abs_tr_eq empty empty
-  | cons_IO_eq : forall i1 a1' i2 a2',
-      i1 = i2 ->
-      abs_tr_eq a1' a2' ->
-      abs_tr_eq (cons_IO i1 a1') (cons_IO i2 a2')
-  | cons_branch_eq : forall b1 a1' b2 a2',
-      b1 = b2 ->
-      abs_tr_eq a1' a2' ->
-      abs_tr_eq (cons_branch b1 a1') (cons_branch b2 a2')
-  | cons_read_eq : forall sz1 addr1 a1' sz2 addr2 a2',
-      sz1 = sz2 ->
-      addr1 = addr2 ->
-      abs_tr_eq a1' a2' ->
-      abs_tr_eq (cons_read sz1 addr1 a1') (cons_read sz2 addr2 a2')
-  | cons_write_eq : forall sz1 addr1 a1' sz2 addr2 a2',
-      sz1 = sz2 ->
-      addr1 = addr2 ->
-      abs_tr_eq a1' a2' ->
-      abs_tr_eq (cons_write sz1 addr1 a1') (cons_write sz2 addr2 a2')
-  | cons_salloc_eq : forall f1 f2,
-    (forall addr, abs_tr_eq (f1 addr) (f2 addr)) ->
-    abs_tr_eq (cons_salloc f1) (cons_salloc f2).
-  
-  Import ListNotations.
-  Inductive generates : abstract_trace -> trace -> Prop :=
-  | nil_gen : generates empty nil
-  | IO_gen : forall x a t_rev, generates a t_rev -> generates (cons_IO x a) (IO x :: t_rev)
-  | branch_gen : forall x a t_rev, generates a t_rev -> generates (cons_branch x a) (branch x :: t_rev)
-  | read_gen : forall x1 x2 a t_rev, generates a t_rev -> generates (cons_read x1 x2 a) (read x1 x2 :: t_rev)
-  | write_gen : forall x1 x2 a t_rev, generates a t_rev -> generates (cons_write x1 x2 a) (write x1 x2 :: t_rev)
-  | salloc_gen : forall f x t_rev, generates (f x) t_rev -> generates (cons_salloc f) (salloc x :: t_rev).
-
-  Inductive generates_with_rem : abstract_trace -> trace -> abstract_trace -> Prop :=
-  | nil_gen_rem : forall a1 a2, abs_tr_eq a1 a2 -> generates_with_rem a1 nil a2
-  | IO_gen_rem : forall x a t_rev a', generates_with_rem a t_rev a' -> generates_with_rem (cons_IO x a) (IO x :: t_rev) a'
-  | branch_gen_rem : forall x a t_rev a', generates_with_rem a t_rev a' -> generates_with_rem (cons_branch x a) (branch x :: t_rev) a'
-  | read_gen_rem : forall x1 x2 a t_rev a', generates_with_rem a t_rev a' -> generates_with_rem (cons_read x1 x2 a) (read x1 x2 :: t_rev) a'
-  | write_gen_rem : forall x1 x2 a t_rev a', generates_with_rem a t_rev a' -> generates_with_rem (cons_write x1 x2 a) (write x1 x2 :: t_rev) a'
-  | salloc_gen_rem : forall f x t_rev a', generates_with_rem (f x) t_rev a' -> generates_with_rem (cons_salloc f) (salloc x :: t_rev) a'.
-
-  Fixpoint abstract_app (a1 a2 : abstract_trace) : abstract_trace :=
-    match a1 with
-    | empty => a2
-    | cons_IO e a1' => cons_IO e (abstract_app a1' a2)
-    | cons_branch b a1' => cons_branch b (abstract_app a1' a2)
-    | cons_read sz a a1' => cons_read sz a (abstract_app a1' a2)
-    | cons_write sz a a1' => cons_write sz a (abstract_app a1' a2)
-    | cons_salloc a1' => cons_salloc (fun w => abstract_app (a1' w) a2)
-    end.
-
-  Lemma abs_tr_eq_app a01 a02 a11 a12 :
-    abs_tr_eq a01 a02 ->
-    abs_tr_eq a11 a12 ->
-    abs_tr_eq (abstract_app a01 a11) (abstract_app a02 a12).
-  Proof. intros H1 H2. induction H1; cbn [abstract_app]; try constructor; auto. Qed.
-
-  Lemma abs_tr_eq_self a :
-    abs_tr_eq a a.
-  Proof. induction a; constructor; auto. Qed.
-
-  Lemma abs_tr_eq_trans a1 a2 a3 :
-    abs_tr_eq a1 a2 ->
-    abs_tr_eq a2 a3 ->
-    abs_tr_eq a1 a3.
-  Proof.
-    intros H1. generalize dependent a3. induction H1; intros a3 H2; inversion H2; subst; constructor; auto. Qed.
-
-  Lemma abs_tr_eq_symm a1 a2 :
-    abs_tr_eq a1 a2 ->
-    abs_tr_eq a2 a1.
-  Proof. intros H1. induction H1; constructor; auto. Qed.
-
-  Lemma generates_generates_with_empty_rem a t :
-    generates a t <-> generates_with_rem a t empty.
-  Proof.
-    split; intros H.
-    - induction H; constructor; try assumption. apply abs_tr_eq_self.
-    - remember empty as a'. induction H; subst; try constructor; auto.
-      inversion H. subst. constructor.
-  Qed.
-
-  Lemma generates_app :
-    forall a1 a2 t1 t2,
-      generates a1 t1 -> generates a2 t2 -> generates (abstract_app a1 a2) (t1 ++ t2).
-  Proof.
-    intros a1. induction a1; intros a2 t1 t2 H1 H2; inversion H1; subst; cbn [abstract_app List.app]; try constructor; auto.
-  Qed.
-
-  Fixpoint generator (t_rev : trace) : abstract_trace :=
-    match t_rev with
-    | nil => empty
-    | IO x :: t_rev' => cons_IO x (generator t_rev')
-    | branch x :: t_rev' => cons_branch x (generator t_rev')
-    | read x1 x2 :: t_rev' => cons_read x1 x2 (generator t_rev')
-    | write x1 x2 :: t_rev' => cons_write x1 x2 (generator t_rev')
-    | salloc x :: t_rev' => cons_salloc (fun _ => generator t_rev')
-    end.
-
-  Lemma generator_generates (t: trace) :
-    generates (generator t) t.
-  Proof. induction t; try constructor. destruct a; cbn [generator]; constructor; assumption. Qed.
-
-   Lemma abs_tr_eq_correct1 a t a'1 a'2 :
-    generates_with_rem a t a'1 ->
-    abs_tr_eq a'1 a'2 ->
-    generates_with_rem a t a'2.
-  Proof.
-    intros H1 H2. induction H1; constructor; auto.
-    eapply abs_tr_eq_trans; eassumption.
-  Qed.
-
-  Lemma abs_tr_eq_correct2 a1 a2 t a' :
-    generates_with_rem a1 t a' ->
-    abs_tr_eq a1 a2 ->
-    generates_with_rem a2 t a'.
-  Proof.
-    intros H1. generalize dependent a2. induction H1; intros a22 H2; try solve [ inversion H2; subst; constructor; auto ].
-    constructor. eapply abs_tr_eq_trans; try eassumption. apply abs_tr_eq_symm; assumption.
-  Qed.
-
-  Lemma generates_with_rem_app :
-    forall a1 a1' a2 t,
-      generates_with_rem a1 t a1' ->
-      generates_with_rem (abstract_app a1 a2) t (abstract_app a1' a2).
-  Proof. intros a1 a1' a2 t H. induction H; cbn [abstract_app]; constructor; try assumption.
-         apply abs_tr_eq_app. { assumption. } apply abs_tr_eq_self. Qed.
-  
-  Lemma generates_with_empty_rem_app a1 a2 t :
-    generates_with_rem a1 t empty ->
-    generates_with_rem (abstract_app a1 a2) t a2.
-  Proof. intros H. eapply generates_with_rem_app in H. apply H. Qed.
-
-  Lemma generates_with_rem_trans :
-    forall a1 a2 a3 t1 t2,
-      generates_with_rem a1 t1 a2 ->
-      generates_with_rem a2 t2 a3 ->
-      generates_with_rem a1 (t1 ++ t2) a3.
-  Proof. intros a1 a2 a3 t1 t2 H12 H23. induction H12; cbn [List.app]; try constructor; auto.
-         eapply abs_tr_eq_correct2; try eassumption. apply abs_tr_eq_symm. assumption. Qed.
-
-  Lemma rem_unique a t a'1 a'2 :
-    generates_with_rem a t a'1 ->
-    generates_with_rem a t a'2 ->
-    abs_tr_eq a'1 a'2.
-  Proof. intros H1 H2. induction H1; inversion H2; subst; auto. eapply abs_tr_eq_trans; try eassumption. apply abs_tr_eq_symm. assumption. Qed.
-
-  Definition filterio (t : trace) : io_trace :=
-    flat_map (fun e =>
-                match e with
-                | IO i => cons i nil
-                | _ => nil
-                end) t.
-End WithIOEvent. (*maybe extend this to the end?*)
+End WithIOEvent.
                             
   Definition ExtSpec{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
   (* Given a trace of what happened so far,
@@ -269,48 +109,52 @@ Section semantics.
 
     Local Notation "' x <- a | y ; f" := (match a with x => f | _ => y end)
                                            (right associativity, at level 70, x pattern).
-    Fixpoint eval_expr (e : expr) (mc : metrics) (tr : trace) : option (word * metrics * trace) :=
+    Fixpoint eval_expr (e : expr) (mc : metrics) (a : abstract_trace) : option (word * metrics * abstract_trace) :=
       match e with
       | expr.literal v => Some (
                               word.of_Z v,
                               addMetricInstructions 8 (addMetricLoads 8 mc),
-                              tr)
+                              a)
       | expr.var x => match map.get l x with
                       | Some v => Some (
                                       v,
                                       addMetricInstructions 1 (addMetricLoads 2 mc),
-                                      tr)
+                                      a)
                       | None => None
                       end
       (* if i understand correctly, this thing does not access memory at all.
          so no change to leakage trace. *)
       | expr.inlinetable aSize t index =>
-          'Some (index', mc', tr') <- eval_expr index mc tr | None;
+          'Some (index', mc', a') <- eval_expr index mc a | None;
           'Some v <- load aSize (map.of_list_word t) index' | None;
           Some (
               v,
               (addMetricInstructions 3 (addMetricLoads 4 (addMetricJumps 1 mc'))),
-              tr')
-      | expr.load aSize a =>
-          'Some (a', mc', tr') <- eval_expr a mc tr | None;
-          'Some v <- load aSize m a' | None;
+              a')
+      | expr.load aSize addr =>
+          'Some (addr', mc', a') <- eval_expr addr mc a | None;
+          'Some v <- load aSize m addr' | None;
+          'cons_read aSize0 addr'0 a'' <- a' | None;
+          'true <- (access_size.access_size_beq aSize aSize0 && word.eqb addr' addr'0)%bool | None;
           Some (
               v,
               addMetricInstructions 1 (addMetricLoads 2 mc'),
-              read aSize a' :: tr')
+              a'')
       | expr.op op e1 e2 =>
-          'Some (v1, mc', tr') <- eval_expr e1 mc tr | None;
-          'Some (v2, mc'', tr'') <- eval_expr e2 mc' tr' | None;
+          'Some (v1, mc', a') <- eval_expr e1 mc a | None;
+          'Some (v2, mc'', a'') <- eval_expr e2 mc' a' | None;
           Some (
               interp_binop op v1 v2,
               addMetricInstructions 2 (addMetricLoads 2 mc''),
-              tr'')
+              a'')
       | expr.ite c e1 e2 =>
-          'Some (vc, mc', tr') <- eval_expr c mc tr | None;
+          'Some (vc, mc', a') <- eval_expr c mc a | None;
+          'cons_branch b a'' <- a' | None;
+          'true <- Bool.eqb (negb b) (word.eqb vc (word.of_Z 0)) | None;
           eval_expr
             (if word.eqb vc (word.of_Z 0) then e2 else e1)
             (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc')))
-            ((if word.eqb vc (word.of_Z 0) then branch false else branch true) :: tr')
+            a''
       end.
 
     Fixpoint eval_expr_old (e : expr) : option word :=
@@ -332,13 +176,13 @@ Section semantics.
           eval_expr_old (if word.eqb vc (word.of_Z 0) then e2 else e1)
     end.
 
-    Fixpoint evaluate_call_args_log (arges : list expr) (mc : metrics) (tr : trace) :=
+    Fixpoint evaluate_call_args_log (arges : list expr) (mc : metrics) (a : abstract_trace) :=
       match arges with
       | e :: tl =>
-        'Some (v, mc', tr') <- eval_expr e mc tr | None;
-        'Some (args, mc'', tr'') <- evaluate_call_args_log tl mc' tr' | None;
-        Some (v :: args, mc'', tr'')
-      | _ => Some (nil, mc, tr)
+        'Some (v, mc', a') <- eval_expr e mc a | None;
+        'Some (args, mc'', a'') <- evaluate_call_args_log tl mc' a' | None;
+        Some (v :: args, mc'', a'')
+      | _ => Some (nil, mc, a)
       end.
 
   End WithMemAndLocals.
@@ -353,109 +197,109 @@ Module exec. Section WithEnv.
 
   Local Notation metrics := MetricLog.
 
-  Implicit Types post : trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
+  Implicit Types post : io_trace -> mem -> locals -> metrics -> abstract_trace -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
   
   Inductive exec :
-    cmd -> trace -> mem -> locals -> metrics ->
-    (trace -> mem -> locals -> metrics -> Prop) -> Prop :=
+    cmd -> io_trace -> mem -> locals -> metrics -> abstract_trace ->
+    (io_trace -> mem -> locals -> metrics -> abstract_trace -> Prop) -> Prop :=
   | skip
-    t m l mc post
-    (_ : post t m l mc)
-    : exec cmd.skip t m l mc post
+    t m l mc a post
+    (_ : post t m l mc a)
+    : exec cmd.skip t m l mc a post
   | set x e
-    t m l mc post
-    v mc' t' (_ : eval_expr m l e mc t = Some (v, mc', t'))
-    (_ : post t' m (map.put l x v) (addMetricInstructions 1
-                                      (addMetricLoads 1 mc')))
-    : exec (cmd.set x e) t m l mc post
+    t m l mc a post
+    v mc' a' (_ : eval_expr m l e mc a = Some (v, mc', a'))
+    (_ : post t m (map.put l x v) (addMetricInstructions 1
+                                     (addMetricLoads 1 mc')) a')
+    : exec (cmd.set x e) t m l mc a post
   | unset x
-    t m l mc post
-    (_ : post t m (map.remove l x) mc)
-    : exec (cmd.unset x) t m l mc post
+    t m l mc a post
+    (_ : post t m (map.remove l x) mc a)
+    : exec (cmd.unset x) t m l mc a post
   | store sz ea ev
-    t m l mc post
-    a mc' t' (_ : eval_expr m l ea mc t = Some (a, mc', t'))
-    v mc'' t'' (_ : eval_expr m l ev mc' t' = Some (v, mc'', t''))
-    m' (_ : store sz m a v = Some m')
-    (_ : post (write sz a :: t'') m' l (addMetricInstructions 1
-                                          (addMetricLoads 1
-                                             (addMetricStores 1 mc''))))
-    : exec (cmd.store sz ea ev) t m l mc post
+    t m l mc a post
+    addr mc' a' (_ : eval_expr m l ea mc a = Some (addr, mc', a'))
+    v mc'' a'' (_ : eval_expr m l ev mc' a' = Some (v, mc'', (cons_write sz addr a'')))
+    m' (_ : store sz m addr v = Some m')
+    (_ : post t m' l (addMetricInstructions 1
+                        (addMetricLoads 1
+                           (addMetricStores 1 mc''))) a'')
+    : exec (cmd.store sz ea ev) t m l mc a post
   | stackalloc x n body
-    t mSmall l mc post
+    t mSmall l mc f post
     (_ : Z.modulo n (bytes_per_word width) = 0)
-    (_ : forall a mStack mCombined,
-        anybytes a n mStack ->
+    (_ : forall addr mStack mCombined,
+        anybytes addr n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body (salloc a :: t) mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
-          (fun t' mCombined' l' mc' =>
+        exec body t mCombined (map.put l x addr) (addMetricInstructions 1 (addMetricLoads 1 mc)) (f addr)
+          (fun t' mCombined' l' mc' a' =>
              exists mSmall' mStack',
-              anybytes a n mStack' /\
+              anybytes addr n mStack' /\
               map.split mCombined' mSmall' mStack' /\
-              post t' mSmall' l' mc'))
-    : exec (cmd.stackalloc x n body) t mSmall l mc post
-  | if_true t m l mc e c1 c2 post
-    v mc' t' (_ : eval_expr m l e mc t = Some (v, mc', t'))
+              post t' mSmall' l' mc' a'))
+    : exec (cmd.stackalloc x n body) t mSmall l mc (cons_salloc f) post
+  | if_true t m l mc e c1 c2 a a' post
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (cons_branch true a')))
     (_ : word.unsigned v <> 0)
-    (_ : exec c1 (branch true :: t') m l (addMetricInstructions 2
-                                                    (addMetricLoads 2
-                                                       (addMetricJumps 1 mc'))) post)
-    : exec (cmd.cond e c1 c2) t m l mc post
+    (_ : exec c1 t m l (addMetricInstructions 2
+                          (addMetricLoads 2
+                             (addMetricJumps 1 mc'))) a' post)
+    : exec (cmd.cond e c1 c2) t m l mc a post
   | if_false e c1 c2
-    t m l mc post
-    v mc' t' (_ : eval_expr m l e mc t = Some (v, mc', t'))
+    t m l mc a a' post
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', cons_branch false a'))
     (_ : word.unsigned v = 0)
-    (_ : exec c2 (branch false :: t') m l (addMetricInstructions 2
-                                             (addMetricLoads 2
-                                                (addMetricJumps 1 mc'))) post)
-    : exec (cmd.cond e c1 c2) t m l mc post
+    (_ : exec c2 t m l (addMetricInstructions 2
+                          (addMetricLoads 2
+                             (addMetricJumps 1 mc'))) a' post)
+    : exec (cmd.cond e c1 c2) t m l mc a post
   | seq c1 c2
-    t m l mc post
-    mid (_ : exec c1 t m l mc mid)
-    (_ : forall t' m' l' mc', mid t' m' l' mc' -> exec c2 t' m' l' mc' post)
-    : exec (cmd.seq c1 c2) t m l mc post
+    t m l mc a post
+    mid (_ : exec c1 t m l mc a mid)
+    (_ : forall t' m' l' mc' a', mid t' m' l' mc' a' -> exec c2 t' m' l' mc' a' post)
+    : exec (cmd.seq c1 c2) t m l mc a post
   | while_false e c
-    t m l mc post
-    v mc' t' (_ : eval_expr m l e mc t = Some (v, mc', t'))
+    t m l mc a a' post
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (cons_branch false a')))
     (_ : word.unsigned v = 0)
-    (_ : post (branch false :: t') m l (addMetricInstructions 1
-                                                (addMetricLoads 1
-                                                   (addMetricJumps 1 mc'))))
-    : exec (cmd.while e c) t m l mc post
+    (_ : post t m l (addMetricInstructions 1
+                       (addMetricLoads 1
+                          (addMetricJumps 1 mc'))) a')
+    : exec (cmd.while e c) t m l mc a post
   | while_true e c
-      t m l mc post
-      v mc' t' (_ : eval_expr m l e mc t = Some (v, mc', t'))
+      t m l mc a post
+      v mc' a' (_ : eval_expr m l e mc a = Some (v, mc', cons_branch true a'))
       (_ : word.unsigned v <> 0)
-      mid (_ : exec c (branch true :: t') m l mc' mid)
-      (_ : forall t'' m' l' mc'', mid t'' m' l' mc'' ->
-                                      exec (cmd.while e c) t'' m' l' (addMetricInstructions 2
-                                                                        (addMetricLoads 2
-                                                                           (addMetricJumps 1 mc''))) post)
-    : exec (cmd.while e c) t m l mc post
+      mid (_ : exec c t m l mc' a' mid)
+      (_ : forall t' m' l' mc'' a', mid t' m' l' mc'' a' ->
+                                    exec (cmd.while e c) t' m' l' (addMetricInstructions 2
+                                                                     (addMetricLoads 2
+                                                                        (addMetricJumps 1 mc''))) a' post)
+    : exec (cmd.while e c) t m l mc a post
   | call binds fname arges
-      t m l mc post
+      t m l mc a post
       params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
-      args mc' t' (_ : evaluate_call_args_log m l arges mc t = Some (args, mc', t'))
+      args mc' a' (_ : evaluate_call_args_log m l arges mc a = Some (args, mc', a'))
       lf (_ : map.of_list_zip params args = Some lf)
-      mid (_ : exec fbody t' m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
-      (_ : forall t'' m' st1 mc'', mid t'' m' st1 mc'' ->
+      mid (_ : exec fbody t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) a' mid)
+      (_ : forall t' m' st1 mc'' a', mid t' m' st1 mc'' a' ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post t'' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
-    : exec (cmd.call binds fname arges) t m l mc post
+          post t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))) a')
+    : exec (cmd.call binds fname arges) t m l mc a post
   | interact binds action arges
-      t m l mc post
+      t m l mc a post
       mKeep mGive (_: map.split m mKeep mGive)
-      args mc' t' (_ :  evaluate_call_args_log m l arges mc t = Some (args, mc', t'))
-      mid (_ : ext_spec (filterio t') mGive action args mid)
+      args mc' i f (_ :  evaluate_call_args_log m l arges mc a = Some (args, mc', cons_IO i f))
+      mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (IO ((mGive, action, args), (mReceive, resvals)) :: t') m' l'
+          post (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
             (addMetricInstructions 1
             (addMetricStores 1
-            (addMetricLoads 2 mc'))))
-    : exec (cmd.interact binds action arges) t m l mc post
+            (addMetricLoads 2 mc'))) (f (mReceive, resvals)))
+    : exec (cmd.interact binds action arges) t m l mc a post
   .
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
