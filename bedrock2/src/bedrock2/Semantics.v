@@ -30,7 +30,7 @@ Section WithIOEvent.
   | cons_write (sz : access_size) (a : word) (after : abstract_trace)
   | cons_salloc (after : word -> abstract_trace).
 End WithIOEvent.
-                            
+
   Definition ExtSpec{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
   (* Given a trace of what happened so far,
      the given-away memory, an action label and a list of function call arguments, *)
@@ -304,11 +304,11 @@ Module exec. Section WithEnv.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma weaken: forall t l m mc s post1,
-      exec s t m l mc post1 ->
-      forall post2: _ -> _ -> _ -> _ -> Prop,
-        (forall t' m' l' mc', post1 t' m' l' mc' -> post2 t' m' l' mc') ->
-        exec s t m l mc post2.
+  Lemma weaken: forall t l m mc a s post1,
+      exec s t m l mc a post1 ->
+      forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
+        (forall t' m' l' mc' a', post1 t' m' l' mc' a' -> post2 t' m' l' mc' a') ->
+        exec s t m l mc a post2.
   Proof.
     induction 1; intros; try solve [econstructor; eauto].
     - eapply stackalloc. 1: assumption.
@@ -327,32 +327,28 @@ Module exec. Section WithEnv.
       eauto 10.
   Qed.
 
-  Lemma intersect: forall t l m mc s post1,
-      exec s t m l mc post1 ->
+  Lemma intersect: forall t l m mc a s post1,
+      exec s t m l mc a post1 ->
       forall post2,
-        exec s t m l mc post2 ->
-        exec s t m l mc (fun t' m' l' mc' => post1 t' m' l' mc' /\ post2 t' m' l' mc').
+        exec s t m l mc a post2 ->
+        exec s t m l mc a (fun t' m' l' mc' a' => post1 t' m' l' mc' a' /\ post2 t' m' l' mc' a').
   Proof.
     induction 1;
       intros;
       match goal with
-      | H: exec _ _ _ _ _ _ |- _ => inversion H; subst; clear H
+      | H: exec _ _ _ _ _ _ _ |- _ => inversion H; subst; clear H
       end;
       repeat match goal with
-             | H1: ?e = Some (?v1, ?mc1, ?t1), H2: ?e = Some (?v2, ?mc2, ?t2) |- _ =>
-               replace v2 with v1 in * by congruence;
-               replace mc2 with mc1 in * by congruence;
-               replace t2 with t1 in * by congruence; clear v2 mc2 t2 H2
-             end;
+      | H1: ?e = Some (?v1, ?mc1, ?t1), H2: ?e = Some (?v2, ?mc2, ?t2) |- _ =>
+          rewrite H1 in H2; injection H2 as H2p1 H2p2 H2p3; subst end;
       repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
+      | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
+          replace v2 with v1 in * by congruence; clear H2
+      end;
       try solve [econstructor; eauto | exfalso; congruence].
-
     - econstructor. 1: eassumption.
       intros.
-      rename H0 into Ex1, H12 into Ex2.
+      rename H0 into Ex1, H13 into Ex2.
       eapply weaken. 1: eapply H1. 1,2: eassumption.
       1: eapply Ex2. 1,2: eassumption.
       cbv beta.
@@ -370,23 +366,23 @@ Module exec. Section WithEnv.
       + eapply IHexec. exact H9. (* not H1 *)
       + simpl. intros *. intros [? ?]. eauto.
     - eapply call. 1, 2, 3: eassumption.
-      + eapply IHexec. exact H16. (* not H2 *)
+      + eapply IHexec. exact H17. (* not H2 *)
       + simpl. intros *. intros [? ?].
         edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-        edestruct H17 as (? & ? & ? & ? & ?); [eassumption|].
+        edestruct H18 as (? & ? & ? & ? & ?); [eassumption|].
         repeat match goal with
                | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
                  replace v2 with v1 in * by congruence; clear H2
                end.
         eauto 10.
     - pose proof ext_spec.unique_mGive_footprint as P.
-      specialize P with (1 := H1) (2 := H14).
+      specialize P with (1 := H1) (2 := H15).
       destruct (map.split_diff P H H7). subst mKeep0 mGive0. clear H7.
       eapply interact. 1,2: eassumption.
-      + eapply ext_spec.intersect; [ exact H1 | exact H14 ].
+      + eapply ext_spec.intersect; [ exact H1 | exact H15 ].
       + simpl. intros *. intros [? ?].
         edestruct H2 as (? & ? & ?); [eassumption|].
-        edestruct H15 as (? & ? & ?); [eassumption|].
+        edestruct H16 as (? & ? & ?); [eassumption|].
         repeat match goal with
                | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
                  replace v2 with v1 in * by congruence; clear H2
