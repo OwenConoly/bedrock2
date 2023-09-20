@@ -125,9 +125,9 @@ Section WeakestPrecondition.
           anybytes addr n mStack' /\ map.split mCombined' m' mStack' /\
             post t' m' l' a')
       | cmd.cond br ct cf =>
-        exists v b0 a', dexpr m l a br v (cons_branch b0 a') /\
-        (word.unsigned v <> 0%Z -> b0 = true /\ rec ct t m l a' post) /\
-        (word.unsigned v = 0%Z -> b0 = false /\ rec cf t m l a' post)
+        exists v a', dexpr m l a br v (cons_branch (negb (Z.eqb (word.unsigned v) 0)) a') /\
+        (word.unsigned v <> 0%Z -> rec ct t m l a' post) /\
+        (word.unsigned v = 0%Z -> rec cf t m l a' post)
       | cmd.seq c1 c2 =>
         rec c1 t m l a (fun t' m' l' a' => rec c2 t' m' l' a' post)
       | cmd.while e c =>
@@ -135,10 +135,10 @@ Section WeakestPrecondition.
         Coq.Init.Wf.well_founded lt /\
         (exists v, inv v t m l a) /\
         (forall v t m l a, inv v t m l a ->
-          exists b b0 a', dexpr m l a e b (cons_branch b0 a') /\
-          (word.unsigned b <> 0%Z -> b0 = true /\ rec c t m l a' (fun t' m l a'' =>
+          exists b a', dexpr m l a e b (cons_branch (negb (Z.eqb (word.unsigned b) 0)) a') /\
+          (word.unsigned b <> 0%Z -> rec c t m l a' (fun t' m l a'' =>
             exists v', inv v' t' m l a'' /\ lt v' v)) /\
-          (word.unsigned b = 0%Z -> b0 = false /\ post t m l a'))
+          (word.unsigned b = 0%Z -> post t m l a'))
       | cmd.call binds fname arges =>
         exists args a', dexprs m l a arges args a' /\ (* (call : String.string -> trace -> mem -> list word -> (trace -> mem -> list word -> Prop) -> Prop) *)
         call fname t m a' args (fun t' m' a'' rets =>

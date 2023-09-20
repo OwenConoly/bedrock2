@@ -18,40 +18,41 @@ Section Loops.
   Context {env_ok : map.ok env}.
   Context {ext_spec_ok : Semantics.ext_spec.ok ext_spec}.
 
-  Context {functions : list (String.string * (list String.string * list String.string * Syntax.cmd))}. Check @WeakestPrecondition.call.
+  Context {functions : list (String.string * (list String.string * list String.string * Syntax.cmd))}.
   Let call := WeakestPrecondition.call functions.
   Lemma tailrec_localsmap_1ghost
-    {e c t} {m: mem} {l} {post : trace -> mem -> locals -> Prop}
+    {e c t} {m: mem} {l} {a} {post : io_trace -> mem -> locals -> abstract_trace -> Prop}
     {measure: Type} {Ghost: Type}
-    (P Q: measure -> Ghost -> trace -> mem -> locals -> Prop)
+    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> abstract_trace -> Prop)
     (lt: measure -> measure -> Prop)
     (Hwf: well_founded lt)
     (v0: measure) (g0: Ghost)
-    (Hpre: P v0 g0 t m l)
-    (Hbody: forall v g t m l,
-      P v g t m l ->
-      exists br t', dexpr m l t e br t' (* why was dexpr not written here originally? *) /\
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m l
-        (fun t'' m' l' => exists v' g',
-          P v' g' t'' m' l' /\
+    (Hpre: P v0 g0 t m l a)
+    (Hbody: forall v g t m l a,
+      P v g t m l a ->
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)%Z) a') (* why was dexpr not written here originally? *) /\
+      (word.unsigned br <> 0%Z -> cmd call c t m l a'
+        (fun t' m' l' a'' => exists v' g',
+          P v' g' t' m' l' a'' /\
           lt v' v /\
-          (forall t''' m'' l'', Q v' g' t''' m'' l'' -> Q v g t''' m'' l''))) /\
-      (word.unsigned br = 0%Z -> Q v g (cons (branch false) t') m l))
-    (Hpost: forall t m l, Q v0 g0 t m l -> post t m l)
-    : cmd call (cmd.while e c) t m l post.
+          (forall t'' m'' l'' a''', Q v' g' t'' m'' l'' a''' -> Q v g t'' m'' l'' a'''))) /\
+      (word.unsigned br = 0%Z -> Q v g t m l a'))
+    (Hpost: forall t m l a, Q v0 g0 t m l a -> post t m l a)
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eexists measure, lt, (fun v t m l =>
-      exists g, P v g t m l /\ forall t'' m'' l'', Q v g t'' m'' l'' -> Q v0 g0 t'' m'' l'').
+    eexists measure, lt, (fun v t m l a =>
+      exists g, P v g t m l a /\ forall t'' m'' l'' a''', Q v g t'' m'' l'' a''' -> Q v0 g0 t'' m'' l'' a''').
     split; [assumption|].
     split; [solve[eauto]|].
-    intros vi ti mi li (gi & HPi & HQimpl).
-    specialize (Hbody vi gi ti mi li HPi).
-    destruct Hbody as (br & t' & ? & Hbody). exists br, t'. split; [assumption|].
+    intros vi ti mi li ai (gi & HPi & HQimpl).
+    specialize (Hbody vi gi ti mi li ai HPi).
+    destruct Hbody as (br & a' & ? & Hbody). exists br, a'.
+    split; [assumption|].
     destruct Hbody as (Htrue & Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto (*firstorder idtac takes a long time here*). }
-      intros tj mj lj (vj& gj & HPj & Hlt & Qji); eauto 9. }
+      intros tj mj lj aj (vj& gj & HPj & Hlt & Qji); eauto 7. }
     { eauto. }
   Qed.
 

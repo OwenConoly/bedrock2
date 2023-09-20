@@ -107,7 +107,7 @@ Section WeakestPrecondition.
       intros. eapply H2; [ | | eapply H4; eassumption].
       { intros. eauto. }
       { cbv beta. intros ? ? ? ? (?&?&?&?&?). eexists. eexists. split; eauto. } }
-    { destruct H1 as (?&?&?&?&?&?). eexists. eexists. eexists. split.
+    { destruct H1 as (?&?&?&?&?). eexists. eexists. eexists.
       { eapply Proper_expr; eauto; cbv [pointwise_relation Basics.impl]. intros. eassumption. }
       { intuition eauto. } }
     { eapply H4; eauto. intros. intuition eauto. }
@@ -120,13 +120,12 @@ Section WeakestPrecondition.
       eassumption || eexists. { eassumption || eexists. }
       intros X Y Z T A W.
       specialize (HH X Y Z T A W).
-      destruct HH as (?&?&?&?&?). eexists. eexists. eexists. split.
+      destruct HH as (?&?&?&?&?). eexists. eexists. eexists.
       1: eapply Proper_expr; eauto.
       1: cbv [pointwise_relation Basics.impl].
       all:intuition eauto 2.
       - eapply H2; eauto; cbn; intros.
         match goal with H:_ |- _ => destruct H as (?&?&?); solve[eauto] end.
-      - intuition eauto.
       - intuition eauto. }
     { destruct H1 as (?&?&?&?). eexists. eexists. split.
       { eapply Proper_list_map'; eauto; try exact H4; cbv [respectful pointwise_relation Basics.impl]; intuition eauto 2.
@@ -327,15 +326,15 @@ Section WeakestPrecondition.
     ind_on Syntax.cmd; repeat (t; try match reverse goal with H : WeakestPrecondition.expr _ _ _ _ _ |- _ => eapply expr_sound in H end).
     { rewrite H. t. }
     { destruct (BinInt.Z.eq_dec (Interface.word.unsigned x) (BinNums.Z0)) as [Hb|Hb]; cycle 1.
-      { specialize (H0 Hb). destruct H0 as [H0p1 H0p2]. subst. econstructor; t. }
-      { specialize (H1 Hb). destruct H1 as [H1p1 H1p2]. subst. eapply Semantics.exec.if_false; t. } }
+      { specialize (H0 Hb). econstructor; t. apply Z.eqb_neq in Hb. rewrite Hb in H. eassumption. }
+      { specialize (H1 Hb). eapply Semantics.exec.if_false; t. apply Z.eqb_eq in Hb. rewrite Hb in H. eassumption. } }
     { revert dependent l; revert dependent m; revert dependent t; revert dependent mc; revert dependent a. pattern x2.
       eapply (well_founded_ind H); t.
       pose proof (H1 _ _ _ _ _ ltac:(eassumption));
         repeat (t; try match goal with H : WeakestPrecondition.expr _ _ _ _ _ |- _ => eapply expr_sound in H end).
       { destruct (BinInt.Z.eq_dec (Interface.word.unsigned x4) (BinNums.Z0)) as [Hb|Hb].
-        { specialize (H5 Hb). destruct H5 as [H5p1 H5p2]. subst. eapply Semantics.exec.while_false; t. }
-        { specialize (H4 Hb). destruct H4 as [H4p1 H4p2]. subst. eapply Semantics.exec.while_true; t. t. } } }
+        { specialize (H5 Hb). eapply Semantics.exec.while_false; t. apply Z.eqb_eq in Hb. rewrite Hb in H3. eassumption. }
+        { specialize (H4 Hb). eapply Semantics.exec.while_true; t. 2: t. apply Z.eqb_neq in Hb. rewrite Hb in H3. eassumption. } } }
     { eapply sound_args in H; t. }
     { eapply sound_args in H0; t. }
   Qed.
