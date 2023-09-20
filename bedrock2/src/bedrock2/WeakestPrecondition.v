@@ -134,7 +134,7 @@ Section WeakestPrecondition.
         exists measure (lt:measure->measure->Prop) (inv:measure->io_trace->mem->locals->abstract_trace->Prop),
         Coq.Init.Wf.well_founded lt /\
         (exists v, inv v t m l a) /\
-        (forall v t m l, inv v t m l a ->
+        (forall v t m l a, inv v t m l a ->
           exists b b0 a', dexpr m l a e b (cons_branch b0 a') /\
           (word.unsigned b <> 0%Z -> b0 = true /\ rec c t m l a' (fun t' m l a'' =>
             exists v', inv v' t' m l a'' /\ lt v' v)) /\
@@ -143,7 +143,7 @@ Section WeakestPrecondition.
         exists args a', dexprs m l a arges args a' /\ (* (call : String.string -> trace -> mem -> list word -> (trace -> mem -> list word -> Prop) -> Prop) *)
         call fname t m a' args (fun t' m' a'' rets =>
           exists l', map.putmany_of_list_zip binds rets l = Some l' /\
-          post t' m' l a'')
+          post t' m' l' a'')
       | cmd.interact binds action arges =>
         exists mKeep mGive, map.split m mKeep mGive /\
         exists args f, dexprs m l a arges args (cons_IO (mGive, action, args) f) /\ 
