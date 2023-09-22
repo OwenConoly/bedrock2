@@ -57,44 +57,44 @@ Section Loops.
   Qed.
 
   Lemma tailrec_localsmap_1ghost_parameterized_finalpost
-    {e c rest t} {m: mem} {l}
+    {e c rest t} {m: mem} {l} {a}
     {measure: Type} {Ghost: Type}
-    (P Q: measure -> Ghost -> trace -> mem -> locals -> Prop)
+    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> abstract_trace -> Prop)
     (lt: measure -> measure -> Prop)
     (Hwf: well_founded lt)
     (v0: measure) (g0: Ghost)
-    (Hpre: P v0 g0 t m l)
-    (Hbody: forall v g t m l,
-      P v g t m l ->
-      exists br t', dexpr m l t e br t' /\
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m l
-        (fun t'' m' l' => exists v' g',
-          P v' g' t'' m' l' /\
+    (Hpre: P v0 g0 t m l a)
+    (Hbody: forall v g t m l a,
+      P v g t m l a ->
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      (word.unsigned br <> 0%Z -> cmd call c t m l a'
+        (fun t' m' l' a'' => exists v' g',
+          P v' g' t' m' l' a'' /\
           lt v' v /\
-          (forall t''' m'' l'', Q v' g' t''' m'' l'' -> Q v g t''' m'' l''))) /\
-      (word.unsigned br = 0%Z -> cmd call rest (cons (branch false) t') m l (Q v g)))
-    : cmd call (cmd.seq (cmd.while e c) rest) t m l (Q v0 g0).
+          (forall t'' m'' l'' a''', Q v' g' t'' m'' l'' a''' -> Q v g t'' m'' l'' a'''))) /\
+      (word.unsigned br = 0%Z -> cmd call rest t m l a' (Q v g)))
+    : cmd call (cmd.seq (cmd.while e c) rest) t m l a (Q v0 g0).
   Proof.
     cbn. eapply @tailrec_localsmap_1ghost with
-      (Q := fun v g t m l => cmd call rest t m l (Q v g))
-      (post := fun t m l => cmd call rest t m l (Q v0 g0)).
+      (Q := fun v g t m l a => cmd call rest t m l a (Q v g))
+      (post := fun t m l a => cmd call rest t m l a (Q v0 g0)).
     1: eassumption.
     1: exact Hpre.
     2: intros *; exact id.
-    intros vi gi ti mi li HPi.
-    specialize (Hbody vi gi ti mi li HPi).
-    destruct Hbody as (br & t' & ? & Hbody). exists br, t'; split; [assumption|].
+    intros vi gi ti mi li ai HPi.
+    specialize (Hbody vi gi ti mi li ai HPi).
+    destruct Hbody as (br & a' & ? & Hbody). exists br, a'; split; [assumption|].
     destruct Hbody as (Htrue & Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto(*firstorder idtac takes a long time here*). }
-      intros tj mj lj (vj& gj & HPj & Hlt & Qji). do 2 eexists.
+      intros tj mj lj aj (vj& gj & HPj & Hlt & Qji). do 2 eexists.
       split. 1: eassumption. split. 1: assumption.
       intros.
       eapply Proper_cmd; [assumption..| | | ].
       3: eassumption.
       { eapply Proper_call; eauto(*firstorder idtac takes a long time here*). }
-      intros tk mk lk HH. eapply Qji. assumption. }
+      intros tk mk lk ak HH. eapply Qji. assumption. }
     eapply Hpc.
   Qed.
 
@@ -158,18 +158,18 @@ Section Loops.
   Import pair.
 
   Lemma while_localsmap
-    {e c t l} {m : mem}
-    {measure : Type} (invariant:_->_->_->_->Prop)
+    {e c t l a} {m : mem}
+    {measure : Type} (invariant:_->_->_->_->_-> Prop)
     {lt} (Hwf : well_founded lt) (v0 : measure)
-    {post : _->_->_-> Prop}
-    (Hpre : invariant v0 t m l)
-    (Hbody : forall v t m l,
-      invariant v t m l ->
-      exists br t', dexpr m l t e br t' /\
+    {post : _->_->_->_-> Prop}
+    (Hpre : invariant v0 t m l a)
+    (Hbody : forall v t m l a,
+      invariant v t m l a ->
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
          (word.unsigned br <> 0 ->
-          cmd call c (cons (branch true) t') m l (fun t m l => exists v', invariant v' t m l /\ lt v' v)) /\
-         (word.unsigned br = 0 -> post (cons (branch false) t') m l))
-    : cmd call (cmd.while e c) t m l post.
+          cmd call c t m l a' (fun t m l a => exists v', invariant v' t m l a /\ lt v' v)) /\
+         (word.unsigned br = 0 -> post t m l a'))
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
     eexists measure, lt, invariant.
     split. 1: exact Hwf.
@@ -178,91 +178,94 @@ Section Loops.
   Qed.
 
   Lemma while
-    {e c t l} {m : mem}
+    {e c t l a} {m : mem}
     (variables : list String.string)
     {localstuple : tuple word (length variables)}
-    {measure : Type} (invariant:_->_->_->ufunc word (length variables) Prop)
+    {measure : Type} (invariant:_->_->_-> (ufunc word (length variables) (_->Prop)))
     {lt} (Hwf : well_founded lt) (v0 : measure)
-    {post : _->_->_-> Prop}
+    {post : _->_->_->_-> Prop}
     (Pl : enforce variables localstuple l)
-    (Hpre : tuple.apply (invariant v0 t m) localstuple)
-    (Hbody : forall v t m, tuple.foralls (fun localstuple =>
-      tuple.apply (invariant v t m) localstuple ->
+    (Hpre : tuple.apply (invariant v0 t m) localstuple a)
+    (Hbody : forall v t m a, tuple.foralls (fun localstuple =>
+      (tuple.apply (invariant v t m) localstuple) a ->
       let l := reconstruct variables localstuple in
-      exists br t', dexpr m l t e br t' /\
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
          (word.unsigned br <> 0 ->
-          cmd call c (cons (branch true) t') m l (fun t m l =>
+          cmd call c t m l a' (fun t m l a =>
             Markers.unique (Markers.left (tuple.existss (fun localstuple =>
               enforce variables localstuple l /\
               Markers.right (Markers.unique (exists v',
-                tuple.apply (invariant v' t m) localstuple /\ lt v' v))))))) /\
-         (word.unsigned br = 0 -> post (cons (branch false) t') m l)))
-    : cmd call (cmd.while e c) t m l post.
+                tuple.apply (invariant v' t m) localstuple a /\ lt v' v))))))) /\
+         (word.unsigned br = 0 -> post t m l a')))
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eapply (while_localsmap (fun v t m l =>
+    eapply (while_localsmap (fun v t m l a =>
       exists localstuple, enforce variables localstuple l /\
-                          tuple.apply (invariant v t m) localstuple));
+                          tuple.apply (invariant v t m) localstuple a));
       unfold Markers.split; eauto.
-    intros vi ti mi li (?&X&Y).
+    intros vi ti mi li ai (?&X&Y).
     specialize (Hbody vi ti mi).
     eapply hlist.foralls_forall in Hbody.
     specialize (Hbody Y).
     rewrite <-(reconstruct_enforce _ _ _ X) in Hbody.
-    destruct Hbody as (br & t' & Cond & Again & Done).
-    exists br. exists t'. split; [exact Cond|]. split; [|exact Done].
+    destruct Hbody as (br & a' & Cond & Again & Done).
+    exists br. exists a'. split; [exact Cond|]. split; [|exact Done].
     intro NE. specialize (Again NE).
     eapply Proper_cmd; [assumption..| eapply Proper_call; assumption| |eapply Again].
     cbv [Morphisms.pointwise_relation Basics.impl Markers.right Markers.unique Markers.left] in *.
-    intros t'' m' l' Ex.
+    intros t' m' l' a'' Ex.
     eapply hlist.existss_exists in Ex. cbv beta in Ex. destruct Ex as (ls & E & v' & Inv' & LT).
     eauto.
   Qed.
 
   Lemma tailrec
-    {e c t localsmap} {m : mem}
+    {e c t localsmap a} {m : mem}
     (ghosttypes : polymorphic_list.list Type)
     (variables : list String.string)
     {l0 : tuple word (length variables)}
     {Pl : enforce variables l0 localsmap}
-    {post : _->_->_-> Prop}
-    {measure : Type} (spec:_->HList.arrows ghosttypes (_->_->ufunc word (length variables) (Prop*(_->_->ufunc word (length variables) Prop)))) lt
+    {post : io_trace->_->_->_-> Prop}
+    {measure : Type} (spec:_->HList.arrows ghosttypes (_->_->ufunc word (length variables) (_->Prop*(_->_->ufunc word (length variables) (_->Prop))))) lt
     (Hwf : well_founded lt)
     (v0 : measure)
     : hlist.foralls (fun (g0 : hlist ghosttypes) => forall
-    (Hpre : (tuple.apply (hlist.apply (spec v0) g0 t m) l0).(1))
+    (Hpre : (tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(1))
     (Hbody : forall v, hlist.foralls (fun g => forall t m, tuple.foralls (fun l =>
+      forall a,
       @dlet _ (fun _ => Prop) (reconstruct variables l) (fun localsmap : locals =>
-      match tuple.apply (hlist.apply (spec v) g t m) l with S_ =>
+      match tuple.apply (hlist.apply (spec v) g t m) l a with S_ =>
       S_.(1) ->
-      Markers.unique (Markers.left (exists br t', dexpr m localsmap t e br t' /\ Markers.right (
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m localsmap
-        (fun t'' m' localsmap' =>
+      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
+      (word.unsigned br <> 0%Z -> cmd call c t m localsmap a'
+        (fun t' m' localsmap' a'' =>
           Markers.unique (Markers.left (hlist.existss (fun l' => enforce variables l' localsmap' /\ Markers.right (
           Markers.unique (Markers.left (hlist.existss (fun g' => exists v',
-          match tuple.apply (hlist.apply (spec v') g' t'' m') l' with S' =>
+          match tuple.apply (hlist.apply (spec v') g' t' m') l' a'' with S' =>
           S'.(1) /\ Markers.right (
             lt v' v /\
-            forall T M, hlist.foralls (fun L => tuple.apply (S'.(2) T M) L -> tuple.apply (S_.(2) T M) L)) end))))))))) /\
-      (word.unsigned br = 0%Z -> tuple.apply (S_.(2) (cons (branch false) t') m) l))))end))))
-    (Hpost : match (tuple.apply (hlist.apply (spec v0) g0 t m) l0).(2) with Q0 => forall t m, hlist.foralls (fun l =>  tuple.apply (Q0 t m) l -> post t m (reconstruct variables l))end)
-    , cmd call (cmd.while e c) t m localsmap post ).
+            forall T M, hlist.foralls (fun L => forall A, tuple.apply (S'.(2) T M) L A -> tuple.apply (S_.(2) T M) L A)) end))))))))) /\
+      (word.unsigned br = 0%Z -> tuple.apply (S_.(2) t m) l a')))) end))))
+    (Hpost : match (tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) with Q0 => forall t m, hlist.foralls (fun l => forall a, tuple.apply (Q0 t m) l a -> post t m (reconstruct variables l) a)end)
+    , cmd call (cmd.while e c) t m localsmap a post).
   Proof.
     eapply hlist_forall_foralls; intros g0 **.
-    eexists measure, lt, (fun vi ti mi localsmapi =>
+    eexists measure, lt, (fun vi ti mi localsmapi ai =>
       exists gi li, localsmapi = reconstruct variables li /\
-      match tuple.apply (hlist.apply (spec vi) gi ti mi) li with S_ =>
-      S_.(1) /\ forall T M L, tuple.apply (S_.(2) T M) L ->
-        tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0).(2) T M) L end).
+      match tuple.apply (hlist.apply (spec vi) gi ti mi) li ai with S_ =>
+      S_.(1) /\ forall T M L A, tuple.apply (S_.(2) T M) L A ->
+        tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) T M) L A end).
     cbv [Markers.split Markers.left Markers.right] in *.
     split; [assumption|].
     split. { exists v0, g0, l0. split. 1: eapply reconstruct_enforce; eassumption. split; eauto. }
-    intros vi ti mi lmapi (gi&?&?&?&Qi); subst.
-    destruct (hlist.foralls_forall (hlist.foralls_forall (Hbody vi) gi ti mi) _ ltac:(eassumption)) as (br&t'&?&X).
-    exists br. exists t'. split; [assumption|]. destruct X as (Htrue&Hfalse). split; intros Hbr;
+    intros vi ti mi lmapi ai (gi&?&?&?&Qi); subst.
+    Check (hlist.foralls_forall (hlist.foralls_forall (Hbody vi) gi ti mi) _ _).
+    Check (hlist.foralls_forall (Hbody vi) gi ti mi).
+    destruct (hlist.foralls_forall (hlist.foralls_forall (Hbody vi) gi ti mi) _ _ H0) as (br&a'&?&X).
+    exists br. exists a'. split; [assumption|]. destruct X as (Htrue&Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto(*firstorder idtac is very slow here*). }
-      intros tj mj lmapj Hlj; eapply hlist.existss_exists in Hlj.
+      intros tj mj lmapj aj Hlj; eapply hlist.existss_exists in Hlj.
       destruct Hlj as (lj&Elj&HE); eapply reconstruct_enforce in Elj; subst lmapj.
       eapply hlist.existss_exists in HE. destruct HE as (l&?&?&?&HR).
       pose proof fun T M => hlist.foralls_forall (HR T M); clear HR.
@@ -271,38 +274,38 @@ Section Loops.
   Qed.
 
   Lemma tailrec_localsmap
-    {e c t} {m : mem} {l} {post : _->_->_-> Prop}
-    {measure : Type} (spec:_->_->_->_->(Prop*(_->_->_-> Prop))) lt
+    {e c t} {m : mem} {l} {a} {post : _->_->_->_-> Prop}
+    {measure : Type} (spec:_->_->_->_->_->(Prop*(_->_->_->_-> Prop))) lt
     (Hwf : well_founded lt)
-    (v0 : measure) (P0 := (spec v0 t m l).(1)) (Hpre : P0)
-    (Q0 := (spec v0 t m l).(2))
-    (Hbody : forall v t m l,
-      let S := spec v t m l in let (P, Q) := S in
+    (v0 : measure) (P0 := (spec v0 t m l a).(1)) (Hpre : P0)
+    (Q0 := (spec v0 t m l a).(2))
+    (Hbody : forall v t m l a,
+      let S := spec v t m l a in let (P, Q) := S in
       P ->
-      exists br t', dexpr m l t e br t' /\
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m l
-        (fun t' m' l' => exists v',
-          let S' := spec v' t' m' l' in let '(P', Q') := S' in
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      (word.unsigned br <> 0%Z -> cmd call c t m l a'
+        (fun t' m' l' a'' => exists v',
+          let S' := spec v' t' m' l' a'' in let '(P', Q') := S' in
           P' /\
           lt v' v /\
-          forall T M L, Q' T M L -> Q T M L)) /\
-      (word.unsigned br = 0%Z -> Q (cons (branch false) t') m l))
-    (Hpost : forall t m l, Q0 t m l -> post t m l)
-    : cmd call (cmd.while e c) t m l post.
+          forall T M L A, Q' T M L A -> Q T M L A)) /\
+      (word.unsigned br = 0%Z -> Q t m l a'))
+    (Hpost : forall t m l a, Q0 t m l a -> post t m l a)
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eexists measure, lt, (fun v t m l =>
-      let S := spec v t m l in let '(P, Q) := S in
-      P /\ forall T M L, Q T M L -> Q0 T M L).
+    eexists measure, lt, (fun v t m l a =>
+      let S := spec v t m l a in let '(P, Q) := S in
+      P /\ forall T M L A, Q T M L A -> Q0 T M L A).
     split; [assumption|].
     cbv [Markers.split] in *.
     split; [solve[eauto]|].
-    intros vi ti mi li (?&Qi).
-    destruct (Hbody _ _ _ _ ltac:(eassumption)) as (br&t'&?&X); exists br; exists t'; split; [assumption|].
+    intros vi ti mi li ai (?&Qi).
+    destruct (Hbody _ _ _ _ _ ltac:(eassumption)) as (br&a'&?&X); exists br; exists a'; split; [assumption|].
     destruct X as (Htrue&Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto (*firstorder idtac is very slow*). }
-      intros tj mj lj (vj&dP&?&dQ); eauto 9. }
+      intros tj mj lj aj (vj&dP&?&dQ); eauto 9. }
     { eauto. }
   Qed.
 
@@ -323,150 +326,155 @@ Section Loops.
 
 
   Lemma atleastonce_localsmap
-    {e c t} {m : mem} {l} {post : _->_->_-> Prop}
-    {measure : Type} (invariant:_->_->_->_->Prop) lt
+    {e c t} {m : mem} {l} {a} {post : _->_->_->_-> Prop}
+    {measure : Type} (invariant:_->_->_->_->_->Prop) lt
     (Hwf : well_founded lt)
     (v0 : measure)
-    (Henter : exists br t', dexpr m l t e br t' /\
-                              (word.unsigned br = 0%Z -> post (cons (branch false) t') m l) /\
-    (word.unsigned br <> 0%Z -> invariant v0 (cons (branch true) t') m l))
+    (Henter : exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+                              (word.unsigned br = 0%Z -> post t m l a') /\
+    (word.unsigned br <> 0%Z -> invariant v0 t m l a'))
     (*(Hpre : invariant v0 t m l) this is useless now. I replace it by making  
       Henter bigger *)
-    (Hbody : forall v t m l, invariant v t m l ->
-       cmd call c t m l (fun t m l =>
-         exists br t', dexpr m l t e br t' /\
-         (word.unsigned br <> 0 -> exists v', invariant v' (cons (branch true) t') m l /\ lt v' v) /\
-         (word.unsigned br =  0 -> post (cons (branch false) t') m l)))
-    : cmd call (cmd.while e c) t m l post.
+    (Hbody : forall v t m l a, invariant v t m l a ->
+       cmd call c t m l a (fun t m l a =>
+         exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+         (word.unsigned br <> 0 -> exists v', invariant v' t m l a' /\ lt v' v) /\
+         (word.unsigned br =  0 -> post t m l a')))
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eexists (option measure), (with_bottom lt), (fun ov t m l =>
-      exists br t', dexpr m l t e br t' /\
-      ((word.unsigned br <> 0 -> exists v, ov = Some v /\ invariant v (cons (branch true) t') m l) /\
-      (word.unsigned br =  0 -> ov = None /\ post (cons (branch false) t') m l))).
+    eexists (option measure), (with_bottom lt), (fun ov t m l a =>
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      ((word.unsigned br <> 0 -> exists v, ov = Some v /\ invariant v t m l a') /\
+      (word.unsigned br =  0 -> ov = None /\ post t m l a'))).
     split; auto using well_founded_with_bottom; []. split.
-    { destruct Henter as [br [t' [He [Henterfalse Hentertrue]]]].
+    { destruct Henter as [br [a' [He [Henterfalse Hentertrue]]]].
       destruct (BinInt.Z.eq_dec (word.unsigned br) 0).
-      { exists None, br, t'; split; trivial.
+      { exists None, br, a'; split; trivial.
         split; intros; try contradiction; split; eauto. }
-      { exists (Some v0), br, t'.
+      { exists (Some v0), br, a'.
         split; trivial; []; split; try contradiction.
         exists v0; split; auto. } }
-    intros vi ti mi li (br&t'&Ebr&Hcontinue&Hexit).
+    intros vi ti mi li ai (br&a'&Ebr&Hcontinue&Hexit).
     eexists. eexists. split; [eassumption|]; split.
     { intros Hc; destruct (Hcontinue Hc) as (v&?&Hinv); subst.
       eapply Proper_cmd; [assumption..| | |eapply Hbody; eassumption]; [eapply Proper_call; assumption|].
-      intros t'' m' l' (br'&t'2&Ebr'&Hinv'&Hpost').
+      intros t' m' l' a'' (br'&a'2&Ebr'&Hinv'&Hpost').
       destruct (BinInt.Z.eq_dec (word.unsigned br') 0).
       { exists None; split; try constructor.
-        exists br'; exists t'2; split; trivial; [].
+        exists br'; exists a'2; split; trivial; [].
         split; intros; try contradiction.
         split; eauto. }
       { destruct (Hinv' ltac:(trivial)) as (v'&inv'&ltv'v).
         exists (Some v'); split; trivial. (* NOTE: this [trivial] simpl-reduces [with_bottom] *)
-        exists br'; exists t'2; split; trivial.
+        exists br'; exists a'2; split; trivial.
         split; intros; try contradiction.
         eexists; split; eauto. } }
     eapply Hexit.
   Qed.
 
   Lemma tailrec_earlyout_localsmap
-    {e c t} {m : mem} {l} {post : _->_->_-> Prop}
-    {measure : Type} (spec:_->_->_->_->(Prop*(_->_->_-> Prop))) lt
+    {e c t} {m : mem} {l} {a} {post : _->_->_->_-> Prop}
+    {measure : Type} (spec:_->_->_->_->_->(Prop*(_->_->_->_-> Prop))) lt
     (Hwf : well_founded lt)
-    (v0 : measure) (P0 := (spec v0 t m l).(1)) (Hpre : P0)
-    (Q0 := (spec v0 t m l).(2))
-    (Hbody : forall v t m l,
-      let S := spec v t m l in let (P, Q) := S in
+    (v0 : measure) (P0 := (spec v0 t m l a).(1)) (Hpre : P0)
+    (Q0 := (spec v0 t m l a).(2))
+    (Hbody : forall v t m l a,
+      let S := spec v t m l a in let (P, Q) := S in
       P ->
-      exists br t', dexpr m l t e br t' /\
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m l
-        (fun t'' m' l' =>
-          (exists br t''', dexpr m' l' t'' e br t''' /\ word.unsigned br = 0 /\ Q (cons (branch false) t''') m' l') \/
-          exists v', let S' := spec v' t'' m' l' in let '(P', Q') := S' in
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      (word.unsigned br <> 0%Z -> cmd call c t m l a'
+        (fun t' m' l' a'' =>
+          (exists br a''', dexpr m' l' a'' e br (cons_branch false a''') /\ word.unsigned br = 0 /\ Q t' m' l' a''') \/
+          exists v', let S' := spec v' t' m' l' a'' in let '(P', Q') := S' in
           P' /\
           lt v' v /\
-          forall T M L, Q' T M L -> Q T M L)) /\
-      (word.unsigned br = 0%Z -> Q (cons (branch false) t') m l))
-    (Hpost : forall t m l, Q0 t m l -> post t m l)
-    : cmd call (cmd.while e c) t m l post.
+          forall T M L A, Q' T M L A -> Q T M L A)) /\
+      (word.unsigned br = 0%Z -> Q t m l a'))
+    (Hpost : forall t m l a, Q0 t m l a -> post t m l a)
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eexists (option measure), (with_bottom lt), (fun v t m l =>
+    eexists (option measure), (with_bottom lt), (fun v t m l a =>
       match v with
-      | None => exists br t', dexpr m l t e br t' /\ word.unsigned br = 0 /\ Q0 (cons (branch false) t') m l
+      | None => exists br a', dexpr m l a e br (cons_branch false a') /\ word.unsigned br = 0 /\ Q0 t m l a'
       | Some v =>
-          let S := spec v t m l in let '(P, Q) := S in
-          P /\ forall T M L, Q T M L -> Q0 T M L
+          let S := spec v t m l a in let '(P, Q) := S in
+          P /\ forall T M L A, Q T M L A -> Q0 T M L A
       end).
     split; auto using well_founded_with_bottom; []; cbv [Markers.split] in *.
     split.
     { exists (Some v0); eauto. }
-    intros [vi|] ti mi li inv_i; [destruct inv_i as (?&Qi)|destruct inv_i as (br&t'&Hebr&Hbr0&HQ)].
-    { destruct (Hbody _ _ _ _ ltac:(eassumption)) as (br&t'&?&X); exists br, t'; split; [assumption|].
+    intros [vi|] ti mi li ai inv_i; [destruct inv_i as (?&Qi)|destruct inv_i as (br&a'&Hebr&Hbr0&HQ)].
+    { destruct (Hbody _ _ _ _ _ ltac:(eassumption)) as (br&a'&?&X); exists br, a'; split; [assumption|].
       destruct X as (Htrue&Hfalse). split; intros Hbr;
         [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; eauto.
       eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto (*firstorder idtac is very slow here*). }
-      intros tj mj lj [(br'&t''&Hbr'&Hz&HQ)|(vj&dP&?&dQ)];
-          [exists None | exists (Some vj)]; cbn [with_bottom]; eauto 9. }
-    repeat esplit || eauto || intros; contradiction.
+      intros tj mj lj aj [(br'&a''&Hbr'&Hz&HQ)|(vj&dP&?&dQ)];
+      [exists None | exists (Some vj)]; cbn [with_bottom]; eauto 9. }
+    exists br.
+    repeat esplit || eauto || intros.
+    { rewrite Hbr0. assumption. }
+    { contradiction. }
   Qed.
 
   Lemma tailrec_earlyout
-    {e c t localsmap} {m : mem}
+    {e c t localsmap a} {m : mem}
     (ghosttypes : polymorphic_list.list Type)
     (variables : list String.string)
     {l0 : tuple word (length variables)}
     {Pl : enforce variables l0 localsmap}
-    {post : _->_->_-> Prop}
-    {measure : Type} (spec:_->HList.arrows ghosttypes (_->_->ufunc word (length variables) (Prop*(_->_->ufunc word (length variables) Prop)))) lt
+    {post : _->_->_->_-> Prop}
+    {measure : Type} (spec:_->HList.arrows ghosttypes (_->_->ufunc word (length variables) (_->Prop*(_->_->ufunc word (length variables) (_->Prop))))) lt
     (Hwf : well_founded lt)
     (v0 : measure)
     : hlist.foralls (fun (g0 : hlist ghosttypes) => forall
-    (Hpre : (tuple.apply (hlist.apply (spec v0) g0 t m) l0).(1))
+    (Hpre : (tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(1))
     (Hbody : forall v, hlist.foralls (fun g => forall t m, tuple.foralls (fun l =>
+      forall a,
       @dlet _ (fun _ => Prop) (reconstruct variables l) (fun localsmap : locals =>
-      match tuple.apply (hlist.apply (spec v) g t m) l with S_ =>
+      match tuple.apply (hlist.apply (spec v) g t m) l a with S_ =>
       S_.(1) ->
-      Markers.unique (Markers.left (exists br t', dexpr m localsmap t e br t' /\ Markers.right (
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m localsmap
-        (fun t'' m' localsmap' =>
+      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
+      (word.unsigned br <> 0%Z -> cmd call c t m localsmap a'
+        (fun t' m' localsmap' a'' =>
           Markers.unique (Markers.left (hlist.existss (fun l' => enforce variables l' localsmap' /\ Markers.right (
-          Markers.unique (Markers.left (exists br' t''', dexpr m' localsmap' t'' e br' t''' /\ Markers.right ( word.unsigned br'= 0 /\ tuple.apply (S_.(2) (cons (branch false) t''') m') l') ) ) \/
+          Markers.unique (Markers.left (exists br' a''', dexpr m' localsmap' a'' e br' (cons_branch false a''') /\ Markers.right (word.unsigned br'= 0 /\ tuple.apply (S_.(2) t' m') l' a''') ) ) \/
           Markers.unique (Markers.left (hlist.existss (fun g' => exists v',
-          match tuple.apply (hlist.apply (spec v') g' t'' m') l' with S' =>
+          match tuple.apply (hlist.apply (spec v') g' t' m') l' a'' with S' =>
           S'.(1) /\ Markers.right (
             lt v' v /\
-            forall T M, hlist.foralls (fun L => tuple.apply (S'.(2) T M) L -> tuple.apply (S_.(2) T M) L)) end))))))))) /\
-      (word.unsigned br = 0%Z -> tuple.apply (S_.(2) (cons (branch false) t') m) l))))end))))
-    (Hpost : match (tuple.apply (hlist.apply (spec v0) g0 t m) l0).(2) with Q0 => forall t m, hlist.foralls (fun l =>  tuple.apply (Q0 t m) l -> post t m (reconstruct variables l))end)
-    , cmd call (cmd.while e c) t m localsmap post ).
+            forall T M, hlist.foralls (fun L => forall A, tuple.apply (S'.(2) T M) L A -> tuple.apply (S_.(2) T M) L A)) end))))))))) /\
+      (word.unsigned br = 0%Z -> tuple.apply (S_.(2) t m) l a'))))end))))
+    (Hpost : match (tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) with Q0 => forall t m, hlist.foralls (fun l => forall a, tuple.apply (Q0 t m) l a -> post t m (reconstruct variables l) a)end)
+    , cmd call (cmd.while e c) t m localsmap a post).
   Proof.
     eapply hlist_forall_foralls; intros g0 **.
-    eexists (option measure), (with_bottom lt), (fun vi ti mi localsmapi =>
+    eexists (option measure), (with_bottom lt), (fun vi ti mi localsmapi ai =>
       exists li, localsmapi = reconstruct variables li /\
                    match vi with
-                   | None => exists br ti', dexpr mi localsmapi ti e br ti' /\ word.unsigned br = 0 /\ tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t(*????*) m) l0).(2) (cons (branch false) ti') mi) li
+                   | None => exists br ai', dexpr mi localsmapi ai e br (cons_branch false ai') /\ word.unsigned br = 0 /\ tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) ti mi) li ai'
                    | Some vi => exists gi,
-                       match tuple.apply (hlist.apply (spec vi) gi ti mi) li with
-                       | S_ => S_.(1) /\ forall T M L, tuple.apply (S_.(2) T M) L -> tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t(*????*) m) l0).(2) T M) L end
+                       match tuple.apply (hlist.apply (spec vi) gi ti mi) li ai with
+                       | S_ => S_.(1) /\ forall T M L A, tuple.apply (S_.(2) T M) L A -> tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) T M) L A end
                    end).
     cbv [Markers.unique Markers.split Markers.left Markers.right] in *.
     split; eauto using well_founded_with_bottom.
     split. { exists (Some v0), l0. split. 1: eapply reconstruct_enforce; eassumption. exists g0; split; eauto. }
-    intros [vi|] ti mi lmapi.
-    2: { intros (ld&Hd&br&ti'&Hbr&Hz&Hdone).
-      eexists. eexists. split; eauto.
+    intros [vi|] ti mi lmapi ai.
+    2: { intros (ld&Hd&br&ai'&Hbr&Hz&Hdone).
+         eexists. eexists. split; eauto.
+         { rewrite Hz. eauto. }
       split; intros; try contradiction.
-      subst. eapply (hlist.foralls_forall (Hpost (cons (branch false) ti') mi) _ Hdone). }
+      subst. eapply (hlist.foralls_forall (Hpost ti mi) _ _ Hdone). }
     intros (?&?&gi&?&Qi); subst.
-    destruct (hlist.foralls_forall (hlist.foralls_forall (Hbody vi) gi ti mi) _ ltac:(eassumption)) as (br&t'&?&X).
-    exists br. exists t'. split; [assumption|]. destruct X as (Htrue&Hfalse). split; intros Hbr;
+    destruct (hlist.foralls_forall (hlist.foralls_forall (Hbody vi) gi ti mi) _ _ ltac:(eassumption)) as (br&a'&?&X).
+    exists br. exists a'. split; [assumption|]. destruct X as (Htrue&Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto (*firstorder idtac is very slow here*). }
-      intros tj mj lmapj Hlj; eapply hlist.existss_exists in Hlj.
+      intros tj mj lmapj aj Hlj; eapply hlist.existss_exists in Hlj.
       destruct Hlj as (lj&Elj&HE); eapply reconstruct_enforce in Elj; subst lmapj.
-      destruct HE as [(br'&t'''&Hevalr'&Hz'&Hdone)|HE].
+      destruct HE as [(br'&a'''&Hevalr'&Hz'&Hdone)|HE].
       { exists None; cbn. eauto 9. }
       { eapply hlist.existss_exists in HE. destruct HE as (l&?&?&?&HR).
         pose proof fun T M => hlist.foralls_forall (HR T M); clear HR.
@@ -476,38 +484,38 @@ Section Loops.
 
 
   Lemma atleastonce
-    {e c t l} {m : mem}
+    {e c t l a} {m : mem}
     (variables : list String.string)
     {localstuple : tuple word (length variables)}
     {Pl : enforce variables localstuple l}
-    {measure : Type} (invariant:_->_->_->ufunc word (length variables) Prop)
+    {measure : Type} (invariant:_->_->_->ufunc word (length variables) (_->Prop))
     lt (Hwf : well_founded lt)
-    {post : _->_->_-> Prop}
+    {post : _->_->_->_-> Prop}
     (v0 : measure)
-    (Henter : exists br t', dexpr m l t e br t' /\
-                              (word.unsigned br = 0%Z -> post (cons (branch false) t') m l) /\
-                              (word.unsigned br <> 0%Z -> tuple.apply (invariant v0 (cons (branch true) t') m) localstuple))
+    (Henter : exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+                              (word.unsigned br = 0%Z -> post t m l a') /\
+                              (word.unsigned br <> 0%Z -> tuple.apply (invariant v0 t m) localstuple a'))
     (*(Hpre : tuple.apply (invariant v0 t m) localstuple) this is useless, just like in atleastone_localsmap *)
-    (Hbody : forall v t m, tuple.foralls (fun localstuple =>
-      tuple.apply (invariant v t m) localstuple ->
-       cmd call c t m (reconstruct variables localstuple) (fun t m l =>
-         exists br t', dexpr m l t e br t' /\
+    (Hbody : forall v t m, tuple.foralls (fun localstuple => forall a,
+      tuple.apply (invariant v t m) localstuple a ->
+       cmd call c t m (reconstruct variables localstuple) a (fun t m l a =>
+         exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
                          (word.unsigned br <> 0 ->
                           Markers.unique (Markers.left (tuple.existss (fun localstuple => enforce variables localstuple l /\
-                                                                                            Markers.right (Markers.unique (exists v', tuple.apply (invariant v' (cons (branch true) t') m) localstuple /\ lt v' v)))))) /\
-                         (word.unsigned br =  0 -> post (cons (branch false) t') m l))))
-    : cmd call (cmd.while e c) t m l post.
+                                                                                            Markers.right (Markers.unique (exists v', tuple.apply (invariant v' t m) localstuple a' /\ lt v' v)))))) /\
+                         (word.unsigned br =  0 -> post t m l a'))))
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    destruct Henter as [br [t' [Henter [Hentertrue Henterfalse]]]].
-    eapply (atleastonce_localsmap (fun v t m l => exists localstuple, Logic.and (enforce variables localstuple l) (tuple.apply (invariant v t m) localstuple))); eauto.
+    destruct Henter as [br [a' [Henter [Hentertrue Henterfalse]]]].
+    eapply (atleastonce_localsmap (fun v t m l a => exists localstuple, Logic.and (enforce variables localstuple l) (tuple.apply (invariant v t m) localstuple a))); eauto.
     { eexists. eexists. split; eauto. split; eauto. }
-    intros vi ti mi li (?&X&Y).
+    intros vi ti mi li ai (?&X&Y).
     specialize (Hbody vi ti mi).
     eapply hlist.foralls_forall in Hbody.
-    specialize (Hbody Y).
+    specialize (Hbody ai Y).
     rewrite <-(reconstruct_enforce _ _ _ X) in Hbody.
     eapply Proper_cmd; [assumption..|eapply Proper_call; assumption| |eapply Hbody].
-    intros t'' m' l' (?&?&?&HH&?).
+    intros t' m' l' a'' (?&?&?&HH&?).
     eexists. eexists. split; eauto.
     split; intros; eauto.
     specialize (HH ltac:(eauto)).
@@ -515,16 +523,16 @@ Section Loops.
     eexists; split; eauto.
   Qed.
 
-  Lemma while_zero_iterations {e c t l} {m : mem} {post : _->_->_-> Prop}
-    (HCondPost: exists t', dexpr m l t e (word.of_Z 0) t' /\ post (cons (branch false) t') m l)
+  Lemma while_zero_iterations {e c t l a} {m : mem} {post : _->_->_->_-> Prop}
+    (HCondPost: exists a', dexpr m l a e (word.of_Z 0) (cons_branch false a') /\ post t m l a')
     (*(HPost: post t m l) no good :( *)
-    : cmd call (cmd.while e c) t m l post.
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    destruct HCondPost as [t' [HCond HPost]].
-    eapply (while_localsmap (fun n t' m' l' => t' = t /\ m' = m /\ l' = l) (PeanoNat.Nat.lt_wf 0) 0%nat).
-    1: unfold split; auto. intros *. intros (? & ? & ?). subst.
-    eexists. eexists. split. 1: exact HCond.
-    rewrite Properties.word.unsigned_of_Z_0.
+    destruct HCondPost as [a' [HCond HPost]].
+    eapply (while_localsmap (fun n t' m' l' a' => t' = t /\ m' = m /\ l' = l /\ a' = a) (PeanoNat.Nat.lt_wf 0) 0%nat).
+    1: unfold split; auto. intros *. intros (? & ? & ? & ?). subst.
+    exists (word.of_Z 0). rewrite Properties.word.unsigned_of_Z_0.
+    eexists. split. 1: exact HCond.
     split; intros; try congruence.
   Qed.
 
@@ -535,30 +543,30 @@ Section Loops.
   Local Infix "==>" := Lift1Prop.impl1.
 
   Lemma tailrec_sep
-    e c t (m : mem) l (post : _->_->_-> Prop)
+    e c t (m : mem) l a (post : _->_->_->_-> Prop)
     {measure : Type} P Q lt (Hwf : well_founded lt) (v0 : measure) R0
-    (Hpre : (P v0 t l * R0) m)
-    (Hbody : forall v t m l R, (P v t l * R) m ->
-      exists br t', dexpr m l t e br t' /\
-      (word.unsigned br <> 0%Z -> cmd call c (cons (branch true) t') m l
-        (fun t'' m' l' => exists v' dR, (P v' t'' l' * (R * dR)) m' /\
+    (Hpre : (P v0 t l a * R0) m)
+    (Hbody : forall v t m l a R, (P v t l a * R) m ->
+      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      (word.unsigned br <> 0%Z -> cmd call c t m l a'
+        (fun t' m' l' a'' => exists v' dR, (P v' t' l' a'' * (R * dR)) m' /\
           lt v' v /\
-          forall T L, Q v' T L * dR ==> Q v T L)) /\
-      (word.unsigned br = 0%Z -> (Q v (cons (branch false) t') l * R) m))
-    (Hpost : forall t m l, (Q v0 t l * R0) m -> post t m l)
-    : cmd call (cmd.while e c) t m l post.
+          forall T L A, Q v' T L A * dR ==> Q v T L A)) /\
+      (word.unsigned br = 0%Z -> (Q v t l a' * R) m))
+    (Hpost : forall t m l a, (Q v0 t l a * R0) m -> post t m l a)
+    : cmd call (cmd.while e c) t m l a post.
   Proof.
-    eexists measure, lt, (fun v t m l => exists R, (P v t l * R) m /\
-                          forall T L, Q v T L * R ==> Q v0 T L * R0).
+    eexists measure, lt, (fun v t m l a => exists R, (P v t l a * R) m /\
+                          forall T L A, Q v T L A * R ==> Q v0 T L A * R0).
     split; [assumption|].
     split. { exists v0, R0. split; [assumption|]. intros. reflexivity. }
-    intros vi ti mi li (Ri&?&Qi).
-    destruct (Hbody _ _ _ _ _ ltac:(eassumption)) as (br&t'&?&X); exists br; exists t'; split; [assumption|].
+    intros vi ti mi li ai (Ri&?&Qi).
+    destruct (Hbody _ _ _ _ _ _ ltac:(eassumption)) as (br&a'&?&X); exists br; exists a'; split; [assumption|].
     destruct X as (Htrue&Hfalse). split; intros Hbr;
       [pose proof(Htrue Hbr)as Hpc|pose proof(Hfalse Hbr)as Hpc]; clear Hbr Htrue Hfalse.
     { eapply Proper_cmd; [assumption..| | |eapply Hpc].
       { eapply Proper_call; eauto(*firstorder idtac is very slow here*). }
-      intros tj mj lj (vj&dR&dP&?&dQ).
+      intros tj mj lj aj (vj&dR&dP&?&dQ).
       exists vj; split; [|assumption].
       exists (Ri * dR); split; [assumption|].
       intros. rewrite (sep_comm _ dR), <-(sep_assoc _ dR), dQ; trivial. }
