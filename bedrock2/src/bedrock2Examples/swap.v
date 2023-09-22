@@ -31,12 +31,13 @@ Require Import coqutil.Tactics.rdelta.
 
 Section WithParameters.
   Context {word: word.word 32} {mem: map.map word Byte.byte}.
-  Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
+  Context {word_ok: word.ok word} {mem_ok: map.ok mem}. Locate "ctfunc!".
+  Check WeakestPrecondition.call.
 
   Instance ct_spec_of_swap : spec_of "swap" :=
     ctfunc! "swap" a_addr b_addr | / | a b R,
     { requires t m := m =* scalar a_addr a * scalar b_addr b * R;
-      ensures T M :=  M =* scalar a_addr b * scalar b_addr a * R /\ (filterio T) = (filterio t) }.
+      ensures T M :=  M =* scalar a_addr b * scalar b_addr a * R /\ T = t }.
 
   (* I should make this work again.
 Instance ct_bad_swap : ct_spec_of "bad_swap" :=

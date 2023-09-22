@@ -278,7 +278,7 @@ Notation "'ctfunc!' name a0 .. an '|' b0 .. bn '/' g0 .. gn '|' h0 .. hn '~>' r0
                                                      pre ->
                                                      WeakestPrecondition.call
                                                        functions name tr mem ((appl a0 .. (appl an (appl g0 .. (appl gn f) ..)) ..)) (cons a0 .. (cons an (cons b0 .. (cons bn nil) ..)) ..)
-                                                       (fun tr' mem' rets a' =>
+                                                       (fun tr' mem' a' rets =>
                                                           (exists r0,
                                                               .. (exists rn,
                                                                     rets = (cons r0 .. (cons rn nil) ..) /\
@@ -306,7 +306,7 @@ Notation "'ctfunc!' name a0 .. an '|' '/' '|' h0 .. hn ',' '{' 'requires' tr mem
                                  pre ->
                                  WeakestPrecondition.call
                                    functions name tr mem (appl a0 .. (appl an f) ..) (cons a0 .. (cons an nil) ..)
-                                   (fun tr' mem' rets a' =>
+                                   (fun tr' mem' a' rets =>
                                       rets = nil /\
                                         post)) ..)) ..))))
     (at level 200,

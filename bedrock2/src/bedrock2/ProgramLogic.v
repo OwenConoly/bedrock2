@@ -12,16 +12,16 @@ Existing Class spec_of.
 Existing Class ct_spec_of.*)
 
 (* not sure where to put these lemmas *)
-Lemma align_trace_cons {T} x xs cont t (H : xs = app cont t) : @cons T x xs = app (cons x cont) t.
+(*Lemma align_trace_cons {T} x xs cont t (H : xs = app cont t) : @cons T x xs = app (cons x cont) t.
 Proof. intros. cbn. congruence. Qed.
 Lemma align_trace_app {T} x xs cont t (H : xs = app cont t) : @app T x xs = app (app x cont) t.
 Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
 Check filterio. Print filterio.
 Lemma filterio_cons {width: BinNums.Z}{BW: Bitwidth.Bitwidth width}{word: Interface.word.word width}{mem: Interface.map.map Interface.word.rep Init.Byte.byte} (t : trace) (e : event) :
   filterio (cons e t) = match e with | IO i => cons i (filterio t) | _ => filterio t end.
-Proof. destruct e; try reflexivity. Qed.
+Proof. destruct e; try reflexivity. Qed.*)
 
-Ltac trace_alignment :=
+(*Ltac trace_alignment :=
     repeat match goal with
       | t := cons _ _ |- _ => subst t
       end;
@@ -30,7 +30,7 @@ Ltac trace_alignment :=
       end;          
     repeat (eapply align_trace_app
       || eapply align_trace_cons
-      || exact (eq_refl (app nil _))).
+      || exact (eq_refl (app nil _))).*)
 
 Module Import Coercions.
   Import Map.Interface Word.Interface BinInt.
@@ -141,7 +141,7 @@ Ltac straightline_cleanup :=
      x not being cleared to instantiate evars with terms depending on x *)
   | x : Word.Interface.word.rep _ |- _ => clear x
   | x : Init.Byte.byte |- _ => clear x
-  | x : Semantics.trace |- _ => clear x
+  | x : Semantics.abstract_trace |- _ => clear x
   | x : Syntax.cmd |- _ => clear x
   | x : Syntax.expr |- _ => clear x
   | x : coqutil.Map.Interface.map.rep |- _ => clear x
@@ -153,7 +153,7 @@ Ltac straightline_cleanup :=
   (* same TODO as above *)
   | x := _ : Word.Interface.word.rep _ |- _ => clear x
   | x := _ : Init.Byte.byte |- _ => clear x
-  | x := _ : Semantics.trace |- _ => clear x
+  | x := _ : Semantics.abstract_trace |- _ => clear x
   | x := _ : Syntax.cmd |- _ => clear x
   | x := _ : Syntax.expr |- _ => clear x
   | x := _ : coqutil.Map.Interface.map.rep |- _ => clear x
