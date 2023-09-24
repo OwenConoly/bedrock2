@@ -20,38 +20,40 @@ Section WeakestPrecondition.
 
   Definition pop_read a s addr post : Prop :=
     match a with
-    | cons_read s0 addr0 a' =>
+    | Some (cons_read s0 addr0 a') =>
         if (access_size.access_size_beq s s0 && word.eqb addr addr0)%bool
         then
-          post a'
+          post (Some a')
         else False
+    | None => post None
     | _ => False end.
 
   Definition pop_branch a b post : Prop :=
     match a with
-    | cons_branch b0 a' =>
+    | Some (cons_branch b0 a') =>
         if (Bool.eqb b b0)%bool
         then
-          post a'
+          post (Some a')
         else False
+    | None => post None
     | _ => False end.
 
   Section popping.
     Context {word_ok : word.ok word}.
     
     Lemma solve_pop_read a s addr (post : _ -> Prop) :
-      post a -> pop_read (cons_read s addr a) s addr post.
+      post a -> pop_read (with_read s addr a) s addr post.
     Proof.
-      intros. cbv [pop_read].
+      intros. cbv [pop_read]. destruct a; try apply H. simpl.
       rewrite Properties.word.eqb_eq by exact eq_refl.
       rewrite access_size.internal_access_size_dec_lb by exact eq_refl.
       simpl. assumption.
     Qed.
 
     Lemma solve_pop_branch a b (post : _ -> Prop) :
-      post a -> pop_branch (cons_branch b a) b post.
+      post a -> pop_branch (with_branch b a) b post.
     Proof.
-      intros. cbv [pop_branch]. rewrite Bool.eqb_reflx. assumption.
+      intros. cbv [pop_branch]. destruct a; try apply H. simpl. rewrite Bool.eqb_reflx. assumption.
     Qed.
   End popping.
 
@@ -63,7 +65,7 @@ Section WeakestPrecondition.
     Local Notation "' x <- a | y ; f" := (match a with x => f | _ => y end)
                                            (right associativity, at level 70, x pattern).
     
-    Definition expr_body rec (a : abstract_trace) (e : Syntax.expr) (post : abstract_trace -> word -> Prop) : Prop :=
+    Definition expr_body rec (a : option abstract_trace) (e : Syntax.expr) (post : option abstract_trace -> word -> Prop) : Prop :=
       match e with
       | expr.literal v =>
         literal v (post a)
@@ -129,12 +131,12 @@ Section WeakestPrecondition.
   End WithF2.*)
   
   Section WithFunctions.
-    Context (call : String.string -> io_trace -> mem -> abstract_trace -> list word -> (io_trace -> mem -> abstract_trace -> list word -> Prop) -> Prop).
+    Context (call : String.string -> io_trace -> mem -> option abstract_trace -> list word -> (io_trace -> mem -> option abstract_trace -> list word -> Prop) -> Prop).
     Definition dexpr m l a e v a' := expr m l a e (fun a'2 v2 => eq a' a'2 /\ eq v v2).
     Definition dexprs m l a es vs a' := list_map' (expr m l) a es (fun a'2 vs2 => eq a' a'2 /\ eq vs vs2).
     (*Goal (forall m l a, dexprs m l a (cons (expr.load access_size.one (expr.literal 5)) nil) = dexprs m l t nil). cbv [dexprs]. simpl. Abort.*)
-    Definition cmd_body (rec:_->_->_->_->_->_->Prop) (c : cmd) (t : io_trace) (m : mem) (l : locals) (a : abstract_trace)
-             (post : io_trace -> mem -> locals -> abstract_trace -> Prop) : Prop :=
+    Definition cmd_body (rec:_->_->_->_->_->_->Prop) (c : cmd) (t : io_trace) (m : mem) (l : locals) (a : option abstract_trace)
+             (post : io_trace -> mem -> locals -> option abstract_trace -> Prop) : Prop :=
       (* give value of each pure expression when stating its subproof *)
       match c with
       | cmd.skip => post t m l a
@@ -147,31 +149,31 @@ Section WeakestPrecondition.
         post t m l a
       | cmd.store sz ea ev =>
         exists addr a', dexpr m l a ea addr a' /\
-        exists v a'', dexpr m l a' ev v (cons_write sz addr a'') /\
+        exists v a'', dexpr m l a' ev v (with_write sz addr a'') /\
         store sz m addr v (fun m =>
         post t m l a'')
       | cmd.stackalloc x n c =>
-        exists f, a = cons_salloc f /\
+        exists f, a = with_salloc f /\
         Z.modulo n (bytes_per_word width) = 0 /\
         forall addr mStack mCombined,
           anybytes addr n mStack -> map.split mCombined m mStack ->
           dlet! l := map.put l x addr in
-          rec c t mCombined l (f addr) (fun t' mCombined' l' a' =>
+          rec c t mCombined l (apply_salloc f addr) (fun t' mCombined' l' a' =>
           exists m' mStack',
           anybytes addr n mStack' /\ map.split mCombined' m' mStack' /\
             post t' m' l' a')
       | cmd.cond br ct cf =>
-        exists v a', dexpr m l a br v (cons_branch (negb (Z.eqb (word.unsigned v) 0)) a') /\
+        exists v a', dexpr m l a br v (with_branch (negb (Z.eqb (word.unsigned v) 0)) a') /\
         (word.unsigned v <> 0%Z -> rec ct t m l a' post) /\
         (word.unsigned v = 0%Z -> rec cf t m l a' post)
       | cmd.seq c1 c2 =>
         rec c1 t m l a (fun t' m' l' a' => rec c2 t' m' l' a' post)
       | cmd.while e c =>
-        exists measure (lt:measure->measure->Prop) (inv:measure->io_trace->mem->locals->abstract_trace->Prop),
+        exists measure (lt:measure->measure->Prop) (inv:measure->io_trace->mem->locals->option abstract_trace->Prop),
         Coq.Init.Wf.well_founded lt /\
         (exists v, inv v t m l a) /\
         (forall v t m l a, inv v t m l a ->
-          exists b a', dexpr m l a e b (cons_branch (negb (Z.eqb (word.unsigned b) 0)) a') /\
+          exists b a', dexpr m l a e b (with_branch (negb (Z.eqb (word.unsigned b) 0)) a') /\
           (word.unsigned b <> 0%Z -> rec c t m l a' (fun t' m l a'' =>
             exists v', inv v' t' m l a'' /\ lt v' v)) /\
           (word.unsigned b = 0%Z -> post t m l a'))
@@ -182,24 +184,24 @@ Section WeakestPrecondition.
           post t' m' l' a'')
       | cmd.interact binds action arges =>
         exists mKeep mGive, map.split m mKeep mGive /\
-        exists args f, dexprs m l a arges args (cons_IO (mGive, action, args) f) /\ 
+        exists args f, dexprs m l a arges args (with_IO (mGive, action, args) f) /\ 
         ext_spec t mGive action args (fun mReceive rets =>
           exists l', map.putmany_of_list_zip binds rets l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, rets)) t) m' l' (f (mReceive, rets)))
+          post (cons ((mGive, action, args), (mReceive, rets)) t) m' l' (apply_IO f (mReceive, rets)))
       end.
     Fixpoint cmd c := cmd_body cmd c.
   End WithFunctions.
 
-  Definition func call '(innames, outnames, c) (t : io_trace) (m : mem) (a : abstract_trace) (args : list word) (post : io_trace -> mem -> abstract_trace -> list word -> Prop) :=
+  Definition func call '(innames, outnames, c) (t : io_trace) (m : mem) (a : option abstract_trace) (args : list word) (post : io_trace -> mem -> option abstract_trace -> list word -> Prop) :=
       exists l, map.of_list_zip innames args = Some l /\
       cmd call c t m l a (fun t' m' l' a' =>
       list_map (get l') outnames (fun rets =>
         post t' m' a' rets)).
 
   Definition call_body rec (functions : list (String.string * (list String.string * list String.string * cmd.cmd)))
-                (fname : String.string) (t : io_trace) (m : mem) (a : abstract_trace) (args : list word)
-                (post : io_trace -> mem -> abstract_trace -> list word -> Prop) : Prop :=
+                (fname : String.string) (t : io_trace) (m : mem) (a : option abstract_trace) (args : list word)
+                (post : io_trace -> mem -> option abstract_trace -> list word -> Prop) : Prop :=
     match functions with
     | nil => False
     | cons (f, decl) functions =>

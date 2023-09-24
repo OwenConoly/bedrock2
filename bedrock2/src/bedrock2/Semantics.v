@@ -29,23 +29,50 @@ Section WithIOEvent.
   | cons_read (sz : access_size) (a : word) (after : abstract_trace)
   | cons_write (sz : access_size) (a : word) (after : abstract_trace)
   | cons_salloc (after : word -> abstract_trace).
+
+  Definition with_IO e := option_map (cons_IO e).
+  Lemma with_IO_inj e e' a a' : with_IO e a = with_IO e' a' -> a = a'.
+  Proof. intros H. destruct a; destruct a'; simpl in H; congruence. Qed.
   
-  Definition pop_read a s addr : option abstract_trace :=
+  Definition with_branch b := option_map (cons_branch b).
+  Lemma with_branch_inj b b' a a' : with_branch b a = with_branch b' a' -> a = a'.
+  Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
+  
+  Definition with_read sz addr := option_map (cons_read sz addr).
+  Lemma with_read_inj sz addr addr' a a' : with_read sz addr a = with_read sz addr' a' -> a = a'.
+  Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
+  
+  Definition with_write sz addr := option_map (cons_write sz addr).
+  Lemma with_write_inj sz addr addr' a a' : with_write sz addr a = with_write sz addr' a' -> a = a'.
+  Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
+
+  Definition with_salloc := option_map cons_salloc.
+  Lemma with_salloc_inj a a' : with_salloc a = with_salloc a' -> a = a'.
+  Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
+
+  Definition apply_salloc (f : option (word -> abstract_trace)) addr :=
+    match f with | Some f => Some (f addr) | None => None end.
+  Definition apply_IO (f : option (io_output -> abstract_trace)) i :=
+    match f with | Some f => Some (f i) | None => None end.
+
+  Definition pop_read a s addr : option (option abstract_trace) :=
     match a with
-    | cons_read s0 addr0 a' =>
+    | Some (cons_read s0 addr0 a') =>
         if (access_size.access_size_beq s s0 && word.eqb addr addr0)%bool
         then
-          Some a'
+          Some (Some a')
         else None
+    | None => Some None
     | _ => None end.
   
-  Definition pop_branch a b : option abstract_trace :=
+  Definition pop_branch a b : option (option abstract_trace) :=
     match a with
-    | cons_branch b0 a' =>
+    | Some (cons_branch b0 a') =>
         if (Bool.eqb b b0)%bool
         then
-          Some a'
+          Some (Some a')
         else None
+    | None => Some None
     | _ => None end.
 End WithIOEvent.
 
@@ -126,7 +153,7 @@ Section semantics.
     Context (m : mem) (l : locals).
     Local Notation "' x <- a | y ; f" := (match a with x => f | _ => y end)
                                            (right associativity, at level 70, x pattern).
-    Fixpoint eval_expr (e : expr) (mc : metrics) (a : abstract_trace) : option (word * metrics * abstract_trace) :=
+    Fixpoint eval_expr (e : expr) (mc : metrics) (a : option abstract_trace) : option (word * metrics * option abstract_trace) :=
       match e with
       | expr.literal v => Some (
                               word.of_Z v,
@@ -191,7 +218,7 @@ Section semantics.
           eval_expr_old (if word.eqb vc (word.of_Z 0) then e2 else e1)
     end.
 
-    Fixpoint evaluate_call_args_log (arges : list expr) (mc : metrics) (a : abstract_trace) :=
+    Fixpoint evaluate_call_args_log (arges : list expr) (mc : metrics) (a : option abstract_trace) :=
       match arges with
       | e :: tl =>
         'Some (v, mc', a') <- eval_expr e mc a | None;
@@ -212,11 +239,11 @@ Module exec. Section WithEnv.
 
   Local Notation metrics := MetricLog.
 
-  Implicit Types post : io_trace -> mem -> locals -> metrics -> abstract_trace -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
+  Implicit Types post : io_trace -> mem -> locals -> metrics -> option abstract_trace -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
   
   Inductive exec :
-    cmd -> io_trace -> mem -> locals -> metrics -> abstract_trace ->
-    (io_trace -> mem -> locals -> metrics -> abstract_trace -> Prop) -> Prop :=
+    cmd -> io_trace -> mem -> locals -> metrics -> option abstract_trace ->
+    (io_trace -> mem -> locals -> metrics -> option abstract_trace -> Prop) -> Prop :=
   | skip
     t m l mc a post
     (_ : post t m l mc a)
@@ -234,7 +261,7 @@ Module exec. Section WithEnv.
   | store sz ea ev
     t m l mc a post
     addr mc' a' (_ : eval_expr m l ea mc a = Some (addr, mc', a'))
-    v mc'' a'' (_ : eval_expr m l ev mc' a' = Some (v, mc'', (cons_write sz addr a'')))
+    v mc'' a'' (_ : eval_expr m l ev mc' a' = Some (v, mc'', (with_write sz addr a'')))
     m' (_ : store sz m addr v = Some m')
     (_ : post t m' l (addMetricInstructions 1
                         (addMetricLoads 1
@@ -246,15 +273,15 @@ Module exec. Section WithEnv.
     (_ : forall addr mStack mCombined,
         anybytes addr n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body t mCombined (map.put l x addr) (addMetricInstructions 1 (addMetricLoads 1 mc)) (f addr)
+        exec body t mCombined (map.put l x addr) (addMetricInstructions 1 (addMetricLoads 1 mc)) (apply_salloc f addr)
           (fun t' mCombined' l' mc' a' =>
              exists mSmall' mStack',
               anybytes addr n mStack' /\
               map.split mCombined' mSmall' mStack' /\
               post t' mSmall' l' mc' a'))
-    : exec (cmd.stackalloc x n body) t mSmall l mc (cons_salloc f) post
+    : exec (cmd.stackalloc x n body) t mSmall l mc (with_salloc f) post
   | if_true t m l mc e c1 c2 a a' post
-    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (cons_branch true a')))
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (with_branch true a')))
     (_ : word.unsigned v <> 0)
     (_ : exec c1 t m l (addMetricInstructions 2
                           (addMetricLoads 2
@@ -262,7 +289,7 @@ Module exec. Section WithEnv.
     : exec (cmd.cond e c1 c2) t m l mc a post
   | if_false e c1 c2
     t m l mc a a' post
-    v mc' (_ : eval_expr m l e mc a = Some (v, mc', cons_branch false a'))
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', with_branch false a'))
     (_ : word.unsigned v = 0)
     (_ : exec c2 t m l (addMetricInstructions 2
                           (addMetricLoads 2
@@ -275,7 +302,7 @@ Module exec. Section WithEnv.
     : exec (cmd.seq c1 c2) t m l mc a post
   | while_false e c
     t m l mc a a' post
-    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (cons_branch false a')))
+    v mc' (_ : eval_expr m l e mc a = Some (v, mc', (with_branch false a')))
     (_ : word.unsigned v = 0)
     (_ : post t m l (addMetricInstructions 1
                        (addMetricLoads 1
@@ -283,7 +310,7 @@ Module exec. Section WithEnv.
     : exec (cmd.while e c) t m l mc a post
   | while_true e c
       t m l mc a post
-      v mc' a' (_ : eval_expr m l e mc a = Some (v, mc', cons_branch true a'))
+      v mc' a' (_ : eval_expr m l e mc a = Some (v, mc', with_branch true a'))
       (_ : word.unsigned v <> 0)
       mid (_ : exec c t m l mc' a' mid)
       (_ : forall t' m' l' mc'' a', mid t' m' l' mc'' a' ->
@@ -305,7 +332,7 @@ Module exec. Section WithEnv.
   | interact binds action arges
       t m l mc a post
       mKeep mGive (_: map.split m mKeep mGive)
-      args mc' i f (_ :  evaluate_call_args_log m l arges mc a = Some (args, mc', cons_IO i f))
+      args mc' i f (_ :  evaluate_call_args_log m l arges mc a = Some (args, mc', with_IO i f))
       mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
@@ -313,7 +340,7 @@ Module exec. Section WithEnv.
           post (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
             (addMetricInstructions 1
             (addMetricStores 1
-            (addMetricLoads 2 mc'))) (f (mReceive, resvals)))
+            (addMetricLoads 2 mc'))) (apply_IO f (mReceive, resvals)))
     : exec (cmd.interact binds action arges) t m l mc a post
   .
 
@@ -359,6 +386,12 @@ Module exec. Section WithEnv.
       repeat match goal with
       | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
           replace v2 with v1 in * by congruence; clear H2
+      end;
+      try match goal with
+        | H : with_write _ _ _ = with_write _ _ _ |- _ => apply with_write_inj in H; subst
+        | H : with_salloc _ = with_salloc _ |- _ => apply with_salloc_inj in H; subst
+        | H : with_branch _ _ = with_branch _ _ |- _ => apply with_branch_inj in H; subst
+        | H : with_IO _ _ = with_IO _ _ |- _ => apply with_IO_inj in H; subst
       end;
       try solve [econstructor; eauto | exfalso; congruence].
     - econstructor. 1: eassumption.
