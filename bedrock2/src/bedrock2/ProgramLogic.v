@@ -8,30 +8,6 @@ Require Import bedrock2.Map.SeparationLogic bedrock2.Scalars.
 Definition spec_of (procname:String.string) := list (String.string * (list String.string * list String.string * Syntax.cmd.cmd)) -> Prop.
 Existing Class spec_of.
 
-(*Definition ct_spec_of (procname:String.string) := list (String.string * (list String.string * list String.string * Syntax.cmd.cmd)) -> Prop.
-Existing Class ct_spec_of.*)
-
-(* not sure where to put these lemmas *)
-(*Lemma align_trace_cons {T} x xs cont t (H : xs = app cont t) : @cons T x xs = app (cons x cont) t.
-Proof. intros. cbn. congruence. Qed.
-Lemma align_trace_app {T} x xs cont t (H : xs = app cont t) : @app T x xs = app (app x cont) t.
-Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
-Check filterio. Print filterio.
-Lemma filterio_cons {width: BinNums.Z}{BW: Bitwidth.Bitwidth width}{word: Interface.word.word width}{mem: Interface.map.map Interface.word.rep Init.Byte.byte} (t : trace) (e : event) :
-  filterio (cons e t) = match e with | IO i => cons i (filterio t) | _ => filterio t end.
-Proof. destruct e; try reflexivity. Qed.*)
-
-(*Ltac trace_alignment :=
-    repeat match goal with
-      | t := cons _ _ |- _ => subst t
-      end;
-    repeat match goal with
-      | H1 : filterio _ = _ |- context [ filterio _ ]  => repeat rewrite filterio_cons; repeat rewrite filterio_cons in H1; rewrite H1
-      end;          
-    repeat (eapply align_trace_app
-      || eapply align_trace_cons
-      || exact (eq_refl (app nil _))).*)
-
 Module Import Coercions.
   Import Map.Interface Word.Interface BinInt.
   Coercion Z.of_nat : nat >-> Z.
@@ -269,7 +245,6 @@ Ltac fwd_uniq_step :=
   end.
 Ltac fwd_uniq := repeat fwd_uniq_step.
 
-Check WeakestPrecondition.call. Check WeakestPrecondition.cmd.
 
 Ltac straightline :=
   match goal with
@@ -290,22 +265,25 @@ Ltac straightline :=
                 let f := fresh "f" in destruct H as [f H]
             end
         end;
+      let f := fresh "f" in
       match goal with
-      | |- call _ _ _ _ _ _ => idtac
-      | _ => eexists
-      end; intros; unfold1_call_goal; cbv beta match delta [call_body];
+      | |- call _ _ _ _ _ _ _ => idtac
+      | _ => eexists ?[f]
+      end;
+      repeat instantiate (1 := (fun _ => _));
+      intros; unfold1_call_goal; cbv beta match delta [call_body appl];
       lazymatch goal with
       | |- if ?test then ?T else _ => replace test with true by reflexivity; change T
       end;
       cbv beta match delta [func]
-  | |- WeakestPrecondition.cmd _ (cmd.set ?s ?e) _ _ _ ?post => idtac "3";
+  | |- WeakestPrecondition.cmd _ (cmd.set ?s ?e) _ _ _ _ ?post => idtac "3";
     unfold1_cmd_goal; cbv beta match delta [cmd_body];
     let __ := match s with String.String _ _ => idtac | String.EmptyString => idtac end in
     ident_of_constr_string_cps s ltac:(fun x =>
       ensure_free x;
       (* NOTE: keep this consistent with the [exists _, _ /\ _] case far below *)
       letexists _ as x; split; [solve [repeat straightline]|])
-  | |- cmd _ ?c _ _ _ ?post => idtac "4";
+  | |- cmd _ ?c _ _ _ _ ?post => idtac "4";
     let c := eval hnf in c in
     lazymatch c with
     | cmd.while _ _ => fail
@@ -411,6 +389,9 @@ Ltac straightline :=
       lazymatch Coq.setoid_ring.InitialRing.isZcst z with
       | true => split; [exact eq_refl|]
       end
+  | |- @eq abstract_trace _ _ /\ _ => split; [solve [repeat straightline]|] (* Probably shouldn't do this for all conjunctions? *)
+  | |- (@eq abstract_trace) _ ?a => try subst a; reflexivity
+  | |- _ => eapply WeakestPrecondition.solve_pop_read || eapply WeakestPrecondition.solve_pop_branch
   | |- _ => idtac "42"; straightline_stackalloc
   | |- _ => idtac "43"; straightline_stackdealloc
   | |- context[sep (sep _ _) _] => idtac "44"; progress (flatten_seps_in_goal; cbn [seps])
@@ -422,7 +403,7 @@ Check WeakestPrecondition.call.
 (* TODO: once we can automatically prove some calls, include the success-only version of this in [straightline] *)
 Ltac straightline_call :=
   lazymatch goal with
-  | |- WeakestPrecondition.call ?functions ?callee _ _ _ _ =>
+  | |- WeakestPrecondition.call ?functions ?callee _ _ _ _ _ =>
     let callee_spec := lazymatch constr:(_:spec_of callee) with ?s => s end in
     let Hcall := lazymatch goal with H: callee_spec functions |- _ => H end in
     eapply WeakestPreconditionProperties.Proper_call; cycle -1;
@@ -432,9 +413,9 @@ Ltac straightline_call :=
 
 Ltac straightline_ct_call :=
   lazymatch goal with
-  | |- call ?functions ?callee _ _ _ _ =>
+  | |- call ?functions ?callee _ _ _ _ _ =>
       let Hcall := multimatch goal with
-                   | H: context [ call functions callee _ _ _ _ ] |- _ => H
+                   | H: context [ call functions callee _ _ _ _ _ ] |- _ => H
                    end in
       eapply WeakestPreconditionProperties.Proper_call; cycle -1;
         [ eapply Hcall | try eabstract solve [ Morphisms.solve_proper ].. ];
@@ -443,7 +424,7 @@ Ltac straightline_ct_call :=
 
 Ltac current_trace_mem_locals :=
   lazymatch goal with
-  | |- WeakestPrecondition.cmd _ _ ?t ?m ?l _ => constr:((t, m, l))
+  | |- WeakestPrecondition.cmd _ _ ?t ?m ?l _ _ => constr:((t, m, l))
   end.
 
 Ltac seprewrite Hrw :=
@@ -455,13 +436,13 @@ Ltac seprewrite_by Hrw tac :=
   let tml := current_trace_mem_locals in
   let m := lazymatch tml with (_, ?m, _) => m end in
   let H := multimatch goal with H: _ m |- _ => H end in
-  seprewrite_in_by Hrw H tac.
+  seprewrite_in_by Hrw H tac. Check @cmd.
 
 Ltac show_program :=
   lazymatch goal with
-  | |- @cmd ?width ?BW ?word ?mem ?locals ?ext_spec ?stack_addr ?E ?c ?F ?G ?H ?I =>
+  | |- @cmd ?width ?BW ?word ?mem ?locals ?ext_spec ?E ?c ?F ?G ?H ?I ?J =>
     let c' := eval cbv in c in
-    change (@cmd width BW word mem locals ext_spec stack_addr E (fst (c, c')) F G H I)
+    change (@cmd width BW word mem locals ext_spec E (fst (c, c')) F G H I J)
   end.
 
 Ltac subst_words :=

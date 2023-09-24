@@ -29,6 +29,24 @@ Section WithIOEvent.
   | cons_read (sz : access_size) (a : word) (after : abstract_trace)
   | cons_write (sz : access_size) (a : word) (after : abstract_trace)
   | cons_salloc (after : word -> abstract_trace).
+  
+  Definition pop_read a s addr : option abstract_trace :=
+    match a with
+    | cons_read s0 addr0 a' =>
+        if (access_size.access_size_beq s s0 && word.eqb addr addr0)%bool
+        then
+          Some a'
+        else None
+    | _ => None end.
+  
+  Definition pop_branch a b : option abstract_trace :=
+    match a with
+    | cons_branch b0 a' =>
+        if (Bool.eqb b b0)%bool
+        then
+          Some a'
+        else None
+    | _ => None end.
 End WithIOEvent.
 
   Definition ExtSpec{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
@@ -106,7 +124,6 @@ Section semantics.
   (* this is the expr evaluator that is used to verify execution time, the just-correctness-oriented version is below *)
   Section WithMemAndLocals.
     Context (m : mem) (l : locals).
-
     Local Notation "' x <- a | y ; f" := (match a with x => f | _ => y end)
                                            (right associativity, at level 70, x pattern).
     Fixpoint eval_expr (e : expr) (mc : metrics) (a : abstract_trace) : option (word * metrics * abstract_trace) :=
@@ -134,8 +151,7 @@ Section semantics.
       | expr.load aSize addr =>
           'Some (addr', mc', a') <- eval_expr addr mc a | None;
           'Some v <- load aSize m addr' | None;
-          'cons_read aSize0 addr'0 a'' <- a' | None;
-          'true <- (access_size.access_size_beq aSize aSize0 && word.eqb addr' addr'0)%bool | None;
+          'Some a'' <- pop_read a' aSize addr' | None;
           Some (
               v,
               addMetricInstructions 1 (addMetricLoads 2 mc'),
@@ -149,8 +165,7 @@ Section semantics.
               a'')
       | expr.ite c e1 e2 =>
           'Some (vc, mc', a') <- eval_expr c mc a | None;
-          'cons_branch b a'' <- a' | None;
-          'true <- Bool.eqb (negb b) (word.eqb vc (word.of_Z 0)) | None;
+          'Some a'' <- pop_branch a' (negb (word.eqb vc (word.of_Z 0))) | None;
           eval_expr
             (if word.eqb vc (word.of_Z 0) then e2 else e1)
             (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc')))

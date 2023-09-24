@@ -18,6 +18,43 @@ Section WeakestPrecondition.
   Definition store sz m a v (post : mem -> Prop) : Prop :=
     exists m', store sz m a v = Some m' /\ post m'.
 
+  Definition pop_read a s addr post : Prop :=
+    match a with
+    | cons_read s0 addr0 a' =>
+        if (access_size.access_size_beq s s0 && word.eqb addr addr0)%bool
+        then
+          post a'
+        else False
+    | _ => False end.
+
+  Definition pop_branch a b post : Prop :=
+    match a with
+    | cons_branch b0 a' =>
+        if (Bool.eqb b b0)%bool
+        then
+          post a'
+        else False
+    | _ => False end.
+
+  Section popping.
+    Context {word_ok : word.ok word}.
+    
+    Lemma solve_pop_read a s addr (post : _ -> Prop) :
+      post a -> pop_read (cons_read s addr a) s addr post.
+    Proof.
+      intros. cbv [pop_read].
+      rewrite Properties.word.eqb_eq by exact eq_refl.
+      rewrite access_size.internal_access_size_dec_lb by exact eq_refl.
+      simpl. assumption.
+    Qed.
+
+    Lemma solve_pop_branch a b (post : _ -> Prop) :
+      post a -> pop_branch (cons_branch b a) b post.
+    Proof.
+      intros. cbv [pop_branch]. rewrite Bool.eqb_reflx. assumption.
+    Qed.
+  End popping.
+
   Section WithMemAndLocals.
     Context (m : mem) (l : locals).
     (* conceptually, maybe it doesn't make a great deal of sense to pass in the trace, and we
@@ -25,6 +62,7 @@ Section WeakestPrecondition.
        it's easier to work with this way, though. *)
     Local Notation "' x <- a | y ; f" := (match a with x => f | _ => y end)
                                            (right associativity, at level 70, x pattern).
+    
     Definition expr_body rec (a : abstract_trace) (e : Syntax.expr) (post : abstract_trace -> word -> Prop) : Prop :=
       match e with
       | expr.literal v =>
@@ -36,19 +74,17 @@ Section WeakestPrecondition.
         rec a' e2 (fun a'' v2 =>
         post a'' (interp_binop op v1 v2)))
       | expr.load s e =>
-          rec a e (fun a' addr =>
-        'cons_read s0 addr0 a'' <- a' | False;
-        'true <- (access_size.access_size_beq s s0 && word.eqb addr addr0)%bool | False;
-        load s m addr (post a''))
+        rec a e (fun a' addr =>
+        pop_read a' s addr (fun a'' =>
+        load s m addr (post a'')))
       | expr.inlinetable s tbl e =>
         rec a e (fun a' addr' =>
         load s (map.of_list_word tbl) addr' (post a'))
       | expr.ite c e1 e2 =>
         rec a c (fun a' b =>
-        'cons_branch b0 a'' <- a' | False;
-        'true <- Bool.eqb (negb b0) (word.eqb b (word.of_Z 0)) | False;             
+        pop_branch a' (negb (word.eqb b (word.of_Z 0))) (fun a'' =>
         rec a'' (if word.eqb b (word.of_Z 0) then e2 else e1) (fun a''' v =>
-        post a''' v))
+        post a''' v)))
     end.
     Fixpoint expr a e := expr_body expr a e.
   End WithMemAndLocals.
@@ -175,13 +211,13 @@ Section WeakestPrecondition.
 
   Definition program funcs main t m l a post : Prop := cmd (call funcs) main t m l a post.
 End WeakestPrecondition.
-Check @cmd_body.
+Check @cmd.
 Ltac unfold1_cmd e :=
   lazymatch e with
-    @cmd ?width ?BW ?word ?mem ?locals ?ext_spec ?CA ?c ?t ?m ?l ?post =>
+    @cmd ?width ?BW ?word ?mem ?locals ?ext_spec ?CA ?c ?t ?m ?l ?a ?post =>
     let c := eval hnf in c in
     constr:(@cmd_body width BW word mem locals ext_spec CA
-                      (@cmd width BW word mem locals ext_spec CA) c t m l post)
+                      (@cmd width BW word mem locals ext_spec CA) c t m l a post)
   end.
 Ltac unfold1_cmd_goal :=
   let G := lazymatch goal with |- ?G => G end in
@@ -190,9 +226,9 @@ Ltac unfold1_cmd_goal :=
 Check @expr. Check @expr_body.
 Ltac unfold1_expr e :=
   lazymatch e with
-    @expr ?width ?BW ?word ?mem ?locals ?m ?l ?t ?arg ?post =>
+    @expr ?width ?BW ?word ?mem ?locals ?m ?l ?a ?arg ?post =>
     let arg := eval hnf in arg in
-    constr:(@expr_body width BW word mem locals m l (@expr width BW word mem locals m l) t arg post)
+    constr:(@expr_body width BW word mem locals m l (@expr width BW word mem locals m l) a arg post)
   end.
 Ltac unfold1_expr_goal :=
   let G := lazymatch goal with |- ?G => G end in
@@ -224,10 +260,10 @@ Ltac unfold1_list_map'_goal :=
 Check @call. Check @call_body.
 Ltac unfold1_call e :=
   lazymatch e with
-    @call ?width ?BW ?word ?mem ?locals ?ext_spec ?fs ?fname ?t ?m ?l ?post =>
+    @call ?width ?BW ?word ?mem ?locals ?ext_spec ?fs ?fname ?t ?m ?a ?l ?post =>
     let fs := eval hnf in fs in
     constr:(@call_body width BW word mem locals ext_spec
-                       (@call width BW word mem locals ext_spec) fs fname t m l post)
+                       (@call width BW word mem locals ext_spec) fs fname t m a l post)
   end.
 Ltac unfold1_call_goal :=
   let G := lazymatch goal with |- ?G => G end in

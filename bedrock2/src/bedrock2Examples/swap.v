@@ -45,16 +45,12 @@ Instance ct_bad_swap : ct_spec_of "bad_swap" :=
     { requires t m := m =* scalar a_addr a * scalar b_addr b * R }.*)
   
   Lemma swap_ok : program_logic_goal_for_function! swap.
-  Proof. repeat straightline. split; repeat straightline. 2: split; trace_alignment; repeat straightline; auto.
-         eexists. split. 2: trace_alignment. repeat constructor. Qed.
-
-  (*Lemma swap_ct : program_logic_ct_goal_for_function! swap.
-  Proof. repeat straightline. trace_alignment. Qed.*)
+  Proof. repeat straightline. eauto. Unshelve. exact empty. Qed.
 
   Instance spec_of_bad_swap : spec_of "bad_swap" :=
     fnspec! "bad_swap" a_addr b_addr / a b R,
     { requires t m := m =* scalar a_addr a * scalar b_addr b * R;
-      ensures T M :=  M =* scalar a_addr b * scalar b_addr a * R /\ (filterio T) = (filterio t) }.
+      ensures T M :=  M =* scalar a_addr b * scalar b_addr a * R /\ T = t }.
   Lemma bad_swap_ok : program_logic_goal_for_function! bad_swap.
   Proof. repeat straightline; eauto. Abort.
 
