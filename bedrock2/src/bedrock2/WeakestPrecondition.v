@@ -41,20 +41,28 @@ Section WeakestPrecondition.
   Section popping.
     Context {word_ok : word.ok word}.
     
-    Lemma solve_pop_read a s addr (post : _ -> Prop) :
-      post a -> pop_read (with_read s addr a) s addr post.
+    Lemma solve_pop_read_ct a s addr (post : _ -> Prop) :
+      post (Some a) -> pop_read (Some (cons_read s addr a)) s addr post.
     Proof.
-      intros. cbv [pop_read]. destruct a; try apply H. simpl.
+      intros. cbv [pop_read].
       rewrite Properties.word.eqb_eq by exact eq_refl.
       rewrite access_size.internal_access_size_dec_lb by exact eq_refl.
       simpl. assumption.
     Qed.
 
-    Lemma solve_pop_branch a b (post : _ -> Prop) :
-      post a -> pop_branch (with_branch b a) b post.
+    Lemma solve_pop_read_nonct s addr (post : _ -> Prop) :
+      post None -> pop_read None s addr post.
+    Proof. auto. Qed.
+
+    Lemma solve_pop_branch_ct a b (post : _ -> Prop) :
+      post (Some a) -> pop_branch (Some (cons_branch b a)) b post.
     Proof.
-      intros. cbv [pop_branch]. destruct a; try apply H. simpl. rewrite Bool.eqb_reflx. assumption.
+      intros. cbv [pop_branch]. rewrite Bool.eqb_reflx. assumption.
     Qed.
+
+    Lemma solve_pop_branch_nonct b (post : _ -> Prop) :
+      post None -> pop_branch None b post.
+    Proof. auto. Qed.
   End popping.
 
   Section WithMemAndLocals.
@@ -343,7 +351,7 @@ Notation "'ctfunc!' name a0 .. an '|' '/' '|' h0 .. hn ',' '{' 'requires' tr mem
                            .. (forall hn,
                                  pre ->
                                  WeakestPrecondition.call
-                                   functions name tr mem (appl a0 .. (appl an f) ..) (cons a0 .. (cons an nil) ..)
+                                   functions name tr mem (Some (appl a0 .. (appl an f) ..)) (cons a0 .. (cons an nil) ..)
                                    (fun tr' mem' a' rets =>
                                       rets = nil /\
                                         post)) ..)) ..))))
@@ -413,8 +421,8 @@ Notation "'fnspec!' name a0 .. an '/' g0 .. gn ',' '{' 'requires' tr mem := pre 
                          (forall tr mem,
                              pre ->
                              WeakestPrecondition.call
-                               functions name tr mem (cons a0 .. (cons an nil) ..)
-                               (fun tr' mem' rets =>
+                               functions name tr mem None (cons a0 .. (cons an nil) ..)
+                               (fun tr' mem' a' rets =>
                                   rets = nil /\ post))) ..)) ..))
     (at level 200,
       name at level 0,

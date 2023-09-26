@@ -45,6 +45,12 @@ Section WithIOEvent.
   Definition with_write sz addr := option_map (cons_write sz addr).
   Lemma with_write_inj sz addr addr' a a' : with_write sz addr a = with_write sz addr' a' -> a = a'.
   Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
+  Lemma with_write_ct sz addr a a' : cons_write sz addr a' = a -> with_write sz addr (Some a') = Some a.
+  Proof. intros. simpl. f_equal. assumption. Qed.
+  Lemma with_write_nct sz addr : with_write sz addr None = None.
+  Proof. reflexivity. Qed.
+  Lemma cons_write_fun sz addr a : cons_write sz addr a = cons_write sz addr a.
+  Proof. reflexivity. Qed.
 
   Definition with_salloc := option_map cons_salloc.
   Lemma with_salloc_inj a a' : with_salloc a = with_salloc a' -> a = a'.

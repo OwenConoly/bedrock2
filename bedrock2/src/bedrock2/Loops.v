@@ -21,16 +21,16 @@ Section Loops.
   Context {functions : list (String.string * (list String.string * list String.string * Syntax.cmd))}.
   Let call := WeakestPrecondition.call functions.
   Lemma tailrec_localsmap_1ghost
-    {e c t} {m: mem} {l} {a} {post : io_trace -> mem -> locals -> abstract_trace -> Prop}
+    {e c t} {m: mem} {l} {a} {post : io_trace -> mem -> locals -> option abstract_trace -> Prop}
     {measure: Type} {Ghost: Type}
-    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> abstract_trace -> Prop)
+    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> option abstract_trace -> Prop)
     (lt: measure -> measure -> Prop)
     (Hwf: well_founded lt)
     (v0: measure) (g0: Ghost)
     (Hpre: P v0 g0 t m l a)
     (Hbody: forall v g t m l a,
       P v g t m l a ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)%Z) a') (* why was dexpr not written here originally? *) /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)%Z) a') (* why was dexpr not written here originally? *) /\
       (word.unsigned br <> 0%Z -> cmd call c t m l a'
         (fun t' m' l' a'' => exists v' g',
           P v' g' t' m' l' a'' /\
@@ -59,14 +59,14 @@ Section Loops.
   Lemma tailrec_localsmap_1ghost_parameterized_finalpost
     {e c rest t} {m: mem} {l} {a}
     {measure: Type} {Ghost: Type}
-    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> abstract_trace -> Prop)
+    (P Q: measure -> Ghost -> io_trace -> mem -> locals -> option abstract_trace -> Prop)
     (lt: measure -> measure -> Prop)
     (Hwf: well_founded lt)
     (v0: measure) (g0: Ghost)
     (Hpre: P v0 g0 t m l a)
     (Hbody: forall v g t m l a,
       P v g t m l a ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
       (word.unsigned br <> 0%Z -> cmd call c t m l a'
         (fun t' m' l' a'' => exists v' g',
           P v' g' t' m' l' a'' /\
@@ -165,7 +165,7 @@ Section Loops.
     (Hpre : invariant v0 t m l a)
     (Hbody : forall v t m l a,
       invariant v t m l a ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
          (word.unsigned br <> 0 ->
           cmd call c t m l a' (fun t m l a => exists v', invariant v' t m l a /\ lt v' v)) /\
          (word.unsigned br = 0 -> post t m l a'))
@@ -189,7 +189,7 @@ Section Loops.
     (Hbody : forall v t m a, tuple.foralls (fun localstuple =>
       (tuple.apply (invariant v t m) localstuple) a ->
       let l := reconstruct variables localstuple in
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
          (word.unsigned br <> 0 ->
           cmd call c t m l a' (fun t m l a =>
             Markers.unique (Markers.left (tuple.existss (fun localstuple =>
@@ -235,7 +235,7 @@ Section Loops.
       @dlet _ (fun _ => Prop) (reconstruct variables l) (fun localsmap : locals =>
       match tuple.apply (hlist.apply (spec v) g t m) l a with S_ =>
       S_.(1) ->
-      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
+      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
       (word.unsigned br <> 0%Z -> cmd call c t m localsmap a'
         (fun t' m' localsmap' a'' =>
           Markers.unique (Markers.left (hlist.existss (fun l' => enforce variables l' localsmap' /\ Markers.right (
@@ -282,7 +282,7 @@ Section Loops.
     (Hbody : forall v t m l a,
       let S := spec v t m l a in let (P, Q) := S in
       P ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
       (word.unsigned br <> 0%Z -> cmd call c t m l a'
         (fun t' m' l' a'' => exists v',
           let S' := spec v' t' m' l' a'' in let '(P', Q') := S' in
@@ -330,20 +330,20 @@ Section Loops.
     {measure : Type} (invariant:_->_->_->_->_->Prop) lt
     (Hwf : well_founded lt)
     (v0 : measure)
-    (Henter : exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+    (Henter : exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
                               (word.unsigned br = 0%Z -> post t m l a') /\
     (word.unsigned br <> 0%Z -> invariant v0 t m l a'))
     (*(Hpre : invariant v0 t m l) this is useless now. I replace it by making  
       Henter bigger *)
     (Hbody : forall v t m l a, invariant v t m l a ->
        cmd call c t m l a (fun t m l a =>
-         exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+         exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
          (word.unsigned br <> 0 -> exists v', invariant v' t m l a' /\ lt v' v) /\
          (word.unsigned br =  0 -> post t m l a')))
     : cmd call (cmd.while e c) t m l a post.
   Proof.
     eexists (option measure), (with_bottom lt), (fun ov t m l a =>
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
       ((word.unsigned br <> 0 -> exists v, ov = Some v /\ invariant v t m l a') /\
       (word.unsigned br =  0 -> ov = None /\ post t m l a'))).
     split; auto using well_founded_with_bottom; []. split.
@@ -381,10 +381,10 @@ Section Loops.
     (Hbody : forall v t m l a,
       let S := spec v t m l a in let (P, Q) := S in
       P ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
       (word.unsigned br <> 0%Z -> cmd call c t m l a'
         (fun t' m' l' a'' =>
-          (exists br a''', dexpr m' l' a'' e br (cons_branch false a''') /\ word.unsigned br = 0 /\ Q t' m' l' a''') \/
+          (exists br a''', dexpr m' l' a'' e br (with_branch false a''') /\ word.unsigned br = 0 /\ Q t' m' l' a''') \/
           exists v', let S' := spec v' t' m' l' a'' in let '(P', Q') := S' in
           P' /\
           lt v' v /\
@@ -395,7 +395,7 @@ Section Loops.
   Proof.
     eexists (option measure), (with_bottom lt), (fun v t m l a =>
       match v with
-      | None => exists br a', dexpr m l a e br (cons_branch false a') /\ word.unsigned br = 0 /\ Q0 t m l a'
+      | None => exists br a', dexpr m l a e br (with_branch false a') /\ word.unsigned br = 0 /\ Q0 t m l a'
       | Some v =>
           let S := spec v t m l a in let '(P, Q) := S in
           P /\ forall T M L A, Q T M L A -> Q0 T M L A
@@ -434,11 +434,11 @@ Section Loops.
       @dlet _ (fun _ => Prop) (reconstruct variables l) (fun localsmap : locals =>
       match tuple.apply (hlist.apply (spec v) g t m) l a with S_ =>
       S_.(1) ->
-      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
+      Markers.unique (Markers.left (exists br a', dexpr m localsmap a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\ Markers.right (
       (word.unsigned br <> 0%Z -> cmd call c t m localsmap a'
         (fun t' m' localsmap' a'' =>
           Markers.unique (Markers.left (hlist.existss (fun l' => enforce variables l' localsmap' /\ Markers.right (
-          Markers.unique (Markers.left (exists br' a''', dexpr m' localsmap' a'' e br' (cons_branch false a''') /\ Markers.right (word.unsigned br'= 0 /\ tuple.apply (S_.(2) t' m') l' a''') ) ) \/
+          Markers.unique (Markers.left (exists br' a''', dexpr m' localsmap' a'' e br' (with_branch false a''') /\ Markers.right (word.unsigned br'= 0 /\ tuple.apply (S_.(2) t' m') l' a''') ) ) \/
           Markers.unique (Markers.left (hlist.existss (fun g' => exists v',
           match tuple.apply (hlist.apply (spec v') g' t' m') l' a'' with S' =>
           S'.(1) /\ Markers.right (
@@ -452,7 +452,7 @@ Section Loops.
     eexists (option measure), (with_bottom lt), (fun vi ti mi localsmapi ai =>
       exists li, localsmapi = reconstruct variables li /\
                    match vi with
-                   | None => exists br ai', dexpr mi localsmapi ai e br (cons_branch false ai') /\ word.unsigned br = 0 /\ tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) ti mi) li ai'
+                   | None => exists br ai', dexpr mi localsmapi ai e br (with_branch false ai') /\ word.unsigned br = 0 /\ tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) ti mi) li ai'
                    | Some vi => exists gi,
                        match tuple.apply (hlist.apply (spec vi) gi ti mi) li ai with
                        | S_ => S_.(1) /\ forall T M L A, tuple.apply (S_.(2) T M) L A -> tuple.apply ((tuple.apply (hlist.apply (spec v0) g0 t m) l0 a).(2) T M) L A end
@@ -492,14 +492,14 @@ Section Loops.
     lt (Hwf : well_founded lt)
     {post : _->_->_->_-> Prop}
     (v0 : measure)
-    (Henter : exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+    (Henter : exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
                               (word.unsigned br = 0%Z -> post t m l a') /\
                               (word.unsigned br <> 0%Z -> tuple.apply (invariant v0 t m) localstuple a'))
     (*(Hpre : tuple.apply (invariant v0 t m) localstuple) this is useless, just like in atleastone_localsmap *)
     (Hbody : forall v t m, tuple.foralls (fun localstuple => forall a,
       tuple.apply (invariant v t m) localstuple a ->
        cmd call c t m (reconstruct variables localstuple) a (fun t m l a =>
-         exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+         exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
                          (word.unsigned br <> 0 ->
                           Markers.unique (Markers.left (tuple.existss (fun localstuple => enforce variables localstuple l /\
                                                                                             Markers.right (Markers.unique (exists v', tuple.apply (invariant v' t m) localstuple a' /\ lt v' v)))))) /\
@@ -524,7 +524,7 @@ Section Loops.
   Qed.
 
   Lemma while_zero_iterations {e c t l a} {m : mem} {post : _->_->_->_-> Prop}
-    (HCondPost: exists a', dexpr m l a e (word.of_Z 0) (cons_branch false a') /\ post t m l a')
+    (HCondPost: exists a', dexpr m l a e (word.of_Z 0) (with_branch false a') /\ post t m l a')
     (*(HPost: post t m l) no good :( *)
     : cmd call (cmd.while e c) t m l a post.
   Proof.
@@ -547,7 +547,7 @@ Section Loops.
     {measure : Type} P Q lt (Hwf : well_founded lt) (v0 : measure) R0
     (Hpre : (P v0 t l a * R0) m)
     (Hbody : forall v t m l a R, (P v t l a * R) m ->
-      exists br a', dexpr m l a e br (cons_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
+      exists br a', dexpr m l a e br (with_branch (negb (Z.eqb (word.unsigned br) 0)) a') /\
       (word.unsigned br <> 0%Z -> cmd call c t m l a'
         (fun t' m' l' a'' => exists v' dR, (P v' t' l' a'' * (R * dR)) m' /\
           lt v' v /\

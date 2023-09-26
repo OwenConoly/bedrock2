@@ -54,7 +54,9 @@ Section WeakestPrecondition.
     { eapply Proper_literal; eauto. cbv [pointwise_relation Basics.impl]. auto. }
     { eapply Proper_get; eauto. cbv [pointwise_relation Basics.impl]. auto. }
     { eapply IHa2; eauto; intuition idtac. cbv [WeakestPrecondition.pop_read] in *.
-     repeat Tactics.destruct_one_match; auto. eapply Proper_load; eauto using Proper_load. cbv [pointwise_relation Basics.impl]. auto. }
+      repeat Tactics.destruct_one_match; auto.
+      all: eapply Proper_load; eauto using Proper_load.
+      all: cbv [pointwise_relation Basics.impl]; auto. }
     { eapply IHa2; eauto; intuition idtac. eapply Proper_load; eauto using Proper_load. cbv [pointwise_relation Basics.impl]. auto. }
     { eapply IHa2_1; eauto; intuition idtac. cbv [WeakestPrecondition.pop_branch] in *.
       repeat Tactics.destruct_one_match; eauto using Proper_load. }
@@ -238,17 +240,19 @@ Section WeakestPrecondition.
     { eapply IHe in H; t.
       cbv [WeakestPrecondition.load Semantics.pop_read WeakestPrecondition.pop_read] in *; t.
       rewrite H.
-      destruct x1; try solve [destruct H0]. destruct (andb _ _); try solve [destruct H0].
-      destruct H0 as [v [H0p1 H0p2]].
-      rewrite H0p1. eauto. }
+      destruct x1; try solve [destruct H0].
+      1: destruct a1; try solve [destruct H0].
+      1: destruct (andb _ _); try solve [destruct H0].
+      all: destruct H0 as [v [H0p1 H0p2]].
+      all: rewrite H0p1. all: eauto. }
     { eapply IHe in H; t. cbv [WeakestPrecondition.load] in H0; t. rewrite H. rewrite H0. eauto. }
     { eapply IHe1 in H; t. eapply IHe2 in H0; t. rewrite H, H0; eauto. }
     { eapply IHe1 in H; t.
       cbv [Semantics.pop_branch WeakestPrecondition.pop_branch] in *; t.
       rewrite H. destruct x1; try solve [destruct H0].
-      destruct (Bool.eqb _ _); try solve [destruct H0]. Tactics.destruct_one_match.
-      { eapply IHe3 in H0; t. }
-      { eapply IHe2 in H0; t. } }
+      1: destruct a0; try solve [destruct H0].
+      1: destruct (Bool.eqb _ _); try solve [destruct H0].
+      all: Tactics.destruct_one_match; [eapply IHe3 in H0; t | eapply IHe2 in H0; t]. }
   Qed.
 
   Import ZArith coqutil.Tactics.Tactics.
@@ -267,8 +271,9 @@ Section WeakestPrecondition.
       2: { eapply IHe. eassumption. }
       intros addr ? ?. t. unfold WeakestPrecondition.load.
       cbv [Semantics.pop_read WeakestPrecondition.pop_read] in *.
-      destruct a1; try solve [congruence].
-      destruct (andb _ _); try solve [congruence]. injection E1. eauto.
+      destruct o; try solve [congruence]. 1: destruct a1; try solve [congruence].
+      1: destruct (andb _ _); try solve [congruence].
+      all: injection E1; eauto.
     - repeat (destruct_one_match_hyp; try discriminate; []).
       inversion H. subst r0 mc'. clear H.
       eapply Proper_expr.
@@ -287,11 +292,10 @@ Section WeakestPrecondition.
       2: { eapply IHe1. eassumption. }
       intros vc ? ?. t.
       cbv [Semantics.pop_branch WeakestPrecondition.pop_branch] in *.
-      destruct a0; try solve [congruence]. destruct (Bool.eqb _ _); try solve [congruence].
-      injection E0 as E0. subst.
-      destr (word.eqb r (word.of_Z 0)).
-      + eapply IHe3. eassumption.
-      + eapply IHe2. eassumption.
+      destruct o; try solve [congruence]. 1: destruct a0; try solve [congruence].
+      1: destruct (Bool.eqb _ _); try solve [congruence].
+      all: injection E0 as E0; subst.
+      all: destr (word.eqb r (word.of_Z 0)); [eapply IHe3; eassumption|eapply IHe2; eassumption].
   Qed.
 
   Lemma sound_args : forall m l t args mc P,
@@ -392,15 +396,15 @@ Section WeakestPrecondition.
       try eapply Properties.map.all_gets_from_map_of_NoDup_list; eauto.
   Qed.
 
-  (** Ad-hoc lemmas here? *)
+  (** Ad-hoc lemmas here? *) Search (option Semantics.abstract_trace).
 
   Import bedrock2.Syntax bedrock2.Semantics bedrock2.WeakestPrecondition.
   Lemma interact_nomem call action binds arges t m l a post
-        args f (Hargs : dexprs m l a arges args (cons_IO (map.empty, binds, args) f))
+        args f (Hargs : dexprs m l a arges args (with_IO (map.empty, binds, args) f))
         (Hext : ext_spec t map.empty binds args (fun mReceive (rets : list word) =>
            mReceive = map.empty /\
            exists l0 : locals, map.putmany_of_list_zip action rets l = Some l0 /\
-           post (cons ((map.empty, binds, args), (map.empty, rets)) t) m l0 (f (map.empty, rets))))
+           post (cons ((map.empty, binds, args), (map.empty, rets)) t) m l0 (apply_IO f (map.empty, rets))))
     : WeakestPrecondition.cmd call (cmd.interact action binds arges) t m l a post.
   Proof using word_ok mem_ok ext_spec_ok.
     exists m.
@@ -412,7 +416,7 @@ Section WeakestPrecondition.
     intros. eapply Properties.map.split_empty_r in H. subst. assumption.
   Qed.
 
-  Lemma intersect_expr: forall m l t e (post1 post2: abstract_trace -> word -> Prop),
+  Lemma intersect_expr: forall m l t e (post1 post2: option abstract_trace -> word -> Prop),
       WeakestPrecondition.expr m l t e post1 ->
       WeakestPrecondition.expr m l t e post2 ->
       WeakestPrecondition.expr m l t e (fun t v => post1 t v /\ post2 t v).
@@ -428,8 +432,9 @@ Section WeakestPrecondition.
       unfold Morphisms.pointwise_relation, Basics.impl.
       unfold load. intros. cbv [pop_read] in *.
       destruct a0; try solve [destruct H1; congruence].
-      destruct (andb _ _); try solve [destruct H1; congruence].
-      decompose [and ex] H1. assert (x0 = x) by congruence. subst. eauto.
+      1: destruct a0; try solve [destruct H1; congruence].
+      1: destruct (andb _ _); try solve [destruct H1; congruence].
+      all: decompose [and ex] H1; assert (x0 = x) by congruence; subst; eauto.
     - eapply Proper_expr.
       2: eapply IHe.
       2: eapply H.
@@ -450,8 +455,9 @@ Section WeakestPrecondition.
       unfold Morphisms.pointwise_relation, Basics.impl.
       intros ? ? [? ?]. cbv [pop_branch] in *.
       destruct a; try solve [destruct H1; congruence].
-      destruct (Bool.eqb _ _); try solve [destruct H1; congruence].
-      Tactics.destruct_one_match; eauto using Proper_expr.
+      1: destruct a; try solve [destruct H1; congruence].
+      1: destruct (Bool.eqb _ _); try solve [destruct H1; congruence].
+      all: Tactics.destruct_one_match; eauto using Proper_expr.
   Qed.
 
   Lemma dexpr_expr (m : mem) l a e P
@@ -464,14 +470,15 @@ Section WeakestPrecondition.
     { cbv [WeakestPrecondition.get]. intros ? ? [? [? ?] ]. eexists. eexists. eauto. }
     { intros P a' H. apply IHe in H. destruct H as (?&?&?&?). cbv [pop_read] in *.
       destruct x0; try solve [destruct H0; congruence].
-      destruct (andb _ _) eqn:E; try solve [destruct H0; congruence].
-      cbv [WeakestPrecondition.dexpr load] in *.
-      destruct H0 as [v [H0p1 H0p2]].
-      eexists. eexists. split; [|eassumption].
-      eapply Proper_expr; [|eauto].
-      intros ? ? [? ?]; subst.
-      rewrite E.
-      eexists; eauto. }
+      1: destruct a0; try solve [destruct H0; congruence].
+      1: destruct (andb _ _) eqn:E; try solve [destruct H0; congruence].
+      all: cbv [WeakestPrecondition.dexpr load] in *.
+      all: destruct H0 as [v [H0p1 H0p2]].
+      all: eexists; eexists; split; [|eassumption].
+      all: eapply Proper_expr; [|eauto].
+      all: intros ? ? [? ?]; subst.
+      1: rewrite E.
+      all: eexists; eauto. }
     { intros P a' H; case (IHe _ _ H) as (?&?&?&?&?&?); clear IHe H.
       cbv [WeakestPrecondition.dexpr] in *.
       eexists. eexists. split; [|eassumption].
@@ -488,21 +495,35 @@ Section WeakestPrecondition.
       subst. split; reflexivity.
     }
     { intros P t H.
-      case (IHe1 _ _ H) as (?&?&?&H').
-      destruct x0; try solve [destruct H']. cbv [pop_branch] in *.
-      destruct (Bool.eqb _ _) eqn:E; try solve [destruct H'; congruence].
-      Tactics.destruct_one_match_hyp.
-      { case (IHe3 _ _ H') as (?&?&?&?).
-        clear IHe1 IHe2 H H'.
-        cbv [WeakestPrecondition.dexpr] in *.
-        eexists. eexists. split; [|eassumption].
-        eapply Proper_expr; [|eauto]; intros ? ? [].
-        subst. rewrite word.eqb_eq by reflexivity. rewrite E. assumption. }
-      { case (IHe2 _ _ H') as (?&?&?&?).
-        clear IHe1 IHe3 H H'.
-        cbv [WeakestPrecondition.dexpr] in *.
-        eexists. eexists. split; [|eassumption].
-        eapply Proper_expr; [|eauto]; intros ? ? [].
-        subst. rewrite word.eqb_ne by assumption. rewrite E. assumption. } }
+      case (IHe1 _ _ H) as (?&?&?&H'). cbv [pop_branch] in *.
+      destruct x0; try solve [destruct H'].
+      1: destruct a; try solve [destruct H'].
+      1: destruct (Bool.eqb _ _) eqn:E; try solve [destruct H'; congruence].
+      { Tactics.destruct_one_match_hyp.
+        { case (IHe3 _ _ H') as (?&?&?&?).
+          clear IHe1 IHe2 H H'.
+          cbv [WeakestPrecondition.dexpr] in *.
+          eexists. eexists. split; [|eassumption].
+          eapply Proper_expr; [|eauto]; intros ? ? [].
+          subst. rewrite word.eqb_eq by reflexivity. rewrite E. assumption. }
+        { case (IHe2 _ _ H') as (?&?&?&?).
+          clear IHe1 IHe3 H H'.
+          cbv [WeakestPrecondition.dexpr] in *.
+          eexists. eexists. split; [|eassumption].
+          eapply Proper_expr; [|eauto]; intros ? ? [].
+          subst. rewrite word.eqb_ne by assumption. rewrite E. assumption. } }
+      { Tactics.destruct_one_match_hyp.
+        { case (IHe3 _ _ H') as (?&?&?&?).
+          clear IHe1 IHe2 H H'.
+          cbv [WeakestPrecondition.dexpr] in *.
+          eexists. eexists. split; [|eassumption].
+          eapply Proper_expr; [|eauto]; intros ? ? [].
+          subst. rewrite word.eqb_eq by reflexivity. assumption. }
+        { case (IHe2 _ _ H') as (?&?&?&?).
+          clear IHe1 IHe3 H H'.
+          cbv [WeakestPrecondition.dexpr] in *.
+          eexists. eexists. split; [|eassumption].
+          eapply Proper_expr; [|eauto]; intros ? ? [].
+          subst. rewrite word.eqb_ne by assumption. assumption. } } }      
   Qed.
 End WeakestPrecondition.

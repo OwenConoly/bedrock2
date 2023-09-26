@@ -243,7 +243,7 @@ Ltac fwd_uniq_step :=
   | |- _ /\ _ => split; [ solve [repeat fwd_uniq_step; eq_uniq] | ]
   | _ => solve [ eq_uniq ]
   end.
-Ltac fwd_uniq := repeat fwd_uniq_step.
+Ltac fwd_uniq := repeat fwd_uniq_step. Check with_write.
 
 
 Ltac straightline :=
@@ -389,15 +389,19 @@ Ltac straightline :=
       lazymatch Coq.setoid_ring.InitialRing.isZcst z with
       | true => split; [exact eq_refl|]
       end
-  | |- @eq abstract_trace _ _ /\ _ => split; [solve [repeat straightline]|] (* Probably shouldn't do this for all conjunctions? *)
-  | |- (@eq abstract_trace) _ ?a => try subst a; reflexivity
-  | |- _ => eapply WeakestPrecondition.solve_pop_read || eapply WeakestPrecondition.solve_pop_branch
+  | |- @eq (option abstract_trace) _ _ /\ _ => split; [solve [repeat straightline]|] (* Probably shouldn't do this for all conjunctions? *)
+  | |- @eq (option abstract_trace) _ ?a => subst a
+                                                                                                     | |- @eq abstract_trace _ _ => reflexivity
+  | |- WeakestPrecondition.pop_read _ _ _ _ => eapply WeakestPrecondition.solve_pop_read_ct || eapply WeakestPrecondition.solve_pop_read_nonct
+  | |- WeakestPrecondition.pop_branch _ _ _ => eapply WeakestPrecondition.solve_pop_branch_nonct || eapply WeakestPrecondition.solve_pop_branch_ct
+  | |- with_write _ _ _ = Some _ => eapply with_write_ct
+  | |- with_write _ _ _ = None => eapply with_write_nct
+  | |- cons_write _ _ _ = _ => eapply cons_write_fun
   | |- _ => idtac "42"; straightline_stackalloc
   | |- _ => idtac "43"; straightline_stackdealloc
   | |- context[sep (sep _ _) _] => idtac "44"; progress (flatten_seps_in_goal; cbn [seps])
   | H : context[sep (sep _ _) _] |- _ => idtac "45"; progress (flatten_seps_in H; cbn [seps] in H)
-end.
-
+end. Search with_write.
                                                        
 Check WeakestPrecondition.call.
 (* TODO: once we can automatically prove some calls, include the success-only version of this in [straightline] *)

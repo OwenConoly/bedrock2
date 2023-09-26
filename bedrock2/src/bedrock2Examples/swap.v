@@ -39,10 +39,8 @@ Section WithParameters.
     { requires t m := m =* scalar a_addr a * scalar b_addr b * R;
       ensures T M :=  M =* scalar a_addr b * scalar b_addr a * R /\ T = t }.
 
-  (* I should make this work again.
-Instance ct_bad_swap : ct_spec_of "bad_swap" :=
-    ctfunc! "bad_swap" | a_addr b_addr / | a b R,
-    { requires t m := m =* scalar a_addr a * scalar b_addr b * R }.*)
+  Lemma with_write_ct sz addr a a' : cons_write sz addr a' = a -> with_write sz addr (Some a') = Some a.
+  Proof. intros. simpl. f_equal. assumption. Qed.
   
   Lemma swap_ok : program_logic_goal_for_function! swap.
   Proof. repeat straightline. eauto. Unshelve. exact empty. Qed.
@@ -60,7 +58,7 @@ Instance ct_bad_swap : ct_spec_of "bad_swap" :=
   Definition spec_of_swap_same : spec_of "swap" :=
     fnspec! "swap" a_addr b_addr / a R,
     { requires t m := m =* scalar a_addr a * R /\ b_addr = a_addr;
-      ensures T M :=  M =* scalar a_addr a * R /\ (filterio T) = (filterio t) }.
+      ensures T M :=  M =* scalar a_addr a * R /\ T = t }.
 
   Lemma swap_same_ok :
     let spec_of_swap := spec_of_swap_same in
@@ -70,11 +68,21 @@ Instance ct_bad_swap : ct_spec_of "bad_swap" :=
   Instance spec_of_swap_swap : spec_of "swap_swap" :=
     fnspec! "swap_swap" a_addr b_addr / a b R,
     { requires t m := m =* scalar a_addr a * scalar b_addr b * R;
-      ensures T M :=  M =* scalar a_addr a * scalar b_addr b * R /\ (filterio T) = (filterio t)}.
+      ensures T M :=  M =* scalar a_addr a * scalar b_addr b * R /\ T = t}.
 
   Lemma swap_swap_ok :
     let spec_of_swap := ct_spec_of_swap in program_logic_goal_for_function! swap_swap.
-  Proof. repeat (straightline || straightline_ct_call); eauto using eq_trans. Qed.
+  Proof. repeat (straightline || straightline_ct_call); eauto using eq_trans.
+         lazymatch goal with
+         | |- call ?functions ?callee _ _ _ _ _ =>
+             let Hcall := multimatch goal with
+                          | H: context [ call functions callee _ _ _ _ _ ] |- _ => H
+                          end in idtac Hcall;
+             eapply WeakestPreconditionProperties.Proper_call; cycle -1;
+         [ | try eabstract solve [ Morphisms.solve_proper ].. ];
+        [ .. | intros ? ? ? ? ]
+  end.
+  straightline_ct_call. Qed.
 
   Lemma link_swap_swap_swap_swap : spec_of_swap_swap &[,swap_swap; swap].
   Proof. eauto using swap_swap_ok, swap_ok. Qed.
