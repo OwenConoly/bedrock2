@@ -338,7 +338,7 @@ Module exec. Section WithEnv.
   | interact binds action arges
       t m l mc a post
       mKeep mGive (_: map.split m mKeep mGive)
-      args mc' i f (_ :  evaluate_call_args_log m l arges mc a = Some (args, mc', with_IO i f))
+      args mc' f (_ :  evaluate_call_args_log m l arges mc a = Some (args, mc', with_IO (mGive, action, args) f))
       mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
