@@ -1087,9 +1087,9 @@ Section Spilling.
       a0 <= start ->
       start + Z.of_nat (List.length args) <= a7 + 1 ->
       Forall (fun x => fp < x <= maxvar /\ (x < a0 \/ a7 < x)) args ->
-      (forall t2' m2' l2' mc2' a2',
+      (forall t2' m2' l2' mc2',
           related maxvar frame fpval t1 m1 l1' t2' m2' l2' ->
-          post t2' m2' l2' mc2' a2') ->
+          post t2' m2' l2' mc2' a2) ->
       exec e (set_vars_to_reg_range args start) t2 m2 l2 mc2 (option_leak_set_vars_to_reg_range fpval args a2) post.
   Proof.
     induction args; intros.
@@ -1706,6 +1706,17 @@ Section Spilling.
   Lemma option_map_option_map' {A B C} (f : B -> C) (g : A -> B) (x : option A) :
     (option_map f) (option_map g x) = option_map (fun x => f (g x)) x.
   Proof. destruct x; reflexivity. Qed.
+
+  Lemma break_option_map {A B C} (f : A -> B) (g : B -> C) x :
+    option_map (fun x => g (f x)) x = option_map g (option_map f x).
+  Proof.
+    destruct x; reflexivity. Qed.
+
+   Lemma set_reg_range_to_option (f : abstract_trace -> abstract_trace) a fpval args :
+        option_map (fun a => leak_set_reg_range_to_vars fpval args (f a)) a =
+          option_leak_set_reg_range_to_vars fpval args (option_map f a).
+   Proof. rewrite option_leak_set_reg_range_to_vars_correct. destruct a; reflexivity. Qed.
+   
     
   Lemma spilling_correct (e1 e2 : env) (Ev : spill_functions e1 = Success e2)
         (s1 : stmt)
@@ -1716,32 +1727,27 @@ Section Spilling.
         (a1 : option abstract_trace)
         (post : Semantics.io_trace -> mem -> locals -> MetricLog -> option abstract_trace -> Prop):
     exec e1 s1 t1 m1 l1 mc1 a1 post ->
-    forall (frame : mem -> Prop) (maxvar : Z),
+    exists F,
+    forall (frame : mem -> Prop) (maxvar : Z) (fuel : nat) f,
+      Nat.le F fuel ->
       valid_vars_src maxvar s1 ->
-      forall (t2 : Semantics.io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (a2 : option abstract_trace) (fpval : word),
+      forall (t2 : Semantics.io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
         related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-        exists F,
-        forall fuel,
-          Nat.le F fuel ->
-          exec e2 (spill_stmt s1) t2 m2 l2 mc2 (option_map (fun a1 => transform_stmt_trace fuel e1 fpval s1 a1 (fun x=>x)) a1)
+          exec e2 (spill_stmt s1) t2 m2 l2 mc2 (option_map (fun a1 => transform_stmt_trace fuel e1 fpval s1 a1 f) a1)
             (fun (t2' : Semantics.io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) (a2' : option abstract_trace) =>
                exists t1' m1' l1' mc1' a1',
-                 related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
+                 related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\ a2' = option_map f a1' /\
                    post t1' m1' l1' mc1' a1').
   Proof.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
     - (* exec.interact *)
-      exists 1%nat. intros. destruct fuel as [|fuel']; [blia|]. clear H3.
+      exists 1%nat. intros. fwd. destruct fuel as [|fuel']; [blia|]. clear H3.
       cbn [transform_stmt_trace].
       cbv [with_IO]. rewrite option_map_option_map.
-      replace (option_map _ _) with
-        (option_leak_set_reg_range_to_vars fpval argvars
-           (with_IO (mGive, action, argvals)
-              (option_map (fun f => (fun o => leak_set_vars_to_reg_range fpval resvars (f o))) f))).
-      2: { rewrite option_leak_set_reg_range_to_vars_correct. destruct f; reflexivity. }
+      rewrite break_option_map. rewrite <- option_leak_set_reg_range_to_vars_correct.
       eapply exec.seq_cps.
       eapply set_reg_range_to_vars_correct; try eassumption; try (unfold a0, a7; blia).
-      intros *. intros R GM. clear l2 mc2 H4.
+      intros *. intros R GM. clear l2 mc2 H5.
       unfold related in R. fwd.
       spec (subst_split (ok := mem_ok) m) as A.
       1: eassumption. 1: ecancel_assumption.
@@ -1749,6 +1755,7 @@ Section Spilling.
       1: ecancel_assumption.
       subst mGive'.
       eapply exec.seq_cps.
+      rewrite break_option_map.
       eapply @exec.interact with (mGive := mGive).
       + eapply map.split_comm. exact B.
       + rewrite arg_regs_alt by blia. 1: eassumption.
@@ -1771,10 +1778,8 @@ Section Spilling.
         eexists. split. 1: exact ER.
         intros.
         cbv [Semantics.apply_IO].
-        rewrite option_map_option_map.
-        replace (option_map _ _) with (option_leak_set_vars_to_reg_range fpval resvars
-                                         (option_map (fun f => f (mReceive, resvals)) f)).
-        2: { rewrite option_leak_set_vars_to_reg_range_correct. destruct f; try reflexivity. }
+        rewrite option_map_option_map. rewrite break_option_map.
+        rewrite <- option_leak_set_vars_to_reg_range_correct.
         eapply set_vars_to_reg_range_correct; cycle 1.
         { eassumption. }
         { eapply map.putmany_of_list_zip_to_getmany_of_list.
@@ -1786,6 +1791,7 @@ Section Spilling.
         { eassumption. }
         { intros. do 5 eexists.
           split; [eassumption|].
+          split. { rewrite <- option_map_option_map. reflexivity. }
           eapply H2p1.
           unfold map.split. split; [reflexivity|].
           move C at bottom.
@@ -1807,6 +1813,10 @@ Section Spilling.
         * eassumption.
         * eassumption.
     - (* exec.call *)
+      exists (S F). intros. fwd. destruct fuel as [|fuel']; [blia|].
+      cbn [transform_stmt_trace]. rewrite H.
+      rewrite break_option_map.     
+      rewrite <- option_leak_set_reg_range_to_vars_correct.
       rename l into lCH1, l2 into lCL1, st0 into lFH4.
       rename H5p0 into FR, H5p1 into FA.
       unfold spill_functions in Ev.
@@ -1816,7 +1826,7 @@ Section Spilling.
       apply_in_hyps @map.getmany_of_list_length.
       apply_in_hyps @map.putmany_of_list_zip_sameLength.
       eapply set_reg_range_to_vars_correct; try eassumption || (unfold a0, a7 in *; blia).
-      intros lCL2 ? ? ? ?.
+      intros lCL2 ? ? ?.
       assert (bytes_per_word = 4 \/ bytes_per_word = 8) as B48. {
         unfold bytes_per_word. destruct width_cases as [E' | E']; rewrite E'; cbv; auto.
       }
@@ -1830,14 +1840,15 @@ Section Spilling.
       rewrite !arg_regs_alt by blia.
       eapply exec.call_cps; try eassumption.
       set (maxvar' := (Z.max (max_var fbody)
-                             (Z.max (fold_left Z.max params 0) (fold_left Z.max rets 0)))) in *.
+                         (Z.max (fold_left Z.max params 0) (fold_left Z.max rets 0)))) in *.
+      rewrite break_option_map.
       eapply exec.stackalloc. {
         rewrite Z.mul_comm.
         apply Z_mod_mult.
       }
       intros *. intros A Sp.
       destruct (anybytes_to_array_1 (mem_ok := mem_ok) _ _ _ A) as (bytes & Pt & L).
-      edestruct (byte_list_to_word_list_array bytes) as (words & L' & F). {
+      edestruct (byte_list_to_word_list_array bytes) as (words & L' & F1). {
         rewrite L.
         unfold Memory.ftprint.
         rewrite Z2Nat.id by blia.
@@ -1847,18 +1858,20 @@ Section Spilling.
           rewrite Z.mul_0_r.
           apply Zmod_0_l.
       }
-      eapply F in Pt. clear F.
+      eapply F1 in Pt. clear F1.
       assert (length words = Z.to_nat (maxvar' - 31)) as L''. {
         Z.to_euclidean_division_equations; blia.
       }
       eapply exec.seq_cps.
       unfold related in H5. fwd. rename lStack into lStack1, lRegs into lRegs1.
+      cbv [Semantics.apply_salloc]. rewrite option_map_option_map. rewrite break_option_map.
+      rewrite <- option_leak_set_vars_to_reg_range_correct. Check set_vars_to_reg_range_correct.
       eapply set_vars_to_reg_range_correct.
       { eapply fresh_related with (m1 := m) (frame := (word_array fpval stackwords * frame)%sep).
         - eassumption.
         - blia.
         - exact L''.
-        - enough ((eq m * word_array fpval stackwords * frame * word_array a words)%sep mCombined).
+        - enough ((eq m * word_array fpval stackwords * frame * word_array addr words)%sep mCombined).
           1: ecancel_assumption.
           unfold sep at 1. do 2 eexists.
           split. 1: exact Sp.
@@ -1879,8 +1892,8 @@ Section Spilling.
         3: eassumption.
         2: {
           unfold is_valid_src_var.
-          intros *. intro F.
-          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt in F. exact F.
+          intros *. intro F1.
+          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt in F1. exact F1.
         }
         2: eapply Forall_le_max.
         cbv beta.
@@ -1888,38 +1901,28 @@ Section Spilling.
       intros mL4 lFL4 mcL4 tL4 R.
       eapply exec.seq_cps.
       eapply exec.weaken. {
-        eapply IHexec with (is_ct := is_ct).
-        3: { Search (fio t). rewrite H5p0. exact R. }
+        eapply IHexec. 
+        1: blia. 2: exact R.
+        unfold valid_vars_src.
+        eapply Forall_vars_stmt_impl.
+        2: eapply max_var_sound.
+        2: eapply forallb_vars_stmt_correct.
+        3: eassumption.
         2: {
-          unfold valid_vars_src.
-          eapply Forall_vars_stmt_impl.
-          2: eapply max_var_sound.
-          2: eapply forallb_vars_stmt_correct.
-          3: eassumption.
-          2: {
-            unfold is_valid_src_var.
-            intros *.
-            rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
-          }
-          cbv beta. subst maxvar'. blia. }
-        destruct is_ct; [|reflexivity].
-        intros.
-        destruct H8 as [t1'' H8]. subst.
-        apply H3 in H5. destruct H5 as [retvs [l' [Hget [Hput Hpost]]]].
-        Search post. apply H4 in Hpost.
-        2: { eexists. reflexivity. }
-        destruct Hpost as [HP [a1' [t1''0 [CTp1 CTp2]]]].
-        apply app_inv_tail in CTp1. subst.
-        split. { instantiate (1 := fun _ => True). apply I. }
-        eexists. eexists.
-        split; [reflexivity|].
-        exact CTp2. }
-      cbv beta. intros tL5 mL5 lFL5 mcL5 (tH5 & mH5 & lFH5 & mcH5 & R5 & OC & CT).
+          unfold is_valid_src_var.
+          intros *.
+          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
+        }
+        cbv beta. subst maxvar'. blia.
+      }
+      cbv beta. intros tL5 mL5 lFL5 mcL5 aL5 (tH5 & mH5 & lFH5 & mcH5 & aH5 & R5 & CT & OC).
+      clear Q.
       match goal with
-      | H: context[outcome], A: context[outcome] |- _ =>
-        specialize H with (1 := A); move H at bottom; rename H into S
+      | H: context[outcome], A: context[outcome] |- _ => 
+        specialize H with (1 := A); move H at bottom; rename H into Q
       end.
       fwd. rename l' into lCH8.
+      subst. rewrite break_option_map. rewrite <- option_leak_set_reg_range_to_vars_correct.
       eapply set_reg_range_to_vars_correct.
       { eassumption. }
       { blia. }
@@ -1930,21 +1933,21 @@ Section Spilling.
         3: eassumption.
         2: {
           unfold is_valid_src_var.
-          intros *. intro F.
-          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt in F. exact F.
+          intros *. intro F1.
+          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt in F1. exact F1.
         }
         2: eapply Forall_le_max.
         cbv beta.
         subst maxvar'. clear. blia. }
       { eassumption. }
       rename R into R0.
-      intros lFL6 mcL6 tL6 R GM.
+      intros lFL6 mcL6 R GM.
       (* prove that if we remove the additional stack provided by exec.stackalloc
          and store the result vars back into the caller's registers,
          states are still related and postcondition holds *)
       unfold related in R. fwd. rename lStack into lStack5, lRegs into lRegs5.
       move A at bottom. move Sp at bottom.
-      assert ((eq mH5 * word_array fpval stackwords * frame * word_array a stackwords0)%sep mL5)
+      assert ((eq mH5 * word_array fpval stackwords * frame * word_array addr stackwords0)%sep mL5)
         as M2 by ecancel_assumption.
       unfold sep in M2 at 1. unfold map.split in M2.
       destruct M2 as (m2Small & mStack' & (? & ?) & ? & M2).
@@ -1963,10 +1966,10 @@ Section Spilling.
       2: reflexivity.
       {
         eapply cast_word_array_to_bytes in M2.
-        eapply array_1_to_anybytes in M2.
+        eapply array_1_to_anybytes in M2. Search Memory.anybytes.
         match goal with
-        | H: Memory.anybytes a ?LEN1 mStack' |-
-          Memory.anybytes a ?LEN2 mStack' => replace LEN2 with LEN1; [exact H|]
+        | H: Memory.anybytes addr ?LEN1 mStack' |-
+          Memory.anybytes addr ?LEN2 mStack' => replace LEN2 with LEN1; [exact H|]
         end.
         erewrite List.flat_map_const_length. 2: {
           intros w. rewrite LittleEndianList.length_le_split; trivial.
@@ -1975,6 +1978,7 @@ Section Spilling.
       { eassumption. }
       { rewrite arg_regs_alt by blia. eassumption. }
       { exact PM67. }
+      rewrite break_option_map. rewrite <- option_leak_set_vars_to_reg_range_correct.
       eapply set_vars_to_reg_range_correct.
       { unfold related. eexists lStack1, lRegs1, _. ssplit.
         { reflexivity. }
@@ -1997,50 +2001,10 @@ Section Spilling.
       { reflexivity. }
       { unfold a0, a7. blia. }
       { eassumption. }
-      { intros m22 l22 mc22 t22 R22. do 4 eexists.
-        split; [|split]. 2: eassumption.
-        { rewrite Rp0. assumption. }
-        destruct is_ct; [|reflexivity].
-        destruct CT as [F [_ [a1' [t1'' [t2'' [CTp1 [CTp2 [CTp3 CTp4]]]]]]]].
-        subst.
-        apply H4 in Sp2.
-        2: { eexists. reflexivity. }
-        destruct Sp2 as [HP [a1'0 [t1''0 [CTp5 CTp6]]]].
-        apply app_inv_tail in CTp5. subst.
-        exists (S F).
-        split; [assumption|].
-        do 3 eexists.
-        split. { reflexivity. }
-        split. { eassumption. }
-        split.
-        { subst t22. subst tL6. subst tL4. subst t2'.
-          rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
-        intros f fuel Hf Hfuel.
-        destruct fuel as [|fuel']; [blia|].
-        repeat (rewrite rev_app_distr || rewrite rev_involutive || cbn [List.app rev]).
-        cbn [transform_stmt_trace].
-        rewrite H.
-        eapply Semantics.generates_with_rem_trans.
-        { eapply Semantics.generates_with_empty_rem_app.
-          apply Semantics.generates_generates_with_empty_rem.
-          apply Semantics.generator_generates. }
-        constructor.
-        eapply Semantics.generates_with_rem_trans.
-        { eapply Semantics.generates_with_empty_rem_app.
-          apply Semantics.generates_generates_with_empty_rem.
-          apply Semantics.generator_generates. }
-        eapply Semantics.generates_with_rem_trans.
-        { eapply CTp4.
-          { intros. apply Semantics.abs_tr_eq_app.
-            { apply Semantics.abs_tr_eq_self. }
-            { auto. } }
-          blia. }
-        eapply Semantics.abs_tr_eq_correct1. Search a1'.
-        { eapply Semantics.generates_with_rem_app.
-          apply Semantics.generates_generates_with_empty_rem.
-          apply Semantics.generator_generates. }
-        apply Hf.
-        eapply Semantics.rem_unique; eassumption. }
+      { intros m22 l22 mc22 a22 R22. do 5 eexists.
+        split; [eassumption|].
+        split; [reflexivity|].
+        eassumption. }
     - (* SLoad *)
       eapply exec.seq_cps. Check load_iarg_reg_correct.
       eapply load_iarg_reg_correct; (blia || eassumption || idtac). Search related.
