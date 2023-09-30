@@ -57,9 +57,9 @@ Section WithIOEvent.
   Proof. intros. destruct a; destruct a'; simpl in H; congruence. Qed.
 
   Definition apply_salloc (f : option (word -> abstract_trace)) addr :=
-    match f with | Some f => Some (f addr) | None => None end.
+    option_map (fun f => f addr) f.
   Definition apply_IO (f : option (io_output -> abstract_trace)) i :=
-    match f with | Some f => Some (f i) | None => None end.
+    option_map (fun f => f i) f.
 
   Definition pop_read a s addr : option (option abstract_trace) :=
     match a with
