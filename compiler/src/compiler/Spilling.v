@@ -842,7 +842,7 @@ Section Spilling.
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
       exec e (save_ires_reg x) t2 m2 (map.put l2 (ires_reg x) v) mc2 (option_map (leak_save_ires_reg fpval x) a2)
         (fun t2' m2' l2' mc2' a2' => exists t1' m1' l1' mc1' a1',
-             related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\ post t1' m1' l1' mc1' a1').
+             related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\ a2' = a2 /\ post t1' m1' l1' mc1' a1').
   Proof.
     intros.
     unfold save_ires_reg, leak_save_ires_reg, stack_loc, ires_reg, related in *. fwd.
@@ -859,7 +859,8 @@ Section Spilling.
                  | |- exists _, _ => eexists
                  | |- _ /\ _ => split
                  end.
-          9: eassumption.
+          10: eassumption.
+          9: reflexivity.
           1: reflexivity.
           1: ecancel_assumption.
           3: {
@@ -897,7 +898,8 @@ Section Spilling.
              | |- exists _, _ => eexists
              | |- _ /\ _ => split
              end.
-      9: eassumption.
+      10: eassumption.
+      9: destruct a2; reflexivity.
       1: reflexivity.
       1: ecancel_assumption.
       3: {
@@ -930,6 +932,10 @@ Section Spilling.
       all: try eassumption.
   Qed.
 
+  Lemma option_map_id {A} (a : option A) : 
+    option_map (fun a => a) a = a.
+  Proof. destruct a; reflexivity. Qed.
+
   (* SOp does not create an up-to-date `related` before we invoke this one, because after SOp,
      `related` does not hold: the result is already in l1 and lStack, but not yet in stackwords.
      So we request the `related` that held *before* SOp, i.e. the one where the result is not
@@ -937,9 +943,9 @@ Section Spilling.
   Lemma save_ires_reg_correct'': forall e t1 t2 m1 m2 l1 l2 mc2 a2 x v maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
-      (forall t2' m2' l2' mc2' a2',
+      (forall t2' m2' l2' mc2',
           related maxvar frame fpval t1 m1 (map.put l1 x v) t2' m2' l2' ->
-          post t2' m2' l2' mc2' a2') ->
+          post t2' m2' l2' mc2' a2) ->
       exec e (save_ires_reg x) t2 m2 (map.put l2 (ires_reg x) v) mc2 (option_map (leak_save_ires_reg fpval x) a2) post.
   Proof.
     intros.
@@ -988,7 +994,7 @@ Section Spilling.
           blia.
       }
       blia.
-    - eapply exec.skip.
+    - eapply exec.skip. rewrite option_map_id.
       eapply H1.
       (* even though we did nothing, we have to reconstruct the `related` from the `related` that
          held *before* the SOp *)
@@ -1074,9 +1080,6 @@ Section Spilling.
   Qed.
 
   Print leak_set_vars_to_reg_range.
-  Lemma option_map_id {A} (a : option A) : 
-    option_map (fun a => a) a = a.
-  Proof. destruct a; reflexivity. Qed.
       
   Lemma set_vars_to_reg_range_correct:
     forall args start argvs e t1 t2 m1 m2 l1 l1' l2 mc2 a2 maxvar frame post fpval,
@@ -2006,54 +2009,25 @@ Section Spilling.
         split; [reflexivity|].
         eassumption. }
     - (* SLoad *)
-      eapply exec.seq_cps. Check load_iarg_reg_correct.
-      eapply load_iarg_reg_correct; (blia || eassumption || idtac). Search related.
+      exists 1%nat. intros. fwd. destruct fuel as [|fuel']; [blia|].
+      cbn [transform_stmt_trace]. cbv [with_read]. rewrite option_map_option_map.
+      rewrite break_option_map.
+      eapply exec.seq_cps.
+      eapply load_iarg_reg_correct; (blia || eassumption || idtac).
       clear mc2 H4. intros.
-      eapply exec.seq_cps. Search related.
+      eapply exec.seq_cps.
       pose proof H3 as A. unfold related in A. fwd.
       unfold Memory.load, Memory.load_Z, Memory.load_bytes in *. fwd.
+      rewrite break_option_map.
       eapply exec.load. {
         rewrite map.get_put_same. reflexivity. }
-      { edestruct (@sep_def _ _ _ m2 (eq m)) as (m' & m2Rest & Sp & ? & ?). Search m2.
+      { edestruct (@sep_def _ _ _ m2 (eq m)) as (m' & m2Rest & Sp & ? & ?).
         1: ecancel_assumption. unfold map.split in Sp. subst. fwd.
         unfold Memory.load, Memory.load_Z, Memory.load_bytes.
         erewrite map.getmany_of_tuple_in_disjoint_putmany; eauto. }
-      eapply save_ires_reg_correct''.
-      + eassumption.
-      + blia.
-      + intros. do 4 eexists.
-        split; [|split; [eassumption|]].
-        { eassumption. }
-        (* begin CT stuff for load *)
-        destruct is_ct; [|reflexivity].
-        specialize (H2 _ _ _ _ H1). clear H1.
-        destruct H2 as [HP [a1' [t1'' [CTp1 CTp2]]]].
-        { eexists. rewrite app_one_cons. reflexivity. }
-        exists 1%nat.
-        cbn [rev] in CTp1.
-        split; [assumption|].
-        rewrite app_one_cons in CTp1. apply app_inv_tail in CTp1. subst.
-        do 3 eexists.
-        split.
-        { rewrite app_one_cons. reflexivity. }
-        split.
-        { eassumption. }
-        split.
-        { subst t2'0. subst t2'. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
-        intros f fuel Hf Hfuel.
-        destruct fuel as [|fuel']; [blia|].
-        cbn [transform_stmt_trace].
-        subst t2'0. subst t2'.
-        repeat (rewrite rev_app_distr || cbn [rev List.app] || rewrite rev_involutive).
-        repeat rewrite <- app_assoc.
-        cbn [rev List.app] in CTp2.
-        inversion CTp2. subst. inversion H7. subst. clear H7 CTp2.
-        eapply Semantics.abs_tr_eq_correct1.
-        { eapply Semantics.generates_with_empty_rem_app.
-          eapply Semantics.generates_generates_with_empty_rem.
-          apply Semantics.generator_generates. }
-        auto.
-        (* end CT stuff for load *)
+      rewrite break_option_map.
+      eapply save_ires_reg_correct''; try (eassumption || blia).
+      intros. do 5 eexists. split; [eassumption|]. split; [reflexivity|]. eassumption.
     - (* exec.store *)
       eapply exec.seq_cps. eapply load_iarg_reg_correct; (blia || eassumption || idtac).
       clear mc2 H5. intros.
