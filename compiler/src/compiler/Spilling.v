@@ -226,71 +226,66 @@ Section Spilling.
    Check exec.
    Print exec.exec.
    
-  Fixpoint transform_stmt_trace {env: map.map String.string (list Z * list Z * stmt)}
+  Inductive correspond {env: map.map String.string (list Z * list Z * stmt)}
       (* maps the abstract trace of an unspilled program to the abstract trace of the spilled program.
          executes s, guided by t, popping events off of t and adding events to st as it goes.
          returns the final abstract trace st.
          may (but will not necessarily) return empty if input is garbage.
          *)
-      (magicFuel : nat) (e: env) (fpval: word) (s : stmt) (t : abstract_trace) (f : abstract_trace(*remaining part of t*) -> abstract_trace(*rest of st*)) :
-    abstract_trace :=
-    match magicFuel with
-    | O => empty
-    | S magicFuel' =>
-        let transform_stmt_trace := transform_stmt_trace magicFuel' e in
-        match s with
-        | SLoad sz x y o =>
-            match t with
-            | cons_read _(*sz*) a t' =>
-                leak_load_iarg_reg fpval y
-                  (cons_read sz a
-                     (leak_save_ires_reg fpval x
-                        (f t')))
-            | _ => empty
-            end
-        | SStore sz x y o =>
-            match t with
-            | cons_write _(*sz*) a t' =>
-                leak_load_iarg_reg fpval x
-                  (leak_load_iarg_reg fpval y
-                     (cons_write sz a
-                        (f t')))
-            | _ => empty
-            end
-        | SInlinetable _ x _ i =>
-            leak_load_iarg_reg fpval i
-              (leak_save_ires_reg fpval x
-                 (f t))
-        | SStackalloc x _ body =>
-            match t with
-            | cons_salloc g =>
-                cons_salloc (fun a =>
-                               let t' := g a in
-                               leak_save_ires_reg fpval x
-                                 (transform_stmt_trace fpval body t' f))
-            | _ => empty
-            end
-        | SLit x _ => leak_save_ires_reg fpval x (f t)
-        | SOp x op y oz =>
-            let rest := leak_save_ires_reg fpval x (f t) in
-            leak_load_iarg_reg fpval y
-              (match oz with 
-               | Var z => leak_load_iarg_reg fpval z rest
-               | Const _ => rest
-               end)
-        | SSet x y =>
-            leak_load_iarg_reg fpval y
-              (leak_save_ires_reg fpval x
-                 (f t))
-        | SIf c thn els =>
-            match t with
-            | cons_branch b t' =>
-                leak_prepare_bcond fpval c
-                  (leak_spill_bcond
-                     (cons_branch b
-                        (transform_stmt_trace fpval (if b then thn else els) t' f)))
-            | _ => empty
-            end
+    (e: env) :
+    forall (fpval: word) (s : stmt) (t : abstract_trace) (f : abstract_trace -> abstract_trace) (st : abstract_trace), Prop :=
+  | trace_load fpval t f sz x y o addr :
+    correspond e fpval (SLoad sz x y o) (cons_read sz addr t) f
+      (leak_load_iarg_reg fpval y
+         (cons_read sz addr
+            (leak_save_ires_reg fpval x
+               (f t))))
+  | trace_store fpval t f sz x y o addr :
+    correspond e fpval (SStore sz x y o) (cons_write sz addr t) f
+      (leak_load_iarg_reg fpval x
+         (leak_load_iarg_reg fpval y
+            (cons_write sz addr
+               (f t))))
+  | trace_inlinetable fpval t f sz x table i :
+    correspond e fpval (SInlinetable sz x table i) t f
+      (leak_load_iarg_reg fpval i
+         (leak_save_ires_reg fpval x
+            (f t)))
+  | trace_stackalloc fpval f g sg x n body :
+    (forall addr, correspond e fpval body (g addr) f (sg addr)) ->
+    correspond e fpval (SStackalloc x n body) (cons_salloc g) f (cons_salloc (fun a => leak_save_ires_reg fpval x (sg a)))
+  | trace_lit fpval t f x v :
+    correspond e fpval (SLit x v) t f
+      (leak_save_ires_reg fpval x (f t))
+  | trace_op fpval t f x op y oz :
+    correspond e fpval (SOp x op y oz) t f
+      (let rest := leak_save_ires_reg fpval x (f t) in
+       leak_load_iarg_reg fpval y
+         (match oz with 
+          | Var z => leak_load_iarg_reg fpval z rest
+          | Const _ => rest
+          end))
+  | trace_set fpval t f x y :
+    correspond e fpval (SSet x y) t f
+      (leak_load_iarg_reg fpval y
+         (leak_save_ires_reg fpval x
+            (f t)))
+  | trace_if fpval t st f (b: bool) c thn els :
+    correspond e fpval (if b then thn else els) t f st ->
+    correspond e fpval (SIf c thn els) (cons_branch b t) f
+      (leak_prepare_bcond fpval c
+         (leak_spill_bcond
+            (cons_branch b st)))
+  | trace_loop fpval t t' st f s1 c s2 :
+    correspond 
+    correspond e fpval s1 t
+      (fun t' =>
+         
+      )
+    correspond e fpval (SLoop s1 c s2) (cons_branch false t) f
+      (leak_prepare_bcond fpval c
+         (leak_spill_bcond
+            (f t
         | SLoop s1 c s2 =>
             transform_stmt_trace fpval s1 t
               (fun t' =>
