@@ -1714,12 +1714,10 @@ Section Spilling.
     option_map (fun x => g (f x)) x = option_map g (option_map f x).
   Proof.
     destruct x; reflexivity. Qed.
-
-   Lemma set_reg_range_to_option (f : abstract_trace -> abstract_trace) a fpval args :
-        option_map (fun a => leak_set_reg_range_to_vars fpval args (f a)) a =
-          option_leak_set_reg_range_to_vars fpval args (option_map f a).
-   Proof. rewrite option_leak_set_reg_range_to_vars_correct. destruct a; reflexivity. Qed.
-   
+  
+  Lemma option_map_ext {A B} (f : A -> B) g x :
+    (forall y, f y = g y) -> option_map f x = option_map g x.
+  Proof. intros. destruct x; auto. simpl. f_equal. auto. Qed.
     
   Lemma spilling_correct (e1 e2 : env) (Ev : spill_functions e1 = Success e2)
         (s1 : stmt)
@@ -2056,6 +2054,8 @@ Section Spilling.
       spec store_bytes_sep_hi2lo as A. 1: eassumption.
       all: ecancel_assumption.
     - (* exec.inlinetable *)
+      exists 1%nat. intros. fwd. destruct fuel as [|fuel']; [blia|].
+      cbn [transform_stmt_trace]. rewrite break_option_map.
       eapply exec.seq_cps. eapply load_iarg_reg_correct; (blia || eassumption || idtac).
       clear mc2 H5. intros.
       eapply exec.seq_cps.
@@ -2063,43 +2063,36 @@ Section Spilling.
       { unfold ires_reg, iarg_reg, spill_tmp, fp, a0, a7 in *. destr (32 <=? x); destr (32 <=? i); try blia. }
       { rewrite map.get_put_same. reflexivity. }
       { eassumption. }
-      eapply save_ires_reg_correct''.
-      + eassumption.
-      + blia.
-      + intros. do 4 eexists.
-        split; [eassumption|].
-        split; [eassumption|].
-        (*begin stuff copy-pasted from load*)
-        destruct is_ct; [|reflexivity]. Search post.
-        specialize (H3 _ _ _ _ H2). clear H2.
-        destruct H3 as [HP [a1' [t1'' [CTp1 CTp2]]]].
-        { eexists. replace t with ([] ++ t) by reflexivity. reflexivity. }
-      exists 1%nat.
-      cbn [rev] in CTp1.
-      split; [assumption|].
-      replace t with ([] ++ t) in CTp1 by reflexivity. apply app_inv_tail in CTp1. subst.
-      do 3 eexists.
-      split.
-      { replace t with ([] ++ t) by reflexivity. reflexivity. }
-      split.
-      { eassumption. }
-      split.
-      { subst t2'0. subst t2'. repeat rewrite app_assoc. reflexivity. }
-      intros f fuel Hf Hfuel.
-      destruct fuel as [|fuel']; [blia|].
-      cbn [transform_stmt_trace].
-      subst t2'0. subst t2'.
-      repeat (rewrite rev_app_distr || cbn [rev List.app] || rewrite rev_involutive).
-      repeat rewrite <- app_assoc.
-      cbn [rev List.app] in CTp2.
-      inversion CTp2. subst. clear CTp2.
-      eapply Semantics.abs_tr_eq_correct1.
-      { eapply Semantics.generates_with_empty_rem_app.
-        eapply Semantics.generates_generates_with_empty_rem.
-        apply Semantics.generator_generates. }
-      auto.
-      (*end stuff copy-pasted from load*)
-    - (* exec.stackalloc *)
+      rewrite break_option_map.
+      eapply save_ires_reg_correct''; [eassumption|blia|].
+      intros. do 5 eexists. split; [eassumption|]. split; [reflexivity|eassumption].
+    - (* exec.stackalloc *) Check exec.stackalloc. Search Memory.anybytes.
+      exists (S O). intros. fwd. destruct fuel as [|fuel']; [blia|].
+      cbn [transform_stmt_trace]. cbv [with_salloc].
+      rewrite option_map_option_map. rewrite break_option_map.
+      rename H1 into IH.
+      eapply exec.stackalloc. 1: assumption.
+      intros.
+      eapply exec.seq_cps.
+      edestruct grow_related_mem as (mCombined1 & ? & ?). 1,2: eassumption.
+      cbv [Semantics.apply_salloc]. rewrite option_map_option_map. rewrite break_option_map.
+      eapply save_ires_reg_correct''. 1: eassumption. 1: blia.
+      intros.
+      eapply exec.weaken. {
+        Search option_map. erewrite option_map_ext.
+        2: { instantiate (1 := fun x0 => (fun x => transform_stmt_trace fuel' e1 fpval body x f0) (x0 addr)). reflexivity. }
+        rewrite break_option_map. cbv [Semantics.apply_salloc] in IH. Check IH.
+        Check IH.
+        specialize (IH _ _ _ H1 H5).
+        eapply IH; eassumption. }
+      cbv beta. intros. fwd.
+      edestruct shrink_related_mem as (mSmall2 & ? & ?). 1,2: eassumption.
+      repeat match goal with
+             | |- exists _, _ => eexists
+             | |- _ /\ _ => split
+             end.
+      1,4,3,2: eassumption.
+      
       eapply exec.stackalloc. 1: assumption.
       intros.
       eapply exec.seq_cps.
