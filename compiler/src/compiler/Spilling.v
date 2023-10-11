@@ -225,79 +225,99 @@ Section Spilling.
     maybe that's too much though. we could be sillier yet and say that every element of the trace is an integer (word.unsigned for r/w/salloc, 1/0 for branches)*) Print save_ires_reg. Print leak_load_iarg_reg. Print load_iarg_reg. Print ires_reg.
    Check exec.
    Print exec.exec.
+   Implicit Types R : abstract_trace -> abstract_trace -> Prop.
    
   Inductive correspond {env: map.map String.string (list Z * list Z * stmt)}
-      (* maps the abstract trace of an unspilled program to the abstract trace of the spilled program.
-         executes s, guided by t, popping events off of t and adding events to st as it goes.
-         returns the final abstract trace st.
-         may (but will not necessarily) return empty if input is garbage.
-         *)
     (e: env) :
-    forall (fpval: word) (s : stmt) (t : abstract_trace) (f : abstract_trace -> abstract_trace) (st : abstract_trace), Prop :=
-  | trace_load fpval t f sz x y o addr :
-    correspond e fpval (SLoad sz x y o) (cons_read sz addr t) f
+    forall (fpval: word) (s : stmt) (t : abstract_trace) (st : abstract_trace) (R : abstract_trace -> abstract_trace -> Prop), Prop :=
+  | trace_load fpval t st R sz x y o addr :
+    R t st ->
+    correspond e fpval (SLoad sz x y o) (cons_read sz addr t)
       (leak_load_iarg_reg fpval y
          (cons_read sz addr
             (leak_save_ires_reg fpval x
-               (f t))))
-  | trace_store fpval t f sz x y o addr :
-    correspond e fpval (SStore sz x y o) (cons_write sz addr t) f
+               st))) R
+  | trace_store fpval t st R sz x y o addr :
+    R t st ->
+    correspond e fpval (SStore sz x y o) (cons_write sz addr t)
       (leak_load_iarg_reg fpval x
          (leak_load_iarg_reg fpval y
             (cons_write sz addr
-               (f t))))
-  | trace_inlinetable fpval t f sz x table i :
-    correspond e fpval (SInlinetable sz x table i) t f
+                st))) R
+  | trace_inlinetable fpval t st R sz x table i :
+    R t st ->
+    correspond e fpval (SInlinetable sz x table i) t
       (leak_load_iarg_reg fpval i
          (leak_save_ires_reg fpval x
-            (f t)))
-  | trace_stackalloc fpval f g sg x n body :
-    (forall addr, correspond e fpval body (g addr) f (sg addr)) ->
-    correspond e fpval (SStackalloc x n body) (cons_salloc g) f (cons_salloc (fun a => leak_save_ires_reg fpval x (sg a)))
-  | trace_lit fpval t f x v :
-    correspond e fpval (SLit x v) t f
-      (leak_save_ires_reg fpval x (f t))
-  | trace_op fpval t f x op y oz :
-    correspond e fpval (SOp x op y oz) t f
-      (let rest := leak_save_ires_reg fpval x (f t) in
+            st)) R
+  | trace_stackalloc fpval R g sg x n body :
+    (forall addr, correspond e fpval body (g addr) (sg addr) R) ->
+    correspond e fpval (SStackalloc x n body) (cons_salloc g) (cons_salloc (fun a => leak_save_ires_reg fpval x (sg a))) R
+  | trace_lit fpval t st R x v :
+    R t st ->
+    correspond e fpval (SLit x v) t
+      (leak_save_ires_reg fpval x st) R
+  | trace_op fpval t st R x op y oz :
+    R t st ->
+    correspond e fpval (SOp x op y oz) t
+      (let rest := leak_save_ires_reg fpval x st in
        leak_load_iarg_reg fpval y
          (match oz with 
           | Var z => leak_load_iarg_reg fpval z rest
           | Const _ => rest
-          end))
-  | trace_set fpval t f x y :
-    correspond e fpval (SSet x y) t f
+          end)) R
+  | trace_set fpval t st R x y :
+    R t st ->
+    correspond e fpval (SSet x y) t
       (leak_load_iarg_reg fpval y
          (leak_save_ires_reg fpval x
-            (f t)))
-  | trace_if fpval t st f (b: bool) c thn els :
-    correspond e fpval (if b then thn else els) t f st ->
-    correspond e fpval (SIf c thn els) (cons_branch b t) f
+            st)) R
+  | trace_if fpval t R st (b: bool) c thn els :
+    correspond e fpval (if b then thn else els) t st R ->
+    correspond e fpval (SIf c thn els) (cons_branch b t)
       (leak_prepare_bcond fpval c
          (leak_spill_bcond
-            (cons_branch b st)))
-  | trace_loop fpval t t' st f s1 c s2 :
-    correspond 
-    correspond e fpval s1 t
-      (fun t' =>
-         
-      )
-    correspond e fpval (SLoop s1 c s2) (cons_branch false t) f
-      (leak_prepare_bcond fpval c
-         (leak_spill_bcond
-            (f t
-        | SLoop s1 c s2 =>
-            transform_stmt_trace fpval s1 t
-              (fun t' =>
-                 leak_prepare_bcond fpval c
-                   (leak_spill_bcond
-                      (match t' with
-                       | Semantics.cons_branch true t'' =>
-                           transform_stmt_trace fpval s2 t''
-                             (fun t''' => transform_stmt_trace fpval s t''' f)
-                       | Semantics.cons_branch false t'' => f t''
-                       | _ => Semantics.empty
-                       end)))
+            (cons_branch b st))) R
+  | trace_loop fpval t st R R' R'' s1 c s2 :
+    (forall t''' st''', R'' t''' st''' -> correspond e fpval (SLoop s1 c s2) t''' st''' R) ->
+    (forall t'' st'', R' t'' st'' -> correspond e fpval s2 t'' st'' R'') ->
+    correspond e fpval s1 t st
+      (fun t' st' =>
+         exists st'', st' = leak_prepare_bcond fpval c (leak_spill_bcond st'') /\
+         exists t'' b, t' = cons_branch b t'' /\
+         match b with
+         | true => R' t'' st''
+         | false => R t'' st''
+         end) ->
+    correspond e fpval (SLoop s1 c s2) t st R.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
         | SSeq s1 s2 => transform_stmt_trace fpval s1 t (fun t' => transform_stmt_trace fpval s2 t' f)
         | SSkip => f t
         (* map.get e2 fname =
