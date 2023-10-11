@@ -80,6 +80,7 @@ Section WithParameters.
   Context (compile_ext_call: pos_map -> Z -> Z -> stmt Z -> list Instruction).
   Context {word_ok: word.ok word}.
   Context {mem: map.map word byte}.
+  Context {pick_sp: Semantics.PickSp}.
   Context {env: map.map String.string (list Z * list Z * stmt Z)}.
   Context {M: Type -> Type}.
   Context {MM: Monad M}.
@@ -248,7 +249,7 @@ Section WithParameters.
 
   Definition goodMachine{BWM: bitwidth_iset width iset}
       (* high-level state ... *)
-      (t: list LogItem)(m: mem)(l: locals)
+      (t: Semantics.trace)(m: mem)(l: locals)
       (* ... plus ghost constants ... *)
       (g: GhostConsts)
       (* ... equals low-level state *)
@@ -276,7 +277,7 @@ Section WithParameters.
                     stack_trash *
          word_array g.(p_sp) frame_trash)%sep lo.(getMem)) /\
     (* trace: *)
-    lo.(getLog) = t /\
+    lo.(getLog) = Semantics.filterio t /\
     (* misc: *)
     valid_machine lo.
 

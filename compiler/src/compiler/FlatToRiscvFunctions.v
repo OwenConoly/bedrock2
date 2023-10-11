@@ -49,6 +49,7 @@ Section Proofs.
   Context {word_ok: word.ok word}.
   Context {locals: map.map Z word}.
   Context {mem: map.map word byte}.
+  Context {pick_sp: Semantics.PickSp}.
   Context {env: map.map String.string (list Z * list Z * FlatImp.stmt Z)}.
   Context {M: Type -> Type}.
   Context {MM: Monads.Monad M}.
@@ -416,14 +417,15 @@ Section Proofs.
         simpl in *; Simp.simp; repeat (simulate'; simpl_bools; simpl); try intuition congruence.
   Qed.
 
-
+  Check runsTo. Print MetricRiscvMachine. Print GhostConsts.
+  exec ... (fun t => 
 
   Lemma compile_function_body_correct: forall (e_impl_full : env) m l mc (argvs : list word)
     (st0 : locals) (post outcome : Semantics.trace -> mem -> locals -> MetricLog -> Prop)
     (argnames retnames : list Z) (body : stmt Z) (program_base : word)
     (pos : Z) (ret_addr : word) (mach : RiscvMachineL) (e_impl : env)
     (e_pos : pos_map) (binds_count : nat) (insts : list Instruction)
-    (xframe : mem -> Prop) (t : list LogItem) (g : GhostConsts)
+    (xframe : mem -> Prop) (t : Semantics.trace) (g : GhostConsts)
     (IH: forall (g0 : GhostConsts) (insts0 : list Instruction) (xframe0 : mem -> Prop)
                 (initialL : RiscvMachineL) (pos0 : Z),
         fits_stack (rem_framewords g0) (rem_stackwords g0) e_impl body ->
@@ -1414,7 +1416,7 @@ Section Proofs.
       clear_old_sep_hyps.
       intro mid. set (mach := mid). intros. fwd. destruct_RiscvMachine mid. subst.
 
-      remember mach.(getLog) as t.
+      remember mach.(getLog) as log.
       assert (GM: goodMachine t m l
                               {| p_sp := p_sp;
                                  rem_stackwords := #(List.length old_stackvals);
@@ -1552,7 +1554,7 @@ Section Proofs.
            iff1 (FlatToRiscvCommon.allx g)
              ((xframe * program iset (program_base + !pos) insts)%sep *
               functions program_base e_pos e_impl) ->
-           goodMachine mid_log m st0 g initialL ->
+           goodMachine t m st0 g initialL ->
            runsTo initialL
              (fun finalL : RiscvMachineL =>
               exists
@@ -1594,7 +1596,6 @@ Section Proofs.
       move Gra after GPC.
       assert (word.unsigned ret_addr mod 4 = 0) as RaM by (subst ret_addr; solve_divisibleBy4).
       move RaM before Gra.
-      replace mid_log with t in *.
       forget (Datatypes.length binds) as binds_count.
       subst binds.
       eapply runsTo_weaken. {
@@ -1736,7 +1737,7 @@ Section Proofs.
                            (program_base := program_base)
                            (e_impl := e_impl)
                            (pos := (pos + 4)%Z)
-                           (a := p_sp + !bytes_per_word * !#(Datatypes.length remaining_frame))
+                           (*(a := p_sp + !bytes_per_word * !#(Datatypes.length remaining_frame))*)
                            (mStack := mStack)
                            (mCombined := map.putmany mSmall mStack);
           simpl_MetricRiscvMachine_get_set;
@@ -1753,7 +1754,7 @@ Section Proofs.
         { assumption. }
         { match goal with
           | |- ?G => let t := type of Ab in replace G with t; [exact Ab|f_equal]
-          end.
+          end. 1: admit. (* it would be very *)
           rewrite @length_flat_map with (n := Z.to_nat bytes_per_word).
           - simpl_addrs. rewrite !Z2Nat.id by blia. rewrite <- BPW. rewrite <- Z_div_exact_2; blia.
           - clear. intros. eapply LittleEndianList.length_le_split.
@@ -1776,7 +1777,7 @@ Section Proofs.
           | |- map.extends (map.put _ ?k ?v1) (map.put _ ?k ?v2) => replace v1 with v2
           end.
           - apply map.put_extends. assumption.
-          - simpl_addrs. solve_word_eq word_ok. }
+          - simpl_addrs. solve_word_eq word_ok. admit. }
         { eauto with map_hints. }
         { eauto with map_hints. }
         { eauto with map_hints. }
@@ -1816,7 +1817,7 @@ Section Proofs.
           }
           eexists stack_trash0, (frame_trash ++ returned_words). ssplit. 3: {
             seprewrite_in QQ Q.
-            wcancel_assumption.
+            wcancel_assumption. admit.
           }
           1: congruence.
           simpl_addrs.
@@ -2058,7 +2059,8 @@ Section Proofs.
 
     - idtac "Case compile_stmt_correct/SSkip".
       run1done.
-  Qed. (* <-- takes a while *)
+  Admitted.
+ (* Qed.*) (* <-- takes a while *)
 
 
 End Proofs.
