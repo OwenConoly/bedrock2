@@ -80,6 +80,7 @@ Section WithParameters.
   Context (compile_ext_call: pos_map -> Z -> Z -> stmt Z -> list Instruction).
   Context {word_ok: word.ok word}.
   Context {mem: map.map word byte}.
+  Context {pick_sp: Semantics.PickSp}.
   Context {env: map.map String.string (list Z * list Z * stmt Z)}.
   Context {M: Type -> Type}.
   Context {MM: Monad M}.
@@ -311,7 +312,7 @@ Section WithParameters.
     iff1 g.(allx) (xframe *
                    program iset (word.add program_base (word.of_Z pos)) insts *
                    functions program_base e_pos e_impl)%sep ->
-    goodMachine initialTrace initialMH initialRegsH g initialL ->
+    goodMachine (Semantics.filterio initialTrace) initialMH initialRegsH g initialL ->
     runsTo initialL (fun finalL => exists finalTrace finalMH finalRegsH finalMetricsH,
          postH finalTrace finalMH finalRegsH finalMetricsH /\
          finalL.(getPc) = word.add initialL.(getPc)
@@ -321,7 +322,7 @@ Section WithParameters.
                  finalL.(getRegs) /\
          (finalL.(getMetrics) - initialL.(getMetrics) <=
           lowerMetrics (finalMetricsH - initialMetricsH))%metricsL /\
-         goodMachine finalTrace finalMH finalRegsH g finalL).
+         goodMachine (Semantics.filterio finalTrace) finalMH finalRegsH g finalL).
 
 End WithParameters.
 
