@@ -174,6 +174,18 @@ Section WithIOEvent.
     predicts (predictor a) t.
   Proof. intros H. induction H; intros; econstructor; simpl; eauto. Qed.
 
+  Lemma predictor_is_valid a t :
+    generates a t ->
+    predictor_valid (predictor a).
+  Proof.
+    intros H. induction H.
+    - apply valid_nil. reflexivity.
+    - eapply (valid_cons _ (leak_bool _)); [reflexivity|assumption].
+    - eapply (valid_cons _ (leak_word _)); [reflexivity|assumption].
+    - eapply (valid_cons _ (consume_bool _)); [reflexivity|eassumption].
+    - eapply (valid_cons _ (consume_word _)); [reflexivity|eassumption].
+  Qed.
+
   Fixpoint predict_with_prefix (prefix : trace) (predict_rest : trace -> option qevent) (t : trace) : option qevent :=
     match prefix, t with
     | _ :: prefix', _ :: t' => predict_with_prefix prefix' predict_rest t'
