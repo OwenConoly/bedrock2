@@ -163,6 +163,17 @@ Section WithIOEvent.
       f [] = Some qend ->
       predicts f [].
 
+  (*Idea: carry this thing around with the predictor.
+     All the way down the compiler.*)
+  Inductive predictor_valid : (trace -> option qevent) -> Prop :=
+  | valid_nil :
+    forall f, f [] = Some qend ->
+              predictor_valid f
+  | valid_cons :
+    forall f e, f [] = Some (q e) ->
+                predictor_valid (fun t => f (e :: t)) ->
+                predictor_valid f.
+
   Lemma predicts_ext f g t :
     predicts f t ->
     (forall x, f x = g x) ->
