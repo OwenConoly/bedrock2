@@ -527,7 +527,8 @@ Section FlatToRiscv1.
     Notation quot := Semantics.quot. Print Semantics.qevent.
     Notation qleak_bool := Semantics.qleak_bool.
     Notation qleak_word := Semantics.qleak_word.
-    Notation qconsume := Semantics.qconsume.
+    Notation qconsume_bool := Semantics.qconsume_bool.
+    Notation qconsume_word := Semantics.qconsume_word.
     Notation qend := Semantics.qend.
 
     Notation leak_bool := Semantics.leak_bool.

@@ -191,7 +191,8 @@ Section Spilling.
   Notation quot := Semantics.quot.
   Notation qleak_bool := Semantics.qleak_bool.
   Notation qleak_word := Semantics.qleak_word.
-  Notation qconsume := Semantics.qconsume.
+  Notation qconsume_bool := Semantics.qconsume_bool.
+  Notation qconsume_word := Semantics.qconsume_word.
   Notation qend := Semantics.qend.
 
   Notation predicts := Semantics.predicts.
@@ -241,7 +242,7 @@ Section Spilling.
                   (leak_save_ires_reg fpval x)
                   (fun st_so_far'' => snext_stmt' (t_so_far ++ [consume_word a]) fpval body st_so_far'' f)
                   st_so_far'
-            | nil => Some qconsume
+            | nil => Some qconsume_word
             | _ => None
             end
         | SLit x _ =>
@@ -341,7 +342,7 @@ Section Spilling.
                                     (f t_so_far')
                                     st_so_far'''')) 
                            st_so_far''
-                     | nil => Some qconsume
+                     | nil => Some qconsume_word
                      | _ => None
                      end)
                   st_so_far
@@ -358,6 +359,91 @@ Section Spilling.
   Definition snext_stmt {env : map.map string (list Z * list Z * stmt)} e next fpval s st_so_far fuel :=
     snext_stmt' e fuel next [] fpval s st_so_far
       (fun next' t_so_far => Some qend).
+
+  Notation predictor_valid := Semantics.predictor_valid.
+  Print Semantics.predictor_valid.
+  Notation valid_nil_end := Semantics.valid_nil_end.
+  Notation valid_nil_none := Semantics.valid_nil_none.
+  Notation valid_leak_bool := Semantics.valid_leak_bool.
+  Notation valid_leak_word := Semantics.valid_leak_word.
+  Notation valid_consume_bool := Semantics.valid_consume_bool.
+  Notation valid_consume_word := Semantics.valid_consume_word.
+  Check predict_with_prefix.
+
+  Lemma predict_with_prefix_valid k f :
+    predictor_valid f ->
+    predictor_valid (predict_with_prefix k f).
+  Proof.
+    intros H. induction k.
+    - assumption.
+    - destruct a.
+      + eapply valid_leak_bool; [reflexivity|assumption].
+      + eapply valid_leak_word; [reflexivity|assumption].
+      + eapply valid_consume_bool; eauto.
+      + eapply valid_consume_word; eauto.
+  Qed.
+
+  Lemma snext_stmt'_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next fpval s f k :
+    predictor_valid next ->
+    (forall k', predictor_valid (f k')) ->
+    forall fuel,
+      predictor_valid (fun sk => snext_stmt' e fuel next k fpval s sk f).
+  Proof.
+    intros. cbv [snext_stmt]. generalize dependent s. generalize dependent k. generalize dependent f.
+    generalize dependent fpval.
+    induction fuel.
+    - intros. cbn [snext_stmt snext_stmt']. apply valid_nil_none. reflexivity.
+    - intros. destruct s; cbn [snext_stmt snext_stmt'].
+      + destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
+        destruct q; try (apply valid_nil_none; reflexivity).
+        apply predict_with_prefix_valid. auto.
+      + destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
+        destruct q; try (apply valid_nil_none; reflexivity).
+        apply predict_with_prefix_valid. auto.
+      + destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
+        destruct q; try (apply valid_nil_none; reflexivity).
+        apply predict_with_prefix_valid. auto.
+      + eapply valid_consume_word; [reflexivity|]. intros.
+        apply predict_with_prefix_valid. auto.
+      + apply predict_with_prefix_valid. auto.
+      + destruct op. all: try apply predict_with_prefix_valid. all: auto.
+        all: destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
+        all: destruct q; try (apply valid_nil_none; reflexivity).
+        all: try apply predict_with_prefix_valid. all: auto.
+        all: destruct (next (k ++ _)) as [q|]; try (apply valid_nil_none; reflexivity).
+        all: destruct q; try (apply valid_nil_none; reflexivity).
+        all: apply predict_with_prefix_valid. all: auto.
+      + apply predict_with_prefix_valid. auto.
+      + destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
+        destruct q; try (apply valid_nil_none; reflexivity).
+        apply predict_with_prefix_valid. auto.
+      + apply IHfuel. intros.
+        destruct (next k') as [q|]; try (apply valid_nil_none; reflexivity).
+        destruct q; try (apply valid_nil_none; reflexivity).
+        destruct b.
+        -- apply predict_with_prefix_valid. auto.
+        -- apply predict_with_prefix_valid. auto.
+      + auto.
+      + auto.
+      + destruct (map.get e f0).
+        -- destruct p. destruct p. apply predict_with_prefix_valid.
+           eapply valid_consume_word; [reflexivity|]. intros.
+           apply predict_with_prefix_valid. apply IHfuel; auto.
+           intros. apply predict_with_prefix_valid. auto.
+        -- apply valid_nil_none. reflexivity.
+      + apply predict_with_prefix_valid. auto.
+  Qed.
+
+  Print snext_stmt.
+
+  Lemma snext_stmt_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next fpval s :
+    predictor_valid next ->
+    forall fuel,
+      predictor_valid (fun sk => snext_stmt e next fpval s sk fuel).
+  Proof.
+    intros. cbv [snext_stmt]. apply snext_stmt'_preserves_valid; auto. intros.
+    apply valid_nil_end. reflexivity.
+  Qed.
    
   Fixpoint spill_stmt(s: stmt): stmt :=
     match s with
@@ -527,7 +613,7 @@ Section Spilling.
   Definition snext_fun {env : map.map string (list Z * list Z * stmt)} (e : env) (fuel: nat) (next : trace -> option qevent) (t_so_far : trace) (f : list Z * list Z * stmt) (st_so_far : Semantics.trace) : option Semantics.qevent :=
     let '(argnames, resnames, body) := f in
     match st_so_far with
-    | [] => Some qconsume
+    | [] => Some qconsume_word
     | consume_word fpval :: st_so_far' =>
         predict_with_prefix
           (leak_set_vars_to_reg_range fpval argnames)
@@ -541,6 +627,16 @@ Section Spilling.
     | _ => None
     end.
 
+  Lemma snext_fun_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next f :
+    predictor_valid next ->
+    forall fuel,
+      predictor_valid (snext_fun e fuel next [] f).
+  Proof.
+    intros H fuel. cbv [snext_fun]. destruct f. destruct p. eapply valid_consume_word; [reflexivity|].
+    intros. apply predict_with_prefix_valid. apply snext_stmt'_preserves_valid; auto. intros.
+    apply predict_with_prefix_valid. apply valid_nil_end. reflexivity.
+  Qed.
+    
   Lemma firstn_min_absorb_length_r{A: Type}: forall (l: list A) n,
       List.firstn (Nat.min n (length l)) l = List.firstn n l.
   Proof.

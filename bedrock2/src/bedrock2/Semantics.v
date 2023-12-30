@@ -31,13 +31,14 @@ Inductive event : Type :=
 Inductive qevent {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
 | qleak_bool : bool -> qevent
 | qleak_word : word -> qevent
-| qconsume : qevent
+| qconsume_bool : qevent
+| qconsume_word : qevent
 | qend : qevent.
 
 Inductive abstract_trace {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
 | empty
-| aleak_word (w : word) (after : abstract_trace)
 | aleak_bool (b : bool) (after : abstract_trace)
+| aleak_word (w : word) (after : abstract_trace)
 | aconsume_bool (after : bool -> abstract_trace)
 | aconsume_word (after : word -> abstract_trace).
 
@@ -50,8 +51,8 @@ Section WithIOEvent.
     match e with
     | leak_bool b => qleak_bool b
     | leak_word w => qleak_word w
-    | consume_bool b => qconsume
-    | consume_word w => qconsume
+    | consume_bool b => qconsume_bool
+    | consume_word w => qconsume_word
     end.
 
   (*should I call this leakage_trace, now that it doesn't contain io events?
@@ -109,8 +110,8 @@ Section WithIOEvent.
     | empty => qend
     | aleak_bool b _ => qleak_bool b
     | aleak_word w _ => qleak_word w
-    | aconsume_bool _ => qconsume
-    | aconsume_word _ => qconsume
+    | aconsume_bool _ => qconsume_bool
+    | aconsume_word _ => qconsume_word
     end.
 
   Fixpoint predictor (a(*the whole thing*) : abstract_trace) (t(*so far*) : trace) : option qevent :=
@@ -147,15 +148,31 @@ Section WithIOEvent.
 
   (*Idea: carry this thing around with the predictor.
      All the way down the compiler.*)
+  (*I could do this with fewer constructors, but that would make using it more difficult.*)
   Inductive predictor_valid : (trace -> option qevent) -> Prop :=
-  | valid_nil :
+  | valid_nil_end :
     forall f, f [] = Some qend ->
               predictor_valid f
-  | valid_cons :
-    forall f e, f [] = Some (quot e) ->
-                predictor_valid (fun t => f (e :: t)) ->
-                predictor_valid f.
-
+  | valid_nil_none :
+    forall f, f [] = None ->
+              predictor_valid f
+  | valid_leak_bool :
+    forall f b, f [] = Some (qleak_bool b) ->
+                predictor_valid (fun t => f (leak_bool b :: t)) ->
+                predictor_valid f
+  | valid_leak_word :
+    forall f w, f [] = Some (qleak_word w) ->
+                predictor_valid (fun t => f (leak_word w :: t)) ->
+                predictor_valid f
+  | valid_consume_bool :
+    forall f, f [] = Some qconsume_bool ->
+              (forall b, predictor_valid (fun t => f (consume_bool b :: t))) ->
+              predictor_valid f
+  | valid_consume_word :
+    forall f, f [] = Some qconsume_word ->
+              (forall w, predictor_valid (fun t => f (consume_word w :: t))) ->
+              predictor_valid f.
+  
   Lemma predicts_ext f g t :
     predicts f t ->
     (forall x, f x = g x) ->
@@ -174,16 +191,15 @@ Section WithIOEvent.
     predicts (predictor a) t.
   Proof. intros H. induction H; intros; econstructor; simpl; eauto. Qed.
 
-  Lemma predictor_is_valid a t :
-    generates a t ->
+  Lemma predictor_is_valid a :
     predictor_valid (predictor a).
   Proof.
-    intros H. induction H.
-    - apply valid_nil. reflexivity.
-    - eapply (valid_cons _ (leak_bool _)); [reflexivity|assumption].
-    - eapply (valid_cons _ (leak_word _)); [reflexivity|assumption].
-    - eapply (valid_cons _ (consume_bool _)); [reflexivity|eassumption].
-    - eapply (valid_cons _ (consume_word _)); [reflexivity|eassumption].
+    induction a.
+    - apply valid_nil_end. reflexivity.
+    - eapply valid_leak_bool; [reflexivity|assumption].
+    - eapply valid_leak_word; [reflexivity|assumption].
+    - eapply valid_consume_bool; eauto.
+    - eapply valid_consume_word; eauto.
   Qed.
 
   Fixpoint predict_with_prefix (prefix : trace) (predict_rest : trace -> option qevent) (t : trace) : option qevent :=
