@@ -384,7 +384,7 @@ Section Spilling.
   Qed.
 
   Lemma snext_stmt'_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next fpval s f k :
-    predictor_valid next ->
+    (*predictor_valid next ->*)
     (forall k', predictor_valid (f k')) ->
     forall fuel,
       predictor_valid (fun sk => snext_stmt' e fuel next k fpval s sk f).

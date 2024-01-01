@@ -543,6 +543,28 @@ Section FlatToRiscv1.
     | nil, _ => predict_rest t
     end.
 
+    Inductive predictorLE_valid : (list LeakageEvent -> option qLeakageEvent) -> Prop :=
+    | validLE_nil_end :
+      forall f, f [] = Some qendLE ->
+                predictorLE_valid f
+    | validLE_nil_none :
+      forall f, f [] = None ->
+                predictorLE_valid f
+    | validLE_cons :
+      forall f e, f [] = Some (quotLE e) ->
+                  predictorLE_valid (fun t => f (e :: t)) ->
+                  predictorLE_valid f.
+    Notation predictor_valid := Semantics.predictor_valid.
+
+    Lemma predictLE_with_prefix_valid k f :
+      predictorLE_valid f ->
+      predictorLE_valid (predictLE_with_prefix k f).
+    Proof.
+      intros. induction k.
+      - assumption.
+      - eapply validLE_cons; [reflexivity|]. assumption.
+    Qed.
+    
     Definition rnext_fun' rnext_stmt (fuel : nat) (next : trace -> option qevent) (t_so_far : trace)
       (mypos : Z)
       (sp_val : word) (params rets : list Z) fbody (rt_so_far : list LeakageEvent)
@@ -577,6 +599,17 @@ Section FlatToRiscv1.
                               (f t_so_far')
                               rt_so_far''))
                     rt_so_far.
+
+    Lemma rnext_fun'_preserves_valid rnext_stmt (fuel : nat) next k mypos sp_val params rets fbody f :
+      (forall k, predictorLE_valid (f k)) ->
+      (forall k' mypos' sp_val' offset fbody f',
+          (forall k, predictorLE_valid (f' k)) ->
+          predictorLE_valid (fun rk' => rnext_stmt fuel next k' mypos' sp_val' offset fbody rk' f')) ->
+      predictorLE_valid (fun rk => rnext_fun' rnext_stmt fuel next k mypos sp_val params rets fbody rk f).
+    Proof.
+      intros. cbv [rnext_fun']. apply predictLE_with_prefix_valid. apply H0. intros.
+      apply predictLE_with_prefix_valid. auto.
+    Qed.      
 
     Check (match 5%nat with | S _ | O => 5%nat end).
 
@@ -732,7 +765,68 @@ Section FlatToRiscv1.
           end
       end.
 
+    Lemma rnext_stmt_preserves_valid next k mypos sp_val offset fbody f :
+      (*predictor_valid next ->*)
+      (forall k, predictorLE_valid (f k)) ->
+      forall fuel,
+        predictorLE_valid (fun rk' => rnext_stmt fuel next k mypos sp_val offset fbody rk' f).
+    Proof.
+      intros. generalize dependent f. revert fbody. revert offset. revert sp_val. revert mypos. revert k.
+      induction fuel.
+      - intros. simpl. apply validLE_nil_none. reflexivity.
+      - intros. destruct fbody; cbn [rnext_stmt].
+        + destruct (next k) as [q|]; try (apply validLE_nil_none; reflexivity).
+          destruct q; try (apply validLE_nil_none; reflexivity).
+          apply predictLE_with_prefix_valid. auto.
+        + destruct (next k) as [q|]; try (apply validLE_nil_none; reflexivity).
+          destruct q; try (apply validLE_nil_none; reflexivity).
+          apply predictLE_with_prefix_valid. auto.
+        + destruct (next k) as [q|]; try (apply validLE_nil_none; reflexivity).
+          destruct q; try (apply validLE_nil_none; reflexivity).
+          apply predictLE_with_prefix_valid. auto.
+        + apply predictLE_with_prefix_valid. apply IHfuel. auto.
+        + apply predictLE_with_prefix_valid. auto.
+        + destruct op. all: try destruct (leak_op _ _ _ _); try (apply validLE_nil_none; reflexivity).
+          all: try apply predictLE_with_prefix_valid. all: auto.
+          all: destruct (next k) as [q|]; try (apply validLE_nil_none; reflexivity).
+          all: try destruct q; try (apply validLE_nil_none; reflexivity).
+          all: try destruct (leak_op _ _ _ _); try (apply validLE_nil_none; reflexivity).
+          all: try apply predictLE_with_prefix_valid. all: auto.
+          all: destruct (next (_ ++ _)) as [q|]; try (apply validLE_nil_none; reflexivity).
+          all: destruct q; try (apply validLE_nil_none; reflexivity).
+          all: destruct (leak_op _ _ _ _); try (apply validLE_nil_none; reflexivity).
+          all: apply predictLE_with_prefix_valid. all: auto.
+        + apply predictLE_with_prefix_valid. auto.
+        + destruct (next k) as [q|]; try (apply validLE_nil_none; reflexivity).
+          destruct q; try (apply validLE_nil_none; reflexivity).
+          apply predictLE_with_prefix_valid. apply IHfuel. intros.
+          apply predictLE_with_prefix_valid. auto.
+        + apply IHfuel. intros. destruct (next _) as [q|]; try (apply validLE_nil_none; reflexivity).
+          destruct q; try (apply validLE_nil_none; reflexivity).
+          destruct b.
+          -- apply predictLE_with_prefix_valid. apply IHfuel. intros.
+             apply predictLE_with_prefix_valid. apply IHfuel. auto.
+          -- apply predictLE_with_prefix_valid. auto.
+        + auto.
+        + auto.
+        + destruct (map.get e_env f0).
+          -- destruct p. destruct p. destruct (map.get e f0).
+             ++ apply predictLE_with_prefix_valid. apply rnext_fun'_preserves_valid; assumption.
+             ++ apply validLE_nil_none. reflexivity.
+          -- apply validLE_nil_none. reflexivity.
+        + apply predictLE_with_prefix_valid. auto.
+    Qed.      
+
     Definition rnext_fun := rnext_fun' rnext_stmt.
+    Check rnext_fun'_preserves_valid.
+    Lemma rnext_fun_valid fuel next k mypos sp_val params rets fbody f :
+      (forall k', predictorLE_valid (f k')) ->
+      predictorLE_valid (fun rk => rnext_fun fuel next k mypos sp_val params rets fbody rk f).
+    Proof.
+      cbv [rnext_fun]. intros. apply rnext_fun'_preserves_valid.
+      - auto.
+      - intros. apply rnext_stmt_preserves_valid. auto.
+    Qed.       
   End WithOtherEnv.
   End WithEnv.
 
