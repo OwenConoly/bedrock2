@@ -531,6 +531,7 @@ Section FlatToRiscv1.
     Notation qconsume_word := Semantics.qconsume_word.
     Notation qend := Semantics.qend.
 
+    Notation leak_unit := Semantics.leak_unit.
     Notation leak_bool := Semantics.leak_bool.
     Notation leak_word := Semantics.leak_word.
     Notation consume_bool := Semantics.consume_bool.
@@ -753,7 +754,7 @@ Section FlatToRiscv1.
               | Some (params, rets, fbody), Some pos =>
                   predictLE_with_prefix
                     [ leak_Jal ](* jump to compiled function *)
-                    (fun rt_so_far' => rnext_fun' rnext_stmt0 fuel' next t_so_far pos sp_val params rets fbody rt_so_far' f)
+                    (fun rt_so_far' => rnext_fun' rnext_stmt0 fuel' next (t_so_far ++ [leak_unit]) pos sp_val params rets fbody rt_so_far' f)
                     rt_so_far
               | _, _ => None
               end

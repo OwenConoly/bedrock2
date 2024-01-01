@@ -318,7 +318,7 @@ Module exec.
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st0 ->
-        exec fbody k t m st0 (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc)))) outcome ->
+        exec fbody (leak_unit :: k) t m st0 (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc)))) outcome ->
         (forall k' t' m' mc' st1,
             outcome k' t' m' st1 mc' ->
             exists retvs l',
@@ -453,7 +453,7 @@ Module exec.
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st ->
-        exec fbody k t m st (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc))))
+        exec fbody (leak_unit :: k) t m st (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc))))
              (fun k' t' m' st' mc' =>
                 exists retvs l',
                   map.getmany_of_list st' rets = Some retvs /\
