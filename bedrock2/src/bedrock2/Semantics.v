@@ -159,33 +159,13 @@ Section WithIOEvent.
   (*Idea: carry this thing around with the predictor.
      All the way down the compiler.*)
   (*I could do this with fewer constructors, but that would make using it more difficult.*)
-  Inductive predictor_valid : (trace -> option qevent) -> Prop :=
-  | valid_nil_end :
-    forall f, f [] = Some qend ->
-              predictor_valid f
-  | valid_nil_none :
-    forall f, f [] = None ->
-              predictor_valid f
-  | valid_leak_unit :
-    forall f, f [] = Some qleak_unit ->
-              predictor_valid (fun t => f (leak_unit :: t)) ->
-              predictor_valid f
-  | valid_leak_bool :
-    forall f b, f [] = Some (qleak_bool b) ->
-                predictor_valid (fun t => f (leak_bool b :: t)) ->
-                predictor_valid f
-  | valid_leak_word :
-    forall f w, f [] = Some (qleak_word w) ->
-                predictor_valid (fun t => f (leak_word w :: t)) ->
-                predictor_valid f
-  | valid_consume_bool :
-    forall f, f [] = Some qconsume_bool ->
-              (forall b, predictor_valid (fun t => f (consume_bool b :: t))) ->
-              predictor_valid f
-  | valid_consume_word :
-    forall f, f [] = Some qconsume_word ->
-              (forall w, predictor_valid (fun t => f (consume_word w :: t))) ->
-              predictor_valid f.
+  Definition predictor_valid (f : nat -> trace -> option qevent) :=
+    exists F,
+    forall fuel,
+      (F <= fuel)%nat ->
+      forall t,
+        f F t = f fuel t.
+  
   
   Lemma predicts_ext f g t :
     predicts f t ->
@@ -205,7 +185,7 @@ Section WithIOEvent.
     predicts (predictor a) t.
   Proof. intros H. induction H; intros; econstructor; simpl; eauto. Qed.
 
-  Lemma predictor_is_valid a :
+  (*Lemma predictor_is_valid a :
     predictor_valid (predictor a).
   Proof.
     induction a.
@@ -215,7 +195,7 @@ Section WithIOEvent.
     - eapply valid_leak_word; [reflexivity|assumption].
     - eapply valid_consume_bool; eauto.
     - eapply valid_consume_word; eauto.
-  Qed.
+  Qed.*)
 
   Fixpoint predict_with_prefix (prefix : trace) (predict_rest : trace -> option qevent) (t : trace) : option qevent :=
     match prefix, t with

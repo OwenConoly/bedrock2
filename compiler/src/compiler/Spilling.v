@@ -238,13 +238,17 @@ Section Spilling.
             | _ => None
             end
         | SStackalloc x _ body =>
-            match st_so_far with (*could generalize predict_with_prefix so it does this for me?*)
-            | consume_word a :: st_so_far' =>
-                predict_with_prefix
-                  (leak_save_ires_reg fpval x)
-                  (fun st_so_far'' => snext_stmt' (t_so_far ++ [consume_word a]) fpval body st_so_far'' f)
-                  st_so_far'
-            | nil => Some qconsume_word
+            match next t_so_far with
+            | Some qconsume_word =>
+                match st_so_far with (*could generalize predict_with_prefix so it does this for me?*)
+                | consume_word a :: st_so_far' =>
+                    predict_with_prefix
+                      (leak_save_ires_reg fpval x)
+                      (fun st_so_far'' => snext_stmt' (t_so_far ++ [consume_word a]) fpval body st_so_far'' f)
+                      st_so_far'
+                | nil => Some qconsume_word
+                | _ => None
+                end
             | _ => None
             end
         | SLit x _ =>
@@ -366,41 +370,194 @@ Section Spilling.
     snext_stmt' e fuel next [] fpval s st_so_far
       (fun next' t_so_far => Some qend).
 
-  Notation predictor_valid := Semantics.predictor_valid.
+  Notation predictor_fuel_finite := Semantics.predictor_valid.
   Print Semantics.predictor_valid.
-  Notation valid_nil_end := Semantics.valid_nil_end.
+  (*Notation valid_nil_end := Semantics.valid_nil_end.
   Notation valid_nil_none := Semantics.valid_nil_none.
   Notation valid_leak_unit := Semantics.valid_leak_unit.
   Notation valid_leak_bool := Semantics.valid_leak_bool.
   Notation valid_leak_word := Semantics.valid_leak_word.
   Notation valid_consume_bool := Semantics.valid_consume_bool.
-  Notation valid_consume_word := Semantics.valid_consume_word.
+  Notation valid_consume_word := Semantics.valid_consume_word.*)
   Check predict_with_prefix.
+  Print Semantics.predictor_valid.
 
-  Lemma predict_with_prefix_valid k f :
-    predictor_valid f ->
-    predictor_valid (predict_with_prefix k f).
+  Print Semantics.predicts.
+  (*Should I write predicts like this?*)
+  Inductive predicts_partly : (list event -> option qevent) -> list event -> Prop :=
+  | predicts_partly_nil : forall f, predicts_partly f []
+  | predicts_partly_cons : forall f g e t,
+      f [] = Some (quot e) ->
+      (forall t', f (e :: t') = g t') ->
+      predicts_partly g t ->
+      predicts_partly f (e :: t).
+
+  Lemma predicts_partly_ext f g t :
+    (forall t', f t' = g t') ->
+    predicts_partly f t ->
+    predicts_partly g t.
   Proof.
-    intros H. induction k.
-    - assumption.
-    - destruct a.
-      + eapply valid_leak_unit; [reflexivity|assumption].
-      + eapply valid_leak_bool; [reflexivity|assumption].
-      + eapply valid_leak_word; [reflexivity|assumption].
-      + eapply valid_consume_bool; eauto.
-      + eapply valid_consume_word; eauto.
+    intros H1 H2. generalize dependent g. induction H2.
+    - constructor.
+    - econstructor.
+      + rewrite <- H1. assumption.
+      + reflexivity.
+      + apply IHpredicts_partly. intros. rewrite <- H1. rewrite H0. reflexivity.
   Qed.
 
-  Lemma snext_stmt'_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next fpval s f k :
-    (*predictor_valid next ->*)
-    (forall k', predictor_valid (f k')) ->
-    forall fuel,
-      predictor_valid (fun sk => snext_stmt' e fuel next k fpval s sk f).
+  Print Semantics.predict_with_prefix. Search Semantics.predict_with_prefix.
+
+  Lemma predict_with_prefix_ext prefix predict_rest1 predict_rest2 t :
+    (forall t',
+        predict_rest1 t' = predict_rest2 t') ->
+    predict_with_prefix prefix predict_rest1 t =
+      predict_with_prefix prefix predict_rest2 t.
   Proof.
-    intros. cbv [snext_stmt]. generalize dependent s. generalize dependent k. generalize dependent f.
-    generalize dependent fpval.
-    induction fuel.
-    - intros. cbn [snext_stmt snext_stmt']. apply valid_nil_none. reflexivity.
+    intros H. revert t. induction prefix; intros.
+    - simpl. auto.
+    - simpl. destruct t; [reflexivity|]. auto.
+  Qed.
+
+  Lemma predicts_partly_app k1 k2 k3 next :
+        predicts_partly (fun k => next (k1 ++ k)) k2 ->
+        predicts_partly (fun k => next (k1 ++ k2 ++ k)) k3 ->
+        predicts_partly (fun k => next (k1 ++ k)) (k2 ++ k3).
+  Proof. Admitted.
+
+  Check snext_stmt'.
+  Lemma snext_stmt'_ext {env : map.map string (list Z * list Z * stmt)} e fuel next fpval s k sk f1 f2 :
+    (forall k' sk',
+        predicts_partly (fun k'' => next (k ++ k'')) k' ->
+        f1 (k ++ k') sk' = f2 (k ++ k') sk') ->
+    snext_stmt' e fuel next k fpval s sk f1 = snext_stmt' e fuel next k fpval s sk f2.
+  Proof.
+    intros H. revert fuel. revert sk. generalize dependent f1. generalize dependent f2.
+    generalize dependent k. induction s; intros.
+    all: destruct fuel as [|fuel]; [reflexivity | cbn [snext_stmt']].
+    all: try (destruct (next k) as [q|] eqn:E; [|reflexivity]).
+    all: try (destruct q; try reflexivity).
+    - apply predict_with_prefix_ext. intros.
+      apply H. econstructor.
+      + rewrite app_nil_r. assumption.
+      + reflexivity.
+      + constructor.
+    - apply predict_with_prefix_ext. intros.
+      apply H. econstructor.
+      + rewrite app_nil_r. assumption.
+      + reflexivity.
+      + constructor.
+    - apply predict_with_prefix_ext. intros.
+      apply H. econstructor.
+      + rewrite app_nil_r. assumption.
+      + reflexivity.
+      + constructor.
+    - destruct sk; try reflexivity. destruct e0; try reflexivity.
+      apply predict_with_prefix_ext. intros. apply IHs. intros.
+      rewrite <- app_assoc. apply H. econstructor.
+      + rewrite app_nil_r. assumption.
+      + reflexivity.
+      + eapply predicts_partly_ext; [|eassumption]. intros. simpl. rewrite <- app_assoc.
+        reflexivity.
+    - apply predict_with_prefix_ext. intros. replace k with (k ++ []) by (apply app_nil_r).
+      apply H. constructor.
+    - destruct (next k) as [q|] eqn:E.
+      + destruct q; destruct op; try reflexivity.
+        all: try rewrite app_nil_r.
+        all: try destruct (next (_ ++ _)) as [q|] eqn:E'.
+        all: try destruct q; try reflexivity.
+        all: apply predict_with_prefix_ext.
+        all: intros.
+        all: try match goal with
+               | |- _ (_ ++ _) _ = _ => idtac
+               | _ =>
+                   intros; replace k with (k ++ []) by apply app_nil_r; apply H; constructor
+               end.
+        all: apply H.
+        all: econstructor; try rewrite app_nil_r; try assumption; try reflexivity; try constructor.
+        all: econstructor; try rewrite app_nil_r; try (assumption || reflexivity || constructor).
+      + destruct op; try rewrite app_nil_r; try reflexivity; apply predict_with_prefix_ext.
+        all: replace k with (k ++ []) by apply app_nil_r.
+        all: intros; apply H; constructor.
+    - apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+      apply H. constructor.
+    - apply predict_with_prefix_ext. intros. destruct b.
+      + apply IHs1. intros. rewrite <- app_assoc. apply H. econstructor.
+        -- rewrite app_nil_r. assumption.
+        -- reflexivity.
+        -- eapply predicts_partly_ext; [|eassumption]. intros. simpl. rewrite <- app_assoc.
+           reflexivity.
+      + apply IHs2. intros. rewrite <- app_assoc. apply H. econstructor.
+        -- rewrite app_nil_r. assumption.
+        -- reflexivity.
+        -- eapply predicts_partly_ext; [|eassumption]. intros. simpl. rewrite <- app_assoc.
+           reflexivity.
+    - apply IHs1. intros. destruct (next (k ++ k')) as [q|] eqn:E; [|reflexivity].
+      destruct q; try reflexivity. destruct b.
+      + apply predict_with_prefix_ext. intros. apply IHs2. intros. rewrite <- app_assoc.
+        
+        
+        -- apply apply 
+        all: rewrite app_constructor. apply H.
+        all: replace [leak_word r] with ([] ++ [leak_word r]) by reflexivity; try
+                                                                                replace [leak_word r; leak_word r0] with ([] ++ [leak_word r; leak_word r0]) by reflexivity.
+        all: econstructor.
+        { apply H.
+        { intros. replace k with (k ++ []) by apply app_nil_r. apply H. constructor. }
+        all: intros; try apply H.
+        all: 
+        all: try apply predict_with_prefix_ext.
+        all: try apply predict_with_prefix_ext. [destruct q|]; destruct op; try reflexivity.
+      
+
+  Print predictor_fuel_finite.
+  Print Semantics.predictor_valid.
+
+  (*return to this after fixing proof after fixing f.*)
+  Lemma snext_stmt'_preserves_valid {env : map.map string (list Z * list Z * stmt)} e next fpval s k :
+    predictor_trace_finite next k ->
+    exists F : nat,
+    forall fuel : nat,
+      (F <= fuel)%nat ->
+      forall t f,
+        let pred := (fun fuel sk => snext_stmt' e fuel next k fpval s sk f) in
+        pred F t = pred fuel t.
+  Proof.
+    intros H. cbv [predictor_fuel_finite]. revert fpval. revert s. induction H.
+    - induction s; try (exists (S O); intros; destruct fuel as [|fuel']; [blia|];
+                               cbn [snext_stmt']; try rewrite H; reflexivity).
+      + intros.
+        edestruct IHs1 as [F IHs1']. clear IHs1. exists (S F). intros.
+        destruct fuel as [|fuel']; [blia|]. cbn [snext_stmt'].
+        rewrite <- (IHs1' fuel'). reflexivity
+        cbn [snext_stmt']. rewrite <- IHs1'. cbn [snext_stmt']. rewrite <- IHs1'.
+      + intros. clear IHs. exists (S O).
+        intros. destruct fuel as [|fuel']; [blia|]. cbn [snext_stmt'].
+        rewrite H. reflexivity.
+        destruct t; try reflexivity. destruct e0; try reflexivity.
+        apply predict_with_prefix_ext. intros. apply IHs. auto.
+      + exists (S O). intros. destruct fuel as [|fuel']; [blia|]. reflexivity.
+      + exists (S O). intros. destruct fuel as [|fuel']; [blia|]. reflexivity.
+      + *)
+
+
+      destruct s; cbn [snext_stmt']; try rewrite H; try reflexivity.
+      + destruct t; try reflexivity. destruct e0; try reflexivity. cbv [leak_save_ires_reg].
+        destruct (stack_loc x); cbn [predict_with_prefix]. try reflexivity.
+    - intros. exists (S O). intros. destruct fuel as [|fuel']; [blia|].
+      cbn [snext_stmt']. reflexivity.
+    - intros. exists (S O). intros. destruct fuel as [|fuel']; [blia|]. reflexivity.
+    - intros. exists (S O). intros. destruct fuel as [|fuel']; [blia|]. reflexivity.
+    - intros. specialize (IHs fpval f k). destruct IHs as [F IHs]. exists (S F).
+      intros. destruct fuel as [|fuel']; [blia|]. cbn [snext_stmt'].
+      destruct t; try reflexivity. destruct e0; try reflexivity. rewrite IHs by blia. specialize (IHs fuel ltac:(blia) t). exists (S O). intros. destruct fuel as [|fuel']; [blia|]. reflexivity.
+
+
+
+
+
+
+
+      apply valid_nil_none. reflexivity.
     - intros. destruct s; cbn [snext_stmt snext_stmt'].
       + destruct (next k) as [q|]; try (apply valid_nil_none; reflexivity).
         destruct q; try (apply valid_nil_none; reflexivity).
