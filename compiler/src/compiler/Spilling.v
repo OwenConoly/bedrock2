@@ -425,14 +425,132 @@ Section Spilling.
   Proof. Admitted.
 
   Check snext_stmt'.
+  Print Semantics.predictor_valid. Print Semantics.event.
+
+  Definition covers {A : Type} (lt : A -> A -> Prop) x y :=
+    lt x y /\ forall z, lt x z -> (y = z \/ lt y z).
+
+  Inductive chain {A : Type} lt : A -> A -> Prop :=
+  | chain_O : forall x, chain lt x x
+  | chain_S : forall x y z,
+      chain lt x y ->
+      covers lt y z ->
+      chain lt x z.
+
+  Definition poset_no_dec_chains {A : Type} (lt : A -> A -> Prop) :=
+      (forall x1 x2, lt x1 x2 -> ~(lt x2 x1)) /\
+        (forall x1 x2 x3, lt x1 x2 -> lt x2 x3 -> lt x1 x3) /\
+        (forall x, exists y, chain lt x y /\ forall z, y = z \/ lt y z).
+
+  Lemma poset_induction {A : Type} lt (P : A -> Prop) :
+    poset_no_dec_chains lt ->
+    (forall y, (forall z, y = z \/ lt y z) -> P y) ->
+    (forall y, (forall z, lt z y -> P z) -> P y) ->
+    (forall y, P y).
+  Proof.
+    
+  
+  Inductive trace_finite : (trace -> option qevent) -> trace -> Prop :=
+  | nil_none_finite : forall f k,
+      f k = None ->
+      trace_finite f k
+  | nil_end_finite : forall f k,
+      f k = Some qend ->
+      trace_finite f k
+  | leak_unit_finite : forall f k,
+      f k = Some qleak_unit ->
+      trace_finite f (k ++ [leak_unit]) ->
+      trace_finite f k
+  | leak_bool_finite : forall f k b,
+      f k = Some (qleak_bool b) ->
+      trace_finite f (k ++ [leak_bool b]) ->
+      trace_finite f k
+  | leak_word_finite : forall f k w,
+      f k = Some (qleak_word w) ->
+      trace_finite f (k ++ [leak_word w]) ->
+      trace_finite f k
+  | consume_bool_finite : forall f k,
+      f k = Some qconsume_bool ->
+      (forall b, trace_finite f (consume_bool b :: k)) ->
+      trace_finite f k
+  | consume_word_finite : forall f k,
+      f k = Some qconsume_word ->
+      (forall w, trace_finite f (consume_word w :: k)) ->
+      trace_finite f k.
+  
   Lemma snext_stmt'_ext {env : map.map string (list Z * list Z * stmt)} e fuel next fpval s k sk f1 f2 :
+    trace_finite next k ->
     (forall k' sk',
         predicts_partly (fun k'' => next (k ++ k'')) k' ->
         f1 (k ++ k') sk' = f2 (k ++ k') sk') ->
     snext_stmt' e fuel next k fpval s sk f1 = snext_stmt' e fuel next k fpval s sk f2.
   Proof.
-    intros H. revert fuel. revert sk. generalize dependent f1. generalize dependent f2.
-    generalize dependent k. induction s; intros.
+    intros H1 H2. revert fuel. revert sk. generalize dependent f1. generalize dependent f2.
+    revert s.
+    induction H1.
+    - intros s. induction s; intros.
+      all: destruct fuel as [|fuel]; [reflexivity|cbn [snext_stmt']].
+      all: try rewrite H; try reflexivity.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      + destruct op; try reflexivity.
+        all: apply predict_with_prefix_ext; intros; apply H2; constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      +  apply IHs1. intros. destruct k' as [|k'].
+         -- rewrite app_nil_r. rewrite H. reflexivity.
+         -- exfalso. inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4. congruence.
+      + apply IHs1. intros. destruct k' as [|k'].
+        -- rewrite app_nil_r. apply IHs2. intros. apply H2. assumption.
+        -- exfalso. inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4. congruence.
+      + replace k with (k ++ []) by apply app_nil_r. apply H2. constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2.  constructor.
+    - induction s; intros. all: destruct fuel as [|fuel]; [reflexivity|cbn [snext_stmt']].
+      all: try rewrite H; try reflexivity.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      + destruct op; try reflexivity.
+        all: apply predict_with_prefix_ext; intros; apply H2; constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      +  apply IHs1. intros. destruct k' as [|k'].
+         -- rewrite app_nil_r. rewrite H. reflexivity.
+         -- inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4.
+            destruct k'; simpl in H4; congruence.
+      + apply IHs1. intros. destruct k' as [|k'].
+        -- rewrite app_nil_r. apply IHs2. intros. apply H2. assumption.
+        -- exfalso. inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4.
+           destruct k'; simpl in H4; congruence.
+      + replace k with (k ++ []) by apply app_nil_r. apply H2. constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+    - induction s; intros. all: destruct fuel as [|fuel]; [reflexivity|cbn [snext_stmt']].
+      all: try rewrite H; try reflexivity.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      + destruct op; try reflexivity.
+        all: apply predict_with_prefix_ext; intros; apply H2; constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2. constructor.
+      + apply IHs1. intros. destruct (f (k ++ k')) as [q|] eqn:E; [|reflexivity].
+        destruct q; try reflexivity. destruct b.
+        -- apply predict_with_prefix_ext. intros. apply IHs2.
+        -- intros. apply IHtrace_finite.
+        intros. destruct k' as [|k'].
+         -- rewrite app_nil_r. rewrite H. reflexivity.
+         -- inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4.
+            destruct k'; simpl in H4; congruence.
+      + apply IHs1. intros. destruct k' as [|k'].
+        -- rewrite app_nil_r. apply IHs2. intros. apply H2. assumption.
+        -- exfalso. inversion H0. subst. rewrite app_nil_r in H4. rewrite H in H4.
+           destruct k'; simpl in H4; congruence.
+      + replace k with (k ++ []) by apply app_nil_r. apply H2. constructor.
+      + apply predict_with_prefix_ext. intros. replace k with (k ++ []) by apply app_nil_r.
+        apply H2.  constructor.
+            ++ rewrite appcuapply IHs2.
+      all: destruct fuel as [|fuel]; [reflexivity | cbn [snext_stmt']]. 
+    intros. induction s; intros.
     all: destruct fuel as [|fuel]; [reflexivity | cbn [snext_stmt']].
     all: try (destruct (next k) as [q|] eqn:E; [|reflexivity]).
     all: try (destruct q; try reflexivity).
