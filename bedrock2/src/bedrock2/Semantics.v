@@ -24,30 +24,13 @@ Inductive event {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
 | leak_unit : event
 | leak_bool : bool -> event
 | leak_word : word -> event
-| leak_list : list word -> event
+| leak_list : list word -> event.
 (* ^we need this, because sometimes it's convenient that one io call leaks only one event
    See Interact case of spilling transform_trace function for an example. *)
-| consume_word : word -> event.
 (*This looks pretty, but it seems hard to work with.  Can't even use the inversion tactic?
 Inductive event : Type :=
 | leak : forall {A : Type}, A -> event
 | consume : forall {A : Type}, A -> event.*)
-
-Inductive qevent {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
-| qleak_unit : qevent
-| qleak_bool : bool -> qevent
-| qleak_word : word -> qevent
-| qleak_list : list word -> qevent
-| qconsume_word : qevent
-| qend : qevent.
-
-Inductive abstract_trace {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
-| empty
-| aleak_unit (after : abstract_trace)
-| aleak_bool (b : bool) (after : abstract_trace)
-| aleak_word (w : word) (after : abstract_trace)
-| aleak_list (l : list word) (after : abstract_trace)
-| aconsume_word (after : word -> abstract_trace).
 
 Section WithIOEvent.
   Context {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte}.
@@ -57,44 +40,6 @@ Section WithIOEvent.
     it contains the sources of nondeterminism as well as leakage events.*)
   Definition trace : Type := list event.
   Definition io_trace : Type := list io_event.
-
-  Definition need_to_predict e :=
-    match e with
-    | consume_word _ => True
-    | _ => False
-    end.
-  
-  Inductive predicts : (trace -> event) -> trace -> Prop :=
-  | predicts_cons :
-    forall f e k,
-      (need_to_predict e -> f nil = e) ->
-      predicts (fun k' => f (e :: k')) k ->
-      predicts f (e :: k)
-  | predicts_nil :
-    forall f,
-      predicts f nil.
-  
-  Lemma predicts_ext f k g :
-    (forall k', f k' = g k') ->
-    predicts f k ->
-    predicts g k.
-  Proof.
-    intros H1 H2. revert H1. revert g. induction H2.
-    - intros g0 Hfg0. econstructor.
-      + rewrite <- Hfg0. apply H.
-      + apply IHpredicts. intros. apply Hfg0.
-    - intros. constructor.
-  Qed.
-  
-  Lemma predict_cons f k1 k2 e :
-    predicts f (k1 ++ e :: k2) ->
-    need_to_predict e ->
-    f k1 = e.
-  Proof.
-    revert k2. revert e. revert f. induction k1.
-    - intros. inversion H. subst. auto.
-    - intros. inversion H. subst. apply IHk1 with (1 := H5) (2 := H0).
-  Qed.
 End WithIOEvent. (*maybe extend this to the end?*)
                             
   Definition ExtSpec{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
@@ -136,6 +81,10 @@ Module ext_spec.
   }.
 End ext_spec.
 Arguments ext_spec.ok {_ _ _ _} _.
+
+Definition PickSp {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
+  trace -> word.
+Existing Class PickSp.
 
 Section binops.
   Context {width : Z} {BW: Bitwidth width} {word : Word.Interface.word width}.
@@ -344,7 +293,7 @@ Module exec. Section WithEnv.
     I think so.
     It still should be less of a pain to deal with them if they're separated.
    *)
-  Inductive exec :
+  Inductive exec {pick_sp : PickSp} :
     cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
@@ -373,10 +322,11 @@ Module exec. Section WithEnv.
   | stackalloc x n body
     k t mSmall l mc post
     (_ : Z.modulo n (bytes_per_word width) = 0)
-    (_ : forall a mStack mCombined,
+    (_ : forall mStack mCombined,
+        let a := pick_sp k in
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body (consume_word a :: k) t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
+        exec body k t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
           (fun k' t' mCombined' l' mc' =>
              exists mSmall' mStack',
               anybytes a n mStack' /\
@@ -442,10 +392,10 @@ Module exec. Section WithEnv.
                   (addMetricLoads 2 mc'))))
     : exec (cmd.interact binds action arges) k t m l mc post
   .
-
+  
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma weaken: forall s k t m l mc post1,
+  Lemma weaken {pick_sp: PickSp} : forall s k t m l mc post1,
       exec s k t m l mc post1 ->
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
@@ -468,7 +418,7 @@ Module exec. Section WithEnv.
       eauto 10.
   Qed.
 
-  Lemma intersect: forall k t l m mc s post1,
+  Lemma intersect {pick_sp: PickSp} : forall k t l m mc s post1,
       exec s k t m l mc post1 ->
       forall post2,
         exec s k t m l mc post2 ->
@@ -535,12 +485,22 @@ Module exec. Section WithEnv.
         eauto 10.
   Qed.
 
-  Lemma exec_to_other_trace s k1 k2 t m l mc post :
+  Require Import coqutil.Z.Lia.
+
+  Lemma exec_ext (pick_sp1: PickSp) s k t m l mc post :
+    exec (pick_sp := pick_sp1) s k t m l mc post ->
+    forall pick_sp2,
+    (forall k', pick_sp1 (k' ++ k) = pick_sp2 (k' ++ k)) ->
+    exec (pick_sp := pick_sp2) s k t m l mc post.
+  Proof. Admitted.
+
+  Lemma exec_to_other_trace {pick_sp: PickSp} s k1 k2 t m l mc post :
     exec s k1 t m l mc post ->
-    exec s k2 t m l mc (fun k2' t' m' l' mc' =>
-                          exists k'',
-                            k2' = k'' ++ k2 /\
-                              post (k'' ++ k1) t' m' l' mc').
+    exec (pick_sp := fun k => pick_sp (rev (skipn (length k2) (rev k)) ++ k1))
+      s k2 t m l mc (fun k2' t' m' l' mc' =>
+                       exists k'',
+                         k2' = k'' ++ k2 /\
+                           post (k'' ++ k1) t' m' l' mc').
   Proof.
     intros H. generalize dependent k2. induction H; intros.
     - econstructor. exists nil. eauto.
@@ -552,12 +512,18 @@ Module exec. Section WithEnv.
       econstructor; intuition eauto. eexists (_ :: _ ++ _). simpl.
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
-    - econstructor; intuition. eapply weaken. 1: eapply H1; eauto.
-      simpl. intros. fwd. exists mSmall', mStack'. intuition. eexists (_ ++ _ :: nil).
-      repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
-      intuition.
+    - econstructor; intuition. intros.
+      replace (rev k2) with (rev k2 ++ nil) in * by apply app_nil_r. Search (length (rev _)).
+      rewrite List.skipn_app_r in * by (rewrite rev_length; reflexivity).
+      simpl in *. eapply weaken. 1: eapply H1; eauto.
+      simpl. intros. fwd. exists mSmall', mStack'. intuition. eauto.
     - apply expr_to_other_trace in H. fwd. eapply if_true; intuition eauto.
-      eapply weaken. 1: eapply IHexec. simpl. intros. fwd. eexists (_ ++ _ :: _).
+      eapply weaken. Set Printing Implicit.
+      { eapply exec_ext with (pick_sp1 := _).
+        (*why is ^this not the default behavior? Because I did the existing class thing?*)
+        1: eapply IHexec. intros. Unset Printing Implicit. cbv beta. f_equal. f_equal. simpl.
+        { 2: eapply IHexec.
+      specialize (IHexec 1: eapply IHexec. simpl. intros. fwd. eexists (_ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
     - apply expr_to_other_trace in H. fwd. eapply if_false; intuition.
