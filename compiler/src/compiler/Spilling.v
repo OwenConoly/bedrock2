@@ -171,7 +171,7 @@ Section Spilling.
   Definition leak_spill_bcond : trace :=
     nil.
   
-  Definition bigtuple : Type := stmt * trace * trace * word * (trace -> trace -> trace * event).
+  Definition bigtuple : Type := stmt * trace * trace * word * (trace -> trace -> trace * word).
   
   Definition project_tuple (tup : bigtuple) : nat * stmt :=
     let '(s, k, sk_so_far, fpval, f) := tup in (length k, s).
@@ -186,10 +186,10 @@ Section Spilling.
   Definition stransform_stmt_trace_body
     {env: map.map String.string (list Z * list Z * stmt)}
     (e: env)
-    (pick_sp : trace -> event)
-    (tup : stmt * trace * trace * word * (trace (*skip*) -> trace (*sk_so_far*) -> trace * event))
-    (stransform_stmt_trace : forall othertup, lt_tuple othertup tup -> trace * event)
-    : trace * event.
+    (pick_sp : trace -> word)
+    (tup : stmt * trace * trace * word * (trace (*skip*) -> trace (*sk_so_far*) -> trace * word))
+    (stransform_stmt_trace : forall othertup, lt_tuple othertup tup -> trace * word)
+    : trace * word.
     refine (
         match tup as x return tup = x -> _ with
         | (s, k, sk_so_far, fpval, f) =>
@@ -200,30 +200,29 @@ Section Spilling.
                     match k with
                     | leak_word addr :: k' =>
                         f [leak_word addr] (sk_so_far ++ leak_load_iarg_reg fpval y ++ [leak_word addr] ++ leak_save_ires_reg fpval x)
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SStore sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
                         f [leak_word addr] (sk_so_far ++ leak_load_iarg_reg fpval x ++ leak_load_iarg_reg fpval y ++ [leak_word addr])
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SInlinetable _ x _ i =>
                   fun _ =>
                     match k with
                     | leak_word i' :: k' =>
                         f [leak_word i'] (sk_so_far ++ leak_load_iarg_reg fpval i ++ [leak_word i'] ++ leak_save_ires_reg fpval x)
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SStackalloc x z body =>
                   fun _ =>
-                    match k as x return k = x -> _ with
-                    | consume_word addr :: k' =>
-                        fun _ =>
-                          stransform_stmt_trace (body, k', sk_so_far ++ consume_word addr :: leak_save_ires_reg fpval x, fpval, (fun k => f (consume_word addr :: k))) _
-                    | _ => fun _ => (nil, pick_sp sk_so_far)
-                    end eq_refl
+                    match k as x with
+                    | _ :: _ =>
+                        stransform_stmt_trace (body, k, sk_so_far ++ leak_save_ires_reg fpval x, fpval, f) _
+                    | nil => (nil, pick_sp sk_so_far)
+                    end
               | SLit x _ =>
                   fun _ =>
                     f [] (sk_so_far ++ leak_save_ires_reg fpval x)
@@ -258,7 +257,7 @@ Section Spilling.
                              end
                              ++ newt
                              ++ leak_save_ires_reg fpval x)
-                    | None => (nil, leak_unit)
+                    | None => (nil, word.of_Z 0)
                     end
               | SSet x y =>
                   fun _ =>
@@ -273,7 +272,7 @@ Section Spilling.
                               sk_so_far ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool b],
                               fpval,
                               (fun skip => f (leak_bool b :: skip))) _
-                    | _ => fun _ => (nil, leak_unit)
+                    | _ => fun _ => (nil, word.of_Z 0)
                     end eq_refl
               | SLoop s1 c s2 =>
                   fun _ =>
@@ -292,7 +291,7 @@ Section Spilling.
                                 | leak_bool false :: k'' =>
                                     fun _ =>
                                       f (skip ++ [leak_bool false]) (sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool false])
-                                | _ => fun _ => (nil, leak_unit)
+                                | _ => fun _ => (nil, word.of_Z 0)
                                 end eq_refl))) _
               | SSeq s1 s2 =>
                   fun _ =>
@@ -309,24 +308,24 @@ Section Spilling.
                           match @map.get _ _ env e fname with
                           | Some (params, rets, fbody) =>
                               let sk_before_salloc := sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_unit] in
-                              let fpval' := match pick_sp sk_before_salloc with | consume_word w => w | _ => word.of_Z 0 end in
+                              let fpval' := pick_sp sk_before_salloc in
                               stransform_stmt_trace (fbody,
                                   k',
-                                  sk_before_salloc ++ consume_word fpval' :: leak_set_vars_to_reg_range fpval' params,
+                                  sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params,
                                   fpval',
                                   (fun skip sk_so_far' =>
                                      let k'' := List.skipn (length skip) k' in
                                        f (leak_unit :: skip) (sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
-                          | None => (nil, leak_unit)
+                          | None => (nil, word.of_Z 0)
                           end
-                    | _ => fun _ => (nil, leak_unit)
+                    | _ => fun _ => (nil, word.of_Z 0)
                     end eq_refl
               | SInteract resvars _ argvars =>
                   fun _ =>
                     match k with
                     | leak_list l :: k' =>
                           f [leak_list l] (sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_list l] ++ leak_set_vars_to_reg_range fpval resvars)
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               end eq_refl
         end%nat eq_refl).
@@ -548,14 +547,14 @@ Section Spilling.
         error:("Spilling got input program with invalid var names (please report as a bug)").
   Check stransform_stmt_trace. Print bigtuple.
   
-  Definition stransform_fun_trace {env : map.map string (list Z * list Z * stmt)} (e : env) (pick_sp : trace -> event) (f : list Z * list Z * stmt) (k : trace) (sk_so_far : trace) : trace * event :=
+  Definition stransform_fun_trace {env : map.map string (list Z * list Z * stmt)} (e : env) (pick_sp : trace -> word) (f : list Z * list Z * stmt) (k : trace) (sk_so_far : trace) : trace * word :=
     let '(argnames, resnames, body) := f in
-    let fpval := match pick_sp sk_so_far with | consume_word w => w | _ => word.of_Z 0 end in
+    let fpval := pick_sp sk_so_far in
     stransform_stmt_trace e pick_sp (body,
         k,
-        sk_so_far ++ consume_word fpval :: leak_set_vars_to_reg_range fpval argnames,
+        sk_so_far ++ leak_set_vars_to_reg_range fpval argnames,
         fpval,
-        (fun skip sk_so_far' => (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, leak_unit))).
+        (fun skip sk_so_far' => (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, word.of_Z 0))).
 
   Lemma firstn_min_absorb_length_r{A: Type}: forall (l: list A) n,
       List.firstn (Nat.min n (length l)) l = List.firstn n l.
@@ -734,7 +733,7 @@ Section Spilling.
     unfold spill_tmp. eapply put_arg_reg; eassumption.
   Qed.
 
-  Lemma load_iarg_reg_correct(i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 fpval post frame maxvar v,
+  Lemma load_iarg_reg_correct {pick_sp: PickSp} (i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 fpval post frame maxvar v,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
@@ -781,7 +780,7 @@ Section Spilling.
              end.
   Qed.
 
-  Lemma load_iarg_reg_correct'(i: Z): forall r e2 k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 post frame maxvar v fpval,
+  Lemma load_iarg_reg_correct' {pick_sp: PickSp} (i: Z): forall r e2 k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 post frame maxvar v fpval,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
@@ -831,7 +830,7 @@ Section Spilling.
      when the new postcondition is used as a "mid1" in exec.loop, and body1 is a seq
      in which this lemma was used, t2, m2, l2, mc2 are introduced after the evar "?mid1"
      is created (i.e. after exec.loop is applied), so they are not in the scope of "?mid1". *)
-  Lemma load_iarg_reg_correct''(i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 frame maxvar v fpval,
+  Lemma load_iarg_reg_correct'' {pick_sp: PickSp} (i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 frame maxvar v fpval,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
@@ -879,7 +878,7 @@ Section Spilling.
      `related` does not hold: the result is already in l1 and lStack, but not yet in stackwords.
      So we request the `related` that held *before* SOp, i.e. the one where the result is not
      yet in l1 and l2. *)
-  Lemma save_ires_reg_correct: forall e k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 x v maxvar frame post fpval,
+  Lemma save_ires_reg_correct {pick_sp: PickSp} : forall e k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 x v maxvar frame post fpval,
       post k1 t1 m1 (map.put l1 x v) mc1 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
@@ -977,7 +976,7 @@ Section Spilling.
      `related` does not hold: the result is already in l1 and lStack, but not yet in stackwords.
      So we request the `related` that held *before* SOp, i.e. the one where the result is not
      yet in l1 and l2. *)
-  Lemma save_ires_reg_correct'': forall e k2 t1 t2 m1 m2 l1 l2 mc2 x v maxvar frame post fpval,
+  Lemma save_ires_reg_correct'' {pick_sp: PickSp} : forall e k2 t1 t2 m1 m2 l1 l2 mc2 x v maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
       (forall t2' m2' l2' mc2',
@@ -1117,7 +1116,7 @@ Section Spilling.
     intros. apply H. eapply hide_ll_arg_reg_ptsto_core; eassumption.
   Qed.
 
-  Lemma set_vars_to_reg_range_correct:
+  Lemma set_vars_to_reg_range_correct {pick_sp: PickSp} :
     forall args start argvs e k2 t1 t2 m1 m2 l1 l1' l2 mc2 maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       map.putmany_of_list_zip args argvs l1 = Some l1' ->
@@ -1195,7 +1194,7 @@ Section Spilling.
         { assumption. }
   Qed.
 
-  Lemma set_reg_range_to_vars_correct:
+  Lemma set_reg_range_to_vars_correct {pick_sp: PickSp} :
     forall args argvs start e k2 t1 t2 m1 m2 l1 l2 mc2 maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       (List.length args <= 8)%nat ->
@@ -1442,15 +1441,78 @@ Section Spilling.
       blia.
   Qed.
   
+  (* this IH looks difficult to state with pick_sp in the semantics - perhaps not too surprising.
+     often things that are intuitively wrong turn out to be painful in practice too.
+
+     we want to do some induction on (exec ... s1 ...).
+     So we have to fix some high-level pick_spH at the very beginning, before saying
+     'induction (H : exec ... s1 ...)'.
+     But in IH, pick_spH should depend on the following things, which we need to revert
+     before starting induction: k2, fpval, f.
+     
+     What is the main issue here?
+         We are trying to use (exec ... s1 ...) as a hypothesis, but also as a conclusion.
+     In what sense?
+         As a hypothesis: this is clear.  We induct on (exec ... s1 ...) to get (exec ... s2 ...).
+         As a conclusion: we want to say, if we have (exec pick_sp ... s2 ...), then we get 
+         (exec (g pick_sp) ... s1 ...).
+     How do we stop this bidirectional nonsense?  Why is it here in the first place?
+         It's here because we need to show that high-level pick_sp is a function of low-level pick_sp.
+         Let g be the function which takes low-level pick_sp to high-level pick_sp.
+         Too bad g isn't invertible.
+         Since it's not, we can do this:
+               Fix arbitrary pick_spH.  Induct on (exec pick_spH ... s1 ...) to get
+               (forall pick_spL, pick_spH = g pick_spL -> exec pick_spL ... s2 ...).
+         OK, this fixes part of the problem.
+     Remaining issue:
+         Now we can put f in after the inductive hypothesis.  Good.  But it still needs to come before pick_spL.
+         This is no good, since we want it to be in the postcondition.
+         Is it possible to take it out of the postcondition?  Probably.
+         But not easily... I tried taking f out of the postcondition on branch pick_sp (where Spilling.v compiles).
+         It broke the proof in the while case, the first place f is used nontrivially.
+         Wasn't clear how to fix.
+
+         We could fix that by moving the hypothesis about pick_spH = g pick_spL into the postcondition.
+         Then we could have f in the postcondition, as desired.
+         But no, this doesn't actually work, because we can't even prove (exec pick_spL ... s2 ... True) without
+         the pick_spH = g pick_spL hypothesis.  So again, it is unfortunate to have pick_sp in the semantics.
+         
+         Is that true?  Can we prove (exec pick_spL ... s2 ... True) without that hypothesis?
+         What's a counterexample, where s1 crashes with some pick_sps but not all?
+             s1 := stackalloc 1 as x; y = load1(pick_sp _)
+         There it is.
+         Incidentally, this exposes a difference between putting pick_sp in the semantics and not.
+         If we put it in the semantics, we can prove that the program above terminates/doesn't crash/whatever.
+         If we don't, then we can't.
+         Do we want to be able to prove things like that?  I don't think so.  That program is pretty dumb.
+         Yeah, it's really a flaw to be able to prove programs like that.
+         Of course, we can't really prove that programs like that terminate, if you consider a program to have 
+         only been proven when we have something of type (forall pick_sp, exec pick_sp ... s ...).
+
+     OK, never mind thinking about how to modify this proof to work with pick_sp in the semantics.
+     Start over.
+     What are the obstacles?
+     1. It's unclear how to represent the correctness of the continuation f.
+        With the old method, this was something like:
+             (forall k1''' f,
+                     predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
+                     predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'' ++ k1''')).
+        That is, if f handles everything coming after the trace exhausted by this statement, then we correctly handle the whole trace.
+        What is the analogous thing with this method?
+        Can't write correctness of f using a single exec statement, since the trace predicted by f may come from executing many fragments of different statements.
+        Do we really need correctness of f?  Instead, why not just state that when our trace overflows the statement, then the leftover trace is passed to f. (actually, might doing this make proofs easier with the other method?)
+   *)
+
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
     forall (k1 : trace) (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
-           (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop),
-      exec e1 s1 k1 t1 m1 l1 mc1 post ->
+           (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop) pick_sp1,
+      exec (pick_sp := pick_sp1) e1 s1 k1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-          forall pick_sp,
+          forall pick_sp2 f,
+            (forall k1'', pick_sp1 (k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', k2, fpval, (f k1'')))) ->
             exec e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'' k2'',
@@ -1458,17 +1520,12 @@ Section Spilling.
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
                      k2' = k2'' ++ k2 /\
-                     forall k20 k2''',
-                       (predicts pick_sp (k20 ++ rev k2'' ++ k2''') ->
-                        (forall k1''' f,
-                            fst (stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval, f)) =
-                              fst (f (rev k1'') (k20 ++ rev k2''))) /\
-                          (forall k1''' f,
-                              predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                              predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'' ++ k1''')))).
+                     forall k,
+                       snd (stransform_stmt_trace e1 pick_sp1 (s1, k, k2, fpval, (f (rev k1'' ++ k)))) =
+                         snd (f (rev k1'' ++ k) k k2')).
 
   Definition call_spec(e: env) '(argnames, retnames, fbody)
-    (k: trace)(t: io_trace)(m: mem)(argvals: list word)
+    (pick_sp: PickSp) (k: trace)(t: io_trace)(m: mem)(argvals: list word)
     (post: trace -> io_trace -> mem -> list word -> Prop): Prop :=
     forall l mc,
       map.of_list_zip argnames argvals = Some l ->
@@ -1515,7 +1572,7 @@ Section Spilling.
                       end) = @List.app event.
   Proof. reflexivity. Qed. Print stransform_fun_trace.
   
-  Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+  (*Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       spilling_correct_for e1 e2 body1 ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
@@ -1677,7 +1734,7 @@ Section Spilling.
       apply downup. repeat rewrite <- app_assoc. constructor. }
      Unshelve.
     all: try assumption.
-  Qed.
+  Qed.*)
   
   Lemma spilling_correct : forall
       (e1 e2 : env)
@@ -1688,13 +1745,15 @@ Section Spilling.
       (m1 : mem)
       (l1 : locals)
       (mc1 : MetricLog)
-      (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop),
-      exec e1 s1 k1 t1 m1 l1 mc1 post ->
+      (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop)
+      pick_sp1,
+      exec (pick_sp := pick_sp1) e1 s1 k1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-          forall pick_sp,
+          forall pick_sp2 f,
+            (forall k1'', pick_sp1 (k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', k2, fpval, (f k1'')))) ->
             exec e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'' k2'',
@@ -1702,16 +1761,11 @@ Section Spilling.
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
                      k2' = k2'' ++ k2 /\
-                     forall k20 k2''',
-                       (predicts pick_sp (k20 ++ rev k2'' ++ k2''') ->
-                        (forall k1''' f,
-                            fst (stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval, f)) =
-                              fst (f (rev k1'') (k20 ++ rev k2''))) /\
-                          (forall k1''' f,
-                              predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                              predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'' ++ k1''')))).
+                     forall k,
+                       snd (stransform_stmt_trace e1 pick_sp1 (s1, (rev k1'' ++ k), (rev k2), fpval, (f (rev k1'' ++ k)))) =
+                         snd (f (rev k1'' ++ k) (rev k1'') (rev k2'))).
   Proof.
-    intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post.
+    intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post pick_sp1.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
     - (* exec.interact *)
       eapply exec.seq_cps.
@@ -1770,17 +1824,10 @@ Section Spilling.
           split.
           { subst k2'0 k2'. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
           (*begin ct stuff for interact*)
-          intros.
+          intros. subst k2'0 k2'.
           repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-          split.
-          { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. reflexivity. }
-          intros ? ? Hpredicts.
-          eapply predicts_ext.
-          { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-            reflexivity. }
-          constructor.
-          { intros []. }
-          simpl. apply Hpredicts. }
+          rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
+          repeat rewrite <- app_assoc. reflexivity. }
         (* related for set_vars_to_reg_range_correct: *)
         unfold related.
         eexists _, _, _. ssplit.
@@ -1899,17 +1946,20 @@ Section Spilling.
       eapply exec.weaken. {
         eapply IHexec.
         2: exact R.
-        unfold valid_vars_src.
-        eapply Forall_vars_stmt_impl.
-        2: eapply max_var_sound.
-        2: eapply forallb_vars_stmt_correct.
-        3: eassumption.
-        2: {
-          unfold is_valid_src_var.
-          intros *.
-          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
-        }
-        cbv beta. subst maxvar'. blia.
+        { unfold valid_vars_src.
+          eapply Forall_vars_stmt_impl.
+          2: eapply max_var_sound.
+          2: eapply forallb_vars_stmt_correct.
+          3: eassumption.
+          2: {
+            unfold is_valid_src_var.
+            intros *.
+            rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
+          }
+          cbv beta. subst maxvar'. blia. }
+        intros. move H6 at bottom.
+        subst a. specialize (H6 (leak_unit :: k1'')). rewrite stransform_stmt_trace_step in H6. simpl in H6.
+        rewrite H in H6.
       }
       cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & kH5' & tH5' & tL5' & R5 & OC & EkL5 & CT).
       match goal with
