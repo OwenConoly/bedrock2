@@ -111,8 +111,8 @@ Section WeakestPrecondition.
         post (cons (leak_word a) k'') t m l)
       | cmd.stackalloc x n c =>
           Z.modulo n (bytes_per_word width) = 0 /\
-            let a := pick_sp k in
             forall mStack mCombined,
+              let a := pick_sp k in
               anybytes a n mStack -> map.split mCombined m mStack ->
               dlet! l := map.put l x a in
               rec c k t mCombined l (fun k' t' mCombined' l' =>

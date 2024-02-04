@@ -18,6 +18,8 @@ Require Import coqutil.Datatypes.ListSet.
 Require Import coqutil.Map.OfListWord.
 Require Import coqutil.Word.Bitwidth.
 Require Import coqutil.Word.Interface.
+Require Import coqutil.Tactics.fwd.
+Require Import bedrock2.Semantics. (*because it contains trace_alignment. better place to put trace_alignment? *)
 Local Hint Mode Word.Interface.word - : typeclass_instances.
 
 Inductive bbinop: Type :=
@@ -323,7 +325,7 @@ Module exec.
       end.
 
     (* alternative semantics which allow non-determinism *)
-    Inductive exec:
+    Inductive exec {pick_sp: PickSp} :
       stmt varname ->
       trace -> io_trace -> mem -> locals -> metrics ->
       (trace -> io_trace -> mem -> locals -> metrics -> Prop)
@@ -382,15 +384,16 @@ Module exec.
         exec (SInlinetable sz x table i) k t m l mc post
     | stackalloc: forall k t mSmall l mc x n body post,
         n mod (bytes_per_word width) = 0 ->
-        (forall a mStack mCombined,
+        (forall mStack mCombined,
+            let a := pick_sp k in
             anybytes a n mStack ->
             map.split mCombined mSmall mStack ->
-            exec body (consume_word a :: k) t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
-             (fun k' t' mCombined' l' mc' =>
-              exists mSmall' mStack',
-                anybytes a n mStack' /\
-                map.split mCombined' mSmall' mStack' /\
-                post k' t' mSmall' l' mc')) ->
+            exec body k t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
+              (fun k' t' mCombined' l' mc' =>
+                 exists mSmall' mStack',
+                   anybytes a n mStack' /\
+                     map.split mCombined' mSmall' mStack' /\
+                     post k' t' mSmall' l' mc')) ->
         exec (SStackalloc x n body) k t mSmall l mc post
     | lit: forall k t m l mc x v post,
         post k t m (map.put l x (word.of_Z v))
@@ -458,7 +461,7 @@ Module exec.
         post k t m l mc ->
         exec SSkip k t m l mc post.
 
-    Lemma det_step: forall k0 t0 m0 l0 mc0 s1 s2 k1 t1 m1 l1 mc1 post,
+    Lemma det_step {pick_sp: PickSp} : forall k0 t0 m0 l0 mc0 s1 s2 k1 t1 m1 l1 mc1 post,
         exec s1 k0 t0 m0 l0 mc0 (fun k1' t1' m1' l1' mc1' => k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1') ->
         exec s2 k1 t1 m1 l1 mc1 post ->
         exec (SSeq s1 s2) k0 t0 m0 l0 mc0 post.
@@ -469,14 +472,14 @@ Module exec.
       assumption.
     Qed.
 
-    Lemma seq_cps: forall s1 s2 k t m (l: locals) mc post,
+    Lemma seq_cps {pick_sp: PickSp} : forall s1 s2 k t m (l: locals) mc post,
         exec s1 k t m l mc (fun k' t' m' l' mc' => exec s2 k' t' m' l' mc' post) ->
         exec (SSeq s1 s2) k t m l mc post.
     Proof.
       intros. eapply seq. 1: eassumption. simpl. clear. auto.
     Qed.
 
-    Lemma call_cps: forall fname params rets binds args fbody argvs k t (l: locals) m mc st post,
+    Lemma call_cps {pick_sp: PickSp} : forall fname params rets binds args fbody argvs k t (l: locals) m mc st post,
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st ->
@@ -492,7 +495,7 @@ Module exec.
       cbv beta. intros *. exact id.
     Qed.
 
-    Lemma loop_cps: forall body1 cond body2 k t m l mc post,
+    Lemma loop_cps {pick_sp: PickSp} : forall body1 cond body2 k t m l mc post,
       exec body1 k t m l mc (fun k t m l mc => exists b,
         eval_bcond l cond = Some b /\
         (b = false -> post (leak_bool false :: k) t m l (addMetricLoads 1 (addMetricInstructions 1 (addMetricJumps 1 mc)))) /\
@@ -508,7 +511,7 @@ Module exec.
       - assumption.
     Qed.
 
-    Lemma weaken: forall s k t m l mc post1,
+    Lemma weaken {pick_sp: PickSp} : forall s k t m l mc post1,
         exec s k t m l mc post1 ->
         forall post2,
           (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
@@ -531,7 +534,7 @@ Module exec.
         intros. simp. eauto 10.
     Qed.
 
-    Lemma seq_assoc: forall s1 s2 s3 k t m l mc post,
+    Lemma seq_assoc {pick_sp: PickSp} : forall s1 s2 s3 k t m l mc post,
         exec (SSeq s1 (SSeq s2 s3)) k t m l mc post ->
         exec (SSeq (SSeq s1 s2) s3) k t m l mc post.
     Proof.
@@ -544,7 +547,7 @@ Module exec.
       eauto.
     Qed.
 
-    Lemma seq_assoc_bw: forall s1 s2 s3 k t m l mc post,
+    Lemma seq_assoc_bw {pick_sp: PickSp} : forall s1 s2 s3 k t m l mc post,
         exec (SSeq (SSeq s1 s2) s3) k t m l mc post ->
         exec (SSeq s1 (SSeq s2 s3)) k t m l mc post.
     Proof. intros. simp. eauto 10 using seq. Qed.
@@ -557,7 +560,7 @@ Module exec.
              end;
       simp.
 
-    Lemma intersect: forall k t l m mc s post1,
+    Lemma intersect {pick_sp: PickSp} : forall k t l m mc s post1,
         exec s k t m l mc post1 ->
         forall post2,
           exec s k t m l mc post2 ->
@@ -633,65 +636,139 @@ Module exec.
         eauto.
     Qed.
 
-    Lemma exec_to_other_trace s k1 k2 t m l mc post :
-      exec s k1 t m l mc post ->
-      exec s k2 t m l mc (fun k2' t' m' l' mc' =>
-                            exists k'',
-                              k2' = k'' ++ k2 /\
-                                post (k'' ++ k1) t' m' l' mc').
+    Check exec.
+
+    Lemma exec_extends_trace {pick_sp: PickSp} s k t m l mc post :
+      exec s k t m l mc post ->
+      exec s k t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
     Proof.
-      intros H. generalize dependent k2. induction H; intros.
-      - econstructor; intuition eauto. specialize (H2 mReceive resvals klist H3).
-        destruct H2 as [l' H2]. exists l'. intuition eauto. eexists [_]. intuition eauto.
-      - econstructor; intuition eauto. destruct H4 as [k'' [H4 H5] ].
-        specialize (H3 _ _ _ _ _ H5). subst. destruct H3 as [retvs [l' H6] ].
-        exists retvs, l'. intuition. eexists (_ ++ [_]).
-        repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
-        intuition.
-      - econstructor; intuition eauto. eexists [_]. intuition eauto.
-      - econstructor; intuition eauto. eexists [_]. intuition eauto.
-      - econstructor; intuition eauto. eexists [_]. intuition eauto.
-      - econstructor; intuition eauto. eapply weaken. 1: eapply H1; eassumption.
-        simpl. intros. destruct H4 as [k'' [H4 [mSmall' [mStack' [H5 [H6 H7] ] ] ] ] ].
-        subst. exists mSmall', mStack'. intuition eauto. eexists (k'' ++ [_]).
-        do 2 rewrite <- app_assoc. intuition eauto.
-      - econstructor; intuition eauto. exists nil. intuition eauto.
-      - econstructor; intuition eauto.
-      - econstructor; intuition eauto. exists nil. intuition eauto.
+      intros H. induction H; try (econstructor; intuition eauto; eexists; trace_alignment; fail).
+      - econstructor; intuition eauto. specialize H2 with (1 := H3). fwd.
+        eexists. intuition eauto. eexists. trace_alignment.
+      - econstructor; intuition eauto. fwd. specialize H3 with (1 := H4p0). fwd.
+        eexists. intuition eauto. eexists. intuition eauto.
+        eexists. trace_alignment.
+      - econstructor; intuition eauto. intros. eapply weaken. 1: eapply H1; eauto.
+        simpl. intros. fwd. eexists. eexists. intuition eauto.
       - eapply if_true; intuition eauto. eapply weaken. 1: eapply IHexec.
-        simpl. intros. destruct H1 as [k'' [H1 H2] ]. subst. eexists (k'' ++ [_]).
-        do 2 rewrite <- app_assoc. intuition eauto.
+        simpl. intros. fwd. intuition eauto. eexists. trace_alignment.
       - eapply if_false; intuition eauto. eapply weaken. 1: eapply IHexec.
-        simpl. intros. destruct H1 as [k'' [H1 H2] ]. subst. eexists (k'' ++ [_]).
-        do 2 rewrite <- app_assoc. intuition eauto.
-      - econstructor; intuition eauto.
-        + destruct H6 as [k'' [H6 H8] ]. eauto.
-        + destruct H6 as [k'' [H6 H8] ]. subst. eexists (_ :: k''). intuition eauto.
-        + destruct H6 as [k'' [H6 H8] ]. subst. eapply weaken. 1: eapply H3; eauto.
-          simpl. intros. destruct H6 as [k''0 [H6 H9] ]. subst.
-          instantiate (1 := fun k2' t'0 m'0 l'0 mc'0 =>
-                              exists tail,
-                                k2' = tail ++ k2 /\
-                                  mid2 (tail ++ k) t'0 m'0 l'0 mc'0).
-          simpl. eexists (_ ++ [_] ++ _). simpl.
-          repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
-          simpl. intuition eauto.
-        + simpl in H6. destruct H6 as [tail [H6 H7] ]. subst.
-          eapply weaken. 1: eapply H5; eauto.
-          simpl. intros. destruct H6 as [k'' [H6 H8] ]. subst.
-          exists (k'' ++ tail). repeat rewrite <- app_assoc. intuition eauto.
-      - econstructor; intuition eauto. destruct H2 as [k'' [H2 H3] ]. subst.
-        eapply weaken. 1: eapply H1; eauto.
-        simpl. intros. destruct H2 as [k''0 [H2 H4] ]. subst.
-        exists (k''0 ++ k''). repeat rewrite <- app_assoc. intuition eauto.
-      - econstructor; intuition eauto. exists nil. auto.
+        simpl. intros. fwd. intuition eauto. eexists. trace_alignment.
+      - clear H2 H4. econstructor; intuition eauto; fwd; eauto.
+        { eexists. trace_alignment. }
+        { eapply weaken. 1: eapply H3; eauto. simpl. intros. fwd.
+          instantiate (1 := fun k'0 t'0 m'0 l'0 mc'0 =>
+                              mid2 k'0 t'0 m'0 l'0 mc'0 /\ exists k'', k'0 = k'' ++ k).
+          simpl. intuition. eexists. trace_alignment. }
+        simpl in *. fwd. eapply weaken. 1: eapply H5; eauto.
+        simpl. intros. fwd. intuition. eexists. trace_alignment.
+      - econstructor; intuition eauto. fwd. eapply weaken. 1: eapply H1; eauto.
+        simpl. intros. fwd. intuition eauto. eexists. trace_alignment.
     Qed.
 
+    Lemma exec_ext (pick_sp1: PickSp) s k t m l mc post :
+      exec (pick_sp := pick_sp1) s k t m l mc post ->
+      forall pick_sp2,
+        (forall k', pick_sp1 (k' ++ k) = pick_sp2 (k' ++ k)) ->
+        exec (pick_sp := pick_sp2) s k t m l mc post.
+    Proof.
+      Set Printing Implicit.
+      intros H1 pick_sp2. induction H1; intros; try solve [econstructor; eauto].
+      - econstructor. 4: eapply exec_extends_trace. all: intuition eauto.
+        { eapply IHexec. intros.
+          repeat (rewrite app_assoc || rewrite (app_one_l _ k)). auto. }
+        fwd. specialize H3 with (1 := H5p0). fwd. intuition eauto.
+      - econstructor; eauto. intros. replace (pick_sp1 k) with (pick_sp2 k) in *.
+        { eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
+        symmetry. apply H2 with (k' := nil).
+      - eapply if_true; eauto. eapply IHexec.
+        intros. repeat (rewrite app_assoc || rewrite (app_one_l _ k)). auto.
+      - eapply if_false; intuition eauto. eapply IHexec.
+        intros. repeat (rewrite app_assoc || rewrite (app_one_l _ k)). auto.
+      - clear H2 H4. eapply loop. 1: eapply exec_extends_trace. all: intuition eauto; fwd; eauto.
+        { eapply weaken. 1: eapply exec_extends_trace.
+          { eapply H3; eauto.
+            intros. repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto. }
+          simpl. intros. fwd.
+          instantiate (1 := fun k'0 t'0 m'0 l'0 mc'0 =>
+                              mid2 k'0 t'0 m'0 l'0 mc'0 /\ exists k'', k'0 = k'' ++ k).
+          simpl. intuition eauto. eexists. trace_alignment. }
+        simpl in *. fwd. eapply H5; eauto. intros.
+        repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto.
+      - econstructor. 1: eapply exec_extends_trace; eauto. simpl. intros. fwd.
+        eapply H0; eauto. intros. repeat rewrite app_assoc. apply H2.      
+    Qed.
+  
+    Local Ltac solve_picksps_equal :=
+      intros; cbv beta; f_equal;
+      repeat (rewrite rev_app_distr || cbn [rev app]); rewrite List.skipn_app_r;
+      [|repeat (rewrite app_length || rewrite rev_length || simpl); blia];
+      repeat rewrite <- app_assoc; rewrite List.skipn_app_r;
+      [|rewrite rev_length; reflexivity];
+      repeat (rewrite rev_app_distr || cbn [rev app] || rewrite rev_involutive);
+      repeat rewrite <- app_assoc; reflexivity.
 
+    Lemma exec_to_other_trace (pick_sp: PickSp) s k1 k2 t m l mc post :
+      exec s k1 t m l mc post ->
+      exec (pick_sp := fun k => pick_sp (rev (skipn (length k2) (rev k)) ++ k1))
+        s k2 t m l mc (fun k2' t' m' l' mc' =>
+                         exists k'',
+                           k2' = k'' ++ k2 /\
+                             post (k'' ++ k1) t' m' l' mc').
+    Proof.
+      intros H. generalize dependent k2. induction H; intros.
+      - econstructor; intuition eauto. apply H2 in H3. fwd.
+        eexists. intuition eauto. eexists. intuition eauto. 1: trace_alignment.
+        auto.
+      - econstructor; intuition eauto.
+        { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec; eauto. solve_picksps_equal. }
+        cbv beta in *. fwd. apply H3 in H4p1.
+        fwd. eexists. intuition eauto. eexists. intuition eauto. eexists.
+        split; [trace_alignment|]. repeat rewrite <- app_assoc. auto.
+      - econstructor; intuition eauto. eexists. split; [trace_alignment|]. auto.
+      - econstructor; intuition eauto. eexists. split; [trace_alignment|]. auto.
+      - econstructor; intuition eauto. eexists. split; [trace_alignment|]. auto.
+      - econstructor; intuition eauto. intros.
+        replace (rev k2) with (rev k2 ++ nil) in * by apply app_nil_r.
+        rewrite List.skipn_app_r in * by (rewrite rev_length; reflexivity).
+        simpl in *. eapply weaken. 1: eapply H1; eauto.
+        simpl. intros. fwd. exists mSmall', mStack'. intuition. eauto.
+      - econstructor; intuition eauto. eexists. split; [trace_alignment|]. auto.
+      - econstructor; intuition eauto.
+      - econstructor; intuition eauto. eexists. split; [trace_alignment|]. auto.
+      - eapply if_true; intuition eauto. eapply weaken.
+        { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
+        simpl. intros. fwd. eexists. split; [trace_alignment|].
+        repeat rewrite <- app_assoc. auto.
+      - eapply if_false; intuition eauto. eapply weaken.
+        { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
+        simpl. intros. fwd. eexists. split; [trace_alignment|].
+        repeat rewrite <- app_assoc. auto.
+      - eapply loop. 1: eapply IHexec. all: intuition eauto; fwd; eauto.
+        { eexists. split; [trace_alignment|]. rewrite app_nil_r. simpl. auto. }
+        { eapply exec_ext with (pick_sp1 := _).
+          { eapply weaken. 1: eapply H3; eauto. simpl. intros.
+            instantiate (1 := fun k'0 t'0 m'0 l'0 mc'0 =>
+                                exists k''0,
+                                  k'0 = k''0 ++ k2 /\
+                                    mid2 (k''0 ++ k) t'0 m'0 l'0 mc'0).
+            fwd. eexists. split; [trace_alignment|]. rewrite app_nil_r.
+            repeat rewrite <- app_assoc. simpl. auto. }
+          solve_picksps_equal. }
+        simpl in *. fwd. eapply exec_ext with (pick_sp1 := _).
+        { eapply weaken. 1: eapply H5; eauto. simpl. intros. fwd.
+          eexists. split; [trace_alignment|]. rewrite app_nil_r.
+          repeat rewrite <- app_assoc. auto. }
+        solve_picksps_equal.
+      - econstructor; intuition. fwd. eapply weaken.
+        { eapply exec_ext with (pick_sp1 := _). 1: eapply H1; eauto. solve_picksps_equal. }
+        simpl. intros. fwd. eexists. split; [trace_alignment|].
+        rewrite app_nil_r. repeat rewrite <- app_assoc. auto.
+      - econstructor. eexists. split; [trace_alignment|]. assumption.
+    Qed.
   End FlatImpExec.
 End exec.
 Notation exec := exec.exec.
-Check exec.intersect.
 
 Section FlatImp2.
   Context (varname: Type).
@@ -699,7 +776,7 @@ Section FlatImp2.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width}.
   Context {mem: map.map word byte} {locals: map.map varname word}
           {env: map.map String.string (list varname * list varname * stmt varname)}.
-  Context {ext_spec: ExtSpec}.
+  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
   Context {varname_eq_spec: EqDecider varname_eqb}
           {word_ok: word.ok word}
           {mem_ok: map.ok mem}

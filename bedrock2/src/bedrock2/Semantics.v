@@ -12,6 +12,23 @@ Require Export bedrock2.Memory.
 
 Require Import Coq.Lists.List.
 
+(* not sure where to put these lemmas *)
+Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
+Proof. intros. cbn. congruence. Qed.
+Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
+Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
+
+Ltac trace_alignment :=
+  repeat match goal with
+    | t := cons _ _ |- _ => subst t
+    end;
+  repeat (eapply align_trace_app
+          || eapply align_trace_cons
+          || exact (eq_refl (List.app nil _))).
+
+Lemma app_one_l {A} (a : A) l : (a :: l = (cons a nil) ++ l)%list.
+Proof. reflexivity. Qed.
+
 (* BW is not needed on the rhs, but helps infer width *)
 Definition io_event {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
   (mem * String.string * list word) * (mem * list word).
@@ -486,23 +503,6 @@ Module exec. Section WithEnv.
   Qed.
 
   Require Import coqutil.Z.Lia.
-
-  (* not sure where to put these lemmas *)
-  Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
-  Proof. intros. cbn. congruence. Qed.
-  Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
-  Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
-
-  Ltac trace_alignment :=
-    repeat match goal with
-      | t := cons _ _ |- _ => subst t
-      end;
-    repeat (eapply align_trace_app
-            || eapply align_trace_cons
-            || exact (eq_refl (List.app nil _))).
-
-  Lemma app_one_l {A} (a : A) l : (a :: l = (cons a nil) ++ l)%list.
-  Proof. reflexivity. Qed.
 
   Lemma eval_expr_extends_trace :
     forall e0 m l mc k v mc' k',
