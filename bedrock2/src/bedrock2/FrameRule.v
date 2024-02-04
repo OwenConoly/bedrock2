@@ -17,7 +17,7 @@ Section semantics.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
-  Context {ext_spec: ExtSpec}.
+  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
   Context {mem_ok: map.ok mem} {word_ok: word.ok word}.
 
   Lemma frame_load: forall mSmall mBig mAdd a r (v: word),

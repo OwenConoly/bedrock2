@@ -7,7 +7,7 @@ Section WeakestPrecondition.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word Byte.byte}.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
-  Context {ext_spec: ExtSpec}.
+  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
   Implicit Types (k : trace) (t : io_trace) (m : mem) (l : locals).
 
   Definition literal v (post : word -> Prop) : Prop :=
@@ -110,14 +110,15 @@ Section WeakestPrecondition.
         store sz m a v (fun m =>
         post (cons (leak_word a) k'') t m l)
       | cmd.stackalloc x n c =>
-        Z.modulo n (bytes_per_word width) = 0 /\
-        forall a mStack mCombined,
-          anybytes a n mStack -> map.split mCombined m mStack ->
-          dlet! l := map.put l x a in
-          rec c (cons (consume_word a) k) t mCombined l (fun k' t' mCombined' l' =>
-          exists m' mStack',
-          anybytes a n mStack' /\ map.split mCombined' m' mStack' /\
-          post k' t' m' l')
+          Z.modulo n (bytes_per_word width) = 0 /\
+            let a := pick_sp k in
+            forall mStack mCombined,
+              anybytes a n mStack -> map.split mCombined m mStack ->
+              dlet! l := map.put l x a in
+              rec c k t mCombined l (fun k' t' mCombined' l' =>
+                                       exists m' mStack',
+                                         anybytes a n mStack' /\ map.split mCombined' m' mStack' /\
+                                           post k' t' m' l')
       | cmd.cond br ct cf =>
         exists v k', dexpr m l k br v k' /\
         (word.unsigned v <> 0%Z -> rec ct (cons (leak_bool true) k') t m l post) /\

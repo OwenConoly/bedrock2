@@ -8,7 +8,7 @@ Section WeakestPrecondition.
   Context {width} {BW: Bitwidth width} {word: word.word width} {mem: map.map word Byte.byte}.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * Syntax.cmd)}.
-  Context {ext_spec: Semantics.ExtSpec}.
+  Context {ext_spec: Semantics.ExtSpec} {pick_sp: Semantics.PickSp}.
 
   Ltac ind_on X :=
     intros;
@@ -22,7 +22,8 @@ Section WeakestPrecondition.
        when trying to use Proper_load, or, due to COQBUG https://github.com/coq/coq/issues/11487,
        we'd get a typechecking failure at Qed time. *)
     repeat match goal with x : ?T |- _ => first
-       [ constr_eq T X; move x before ext_spec
+      [  constr_eq T X; move x before pick_sp
+       | constr_eq T X; move x before ext_spec
        | constr_eq T X; move x before env
        | constr_eq T X; move x before locals
        | constr_eq T X; move x at top
