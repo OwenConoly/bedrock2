@@ -487,14 +487,133 @@ Module exec. Section WithEnv.
 
   Require Import coqutil.Z.Lia.
 
+  (* not sure where to put these lemmas *)
+  Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
+  Proof. intros. cbn. congruence. Qed.
+  Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
+  Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
+
+  Ltac trace_alignment :=
+    repeat match goal with
+      | t := cons _ _ |- _ => subst t
+      end;
+    repeat (eapply align_trace_app
+            || eapply align_trace_cons
+            || exact (eq_refl (List.app nil _))).
+
+  Lemma app_one_l {A} (a : A) l : (a :: l = (cons a nil) ++ l)%list.
+  Proof. reflexivity. Qed.
+
+  Lemma eval_expr_extends_trace :
+    forall e0 m l mc k v mc' k',
+    eval_expr m l e0 mc k = Some (v, mc', k') ->
+    exists k'', k' = k'' ++ k.
+  Proof.
+    intros e0. induction e0; intros; simpl in *;
+      repeat match goal with
+        | H: (let (_, _) := ?x in _) = _ |- _ =>
+            destruct x
+        | H: match ?x with
+             | Some _ => _
+             | None => _
+             end = Some (_, _, _) |- _ =>
+            destruct x eqn:?; try congruence
+        | H: Some (?v1, ?mc1, ?t1) = Some (?v2, ?mc2, ?t2) |- _ =>
+            injection H; intros; subst
+        end.
+    - eexists. trace_alignment.
+    - eexists. trace_alignment.
+    - specialize IHe0 with (1 := Heqo). fwd. eexists. trace_alignment.
+    - specialize IHe0 with (1 := Heqo). fwd. eexists. trace_alignment.
+    - specialize IHe0_1 with (1 := Heqo). specialize IHe0_2 with (1 := Heqo0). fwd.
+      eexists. trace_alignment.
+    - specialize IHe0_1 with (1 := Heqo). destruct (word.eqb _ _).
+      + specialize IHe0_3 with (1 := H). fwd. eexists. trace_alignment.
+      + specialize IHe0_2 with (1 := H). fwd. eexists. trace_alignment.
+  Qed.
+
+  Lemma evaluate_call_args_log_extends_trace :
+    forall arges m l mc k args mc' k',
+    evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
+    exists k'', k' = k'' ++ k.
+  Proof.
+    intros arges. induction arges.
+    - simpl. intros. injection H. intros. subst. eexists. trace_alignment.
+    - simpl. intros. destruct (eval_expr _ _ _ _ _) eqn:E1; try congruence.
+      destruct p. destruct p. destruct (evaluate_call_args_log _ _ _ _ _) eqn:E2; try congruence.
+      destruct p. destruct p. injection H. intros. subst.
+      apply eval_expr_extends_trace in E1. specialize IHarges with (1 := E2).
+      fwd. eexists. trace_alignment.
+  Qed.
+
+  Local Ltac subst_exprs :=
+    repeat match goal with
+      | H : eval_expr _ _ _ _ _ = Some _ |- _ =>
+          apply eval_expr_extends_trace in H; destruct H; subst
+      | H : evaluate_call_args_log _ _ _ _ _ = Some _ |- _ =>
+          apply evaluate_call_args_log_extends_trace in H; destruct H; subst
+        end.
+
+  Lemma exec_extends_trace {pick_sp: PickSp} s k t m l mc post :
+    exec s k t m l mc post ->
+    exec s k t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
+  Proof.
+    intros H. induction H; try (econstructor; intuition eauto; subst_exprs; eexists; trace_alignment; fail).
+    - econstructor; intuition eauto. intros. eapply weaken. 1: eapply H1; eauto.
+      simpl. intros. fwd. eexists. eexists. intuition eauto.
+    - eapply if_true; intuition eauto. eapply weaken. 1: eapply IHexec.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - eapply if_false; intuition eauto. eapply weaken. 1: eapply IHexec.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - econstructor; intuition eauto. fwd. eapply weaken. 1: eapply H1; eauto.
+      simpl. intros. fwd. intuition eauto. eexists. trace_alignment.
+    - eapply while_true; eauto. simpl. intros. fwd. eapply weaken. 1: eapply H3; eauto.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - econstructor; intuition eauto. fwd. specialize H3 with (1 := H4p0). fwd.
+      eexists. intuition eauto. eexists. intuition eauto. subst_exprs.
+      eexists. trace_alignment.
+    - econstructor; intuition eauto. specialize H2 with (1 := H3). fwd.
+      eexists. intuition eauto. subst_exprs. eexists. trace_alignment.
+  Qed.
+
   Lemma exec_ext (pick_sp1: PickSp) s k t m l mc post :
     exec (pick_sp := pick_sp1) s k t m l mc post ->
     forall pick_sp2,
     (forall k', pick_sp1 (k' ++ k) = pick_sp2 (k' ++ k)) ->
     exec (pick_sp := pick_sp2) s k t m l mc post.
-  Proof. Admitted.
+  Proof.
+    Set Printing Implicit.
+    intros H1 pick_sp2. induction H1; intros; try solve [econstructor; eauto].
+    - econstructor; eauto. intros. replace (pick_sp1 k) with (pick_sp2 k) in *.
+      { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
+      symmetry. apply H2 with (k' := nil).
+    - eapply if_true; eauto. eapply IHexec. subst_exprs.
+      intros. eassert (H2' := H2 (_ ++ _ :: _)). rewrite <- app_assoc in H2'. eapply H2'.
+    - eapply if_false; eauto. eapply IHexec. subst_exprs.
+      intros. eassert (H2' := H2 (_ ++ _ :: _)). rewrite <- app_assoc in H2'. eapply H2'.
+    - econstructor. 1: eapply exec_extends_trace; eauto. simpl. intros. fwd.
+      eapply H0; eauto. intros. repeat rewrite app_assoc. apply H2.
+    - eapply while_true; intuition eauto.
+      { eapply exec_extends_trace. eapply IHexec. subst_exprs.
+        intros. repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto. }
+      simpl in *. fwd. eapply H3; eauto. intros. subst_exprs.
+      repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto.
+    - econstructor. 4: eapply exec_extends_trace. all: intuition eauto.
+      { eapply IHexec. subst_exprs. intros.
+        repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto. }
+      fwd. specialize H3 with (1 := H5p0). fwd. intuition eauto.
+  Qed.
+  
+  Local Ltac solve_picksps_equal :=
+    intros; cbv beta; f_equal;
+    repeat (rewrite rev_app_distr || cbn [rev app]); rewrite List.skipn_app_r;
+    [|repeat (rewrite app_length || rewrite rev_length || simpl); blia];
+    repeat rewrite <- app_assoc; rewrite List.skipn_app_r;
+    [|rewrite rev_length; reflexivity];
+    repeat (rewrite rev_app_distr || cbn [rev app] || rewrite rev_involutive);
+    repeat rewrite <- app_assoc; reflexivity.
 
-  Lemma exec_to_other_trace {pick_sp: PickSp} s k1 k2 t m l mc post :
+  Lemma exec_to_other_trace (pick_sp: PickSp) s k1 k2 t m l mc post :
     exec s k1 t m l mc post ->
     exec (pick_sp := fun k => pick_sp (rev (skipn (length k2) (rev k)) ++ k1))
       s k2 t m l mc (fun k2' t' m' l' mc' =>
@@ -518,30 +637,35 @@ Module exec. Section WithEnv.
       simpl in *. eapply weaken. 1: eapply H1; eauto.
       simpl. intros. fwd. exists mSmall', mStack'. intuition. eauto.
     - apply expr_to_other_trace in H. fwd. eapply if_true; intuition eauto.
-      eapply weaken. Set Printing Implicit.
-      { eapply exec_ext with (pick_sp1 := _).
-        (*why is ^this not the default behavior? Because I did the existing class thing?*)
-        1: eapply IHexec. intros. Unset Printing Implicit. cbv beta. f_equal. f_equal. simpl.
-        { 2: eapply IHexec.
-      specialize (IHexec 1: eapply IHexec. simpl. intros. fwd. eexists (_ ++ _ :: _).
+      eapply weaken.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
+      simpl. intros. fwd. eexists (_ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
     - apply expr_to_other_trace in H. fwd. eapply if_false; intuition.
-      eapply weaken. 1: eapply IHexec. simpl. intros. fwd. eexists (_ ++ _ :: _).
+      eapply weaken.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
+      simpl. intros. fwd. eexists (_ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
-    - econstructor; intuition. fwd. eapply weaken. 1: eapply H1; eauto.
+    - econstructor; intuition. fwd. eapply weaken.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply H1; eauto. solve_picksps_equal. }
       simpl. intros. fwd. eexists (_ ++ _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
     - apply expr_to_other_trace in H. fwd. eapply while_false; intuition.
       eexists (_ :: _). intuition.
-    - apply expr_to_other_trace in H. fwd. eapply while_true; intuition. fwd.
-      eapply weaken. 1: eapply H3; eauto. simpl. intros. fwd. eexists (_ ++ _ ++ _ :: _).
+    - apply expr_to_other_trace in H. fwd. eapply while_true; intuition.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
+      cbv beta in *. fwd. eapply weaken.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply H3; eauto. solve_picksps_equal. }
+      simpl. intros. fwd. eexists (_ ++ _ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
-    - Search evaluate_call_args_log. apply call_args_to_other_trace in H0.
-      fwd. econstructor; intuition eauto. fwd. apply H3 in H0p2.
+    - apply call_args_to_other_trace in H0.
+      fwd. econstructor; intuition eauto.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec; eauto. solve_picksps_equal. }
+      cbv beta in *. fwd. apply H3 in H0p2.
       fwd. exists retvs. intuition. exists l'. intuition. eexists (_ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
