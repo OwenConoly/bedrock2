@@ -1501,6 +1501,15 @@ Section Spilling.
         What is the analogous thing with this method?
         Can't write correctness of f using a single exec statement, since the trace predicted by f may come from executing many fragments of different statements.
         Do we really need correctness of f?  Instead, why not just state that when our trace overflows the statement, then the leftover trace is passed to f. (actually, might doing this make proofs easier with the other method?)
+    2. ...
+
+    It seems like a good way to prove this would be:
+       first prove (exec ... s1 ...) -> (exec ... s2 ...) to get correctness of first part of stransform_stmt_trace.
+       then, prove (exec pick_spL ... s2 ...) -> (exec (g pick_spL) ... s1 ...) to get correctness of second part.
+    Or something?  Some subtlety with the first part: want to show that lower thing holds for all pick_spL, so need
+    
+to show that all pick_spL's are possible refinements of some pick_spH.
+    
    *)
 
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
