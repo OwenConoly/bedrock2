@@ -1507,9 +1507,20 @@ Section Spilling.
        first prove (exec ... s1 ...) -> (exec ... s2 ...) to get correctness of first part of stransform_stmt_trace.
        then, prove (exec pick_spL ... s2 ...) -> (exec (g pick_spL) ... s1 ...) to get correctness of second part.
     Or something?  Some subtlety with the first part: want to show that lower thing holds for all pick_spL, so need
-    
-to show that all pick_spL's are possible refinements of some pick_spH.
-    
+    to show that all pick_spL's are possible refinements of some pick_spH.
+    Of course that's no good, don't want to prove that.
+
+   In simple terms, what is the issue?
+          Cannot write down inductive hypothesis.
+          High-level pick_sp depends on low-level state, so cannot even write down hypothesis to induct on without talking about low-level state.
+          This seems related to the fact that we really don't want to know 'high-level program executes to this post with this pick_sp' - we
+          don't care about that, we just want the nice nondeterministic thing.
+
+          With the nondeterministic thing, we get to specify how the low-level statement refines the behavior of the high-level statement.
+          Now, we have to first specify how the high-level behavior is refined, and then prove that the low-level statement refines it.
+          This is harder. I think it's harder?  Or I am just missing something.
+          This is the first compiler-correctness statement that has not seemed 'natural' in a sense.
+          Before, it has always at least been obvious where to start.
    *)
 
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
