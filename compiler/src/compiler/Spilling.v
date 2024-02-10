@@ -221,7 +221,7 @@ Section Spilling.
                     match k as x with
                     | _ :: _ =>
                         stransform_stmt_trace (body, k, sk_so_far ++ leak_save_ires_reg fpval x, fpval, f) _
-                    | nil => (nil, pick_sp sk_so_far)
+                    | nil => (nil, pick_sp (rev sk_so_far))
                     end
               | SLit x _ =>
                   fun _ =>
@@ -308,7 +308,7 @@ Section Spilling.
                           match @map.get _ _ env e fname with
                           | Some (params, rets, fbody) =>
                               let sk_before_salloc := sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_unit] in
-                              let fpval' := pick_sp sk_before_salloc in
+                              let fpval' := pick_sp (rev sk_before_salloc) in
                               stransform_stmt_trace (fbody,
                                   k',
                                   sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params,
@@ -549,7 +549,7 @@ Section Spilling.
   
   Definition stransform_fun_trace {env : map.map string (list Z * list Z * stmt)} (e : env) (pick_sp : trace -> word) (f : list Z * list Z * stmt) (k : trace) (sk_so_far : trace) : trace * word :=
     let '(argnames, resnames, body) := f in
-    let fpval := pick_sp sk_so_far in
+    let fpval := pick_sp (rev sk_so_far) in
     stransform_stmt_trace e pick_sp (body,
         k,
         sk_so_far ++ leak_set_vars_to_reg_range fpval argnames,
@@ -1522,7 +1522,7 @@ Section Spilling.
           This is the first compiler-correctness statement that has not seemed 'natural' in a sense.
           Before, it has always at least been obvious where to start.
    *)
-
+  
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
     forall (k1 : trace) (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
            (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop) pick_sp1,
@@ -1532,17 +1532,16 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', k2, fpval, (f k1'')))) ->
-            exec e2 (spill_stmt s1) k2 t2 m2 l2 mc2
+            (forall k1'', pick_sp1 (rev k1 ++ k1'') = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'' k2'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
                      k2' = k2'' ++ k2 /\
-                     forall k,
-                       snd (stransform_stmt_trace e1 pick_sp1 (s1, k, k2, fpval, (f (rev k1'' ++ k)))) =
-                         snd (f (rev k1'' ++ k) k k2')).
+                     forall k1''',
+                       stransform_stmt_trace e1 pick_sp1 (s1, rev k1'' ++ k1''', rev k2, fpval, f (rev k1'' ++ k1''')) = f (rev k1'' ++ k1''') (rev k1'') (rev k2')).
 
   Definition call_spec(e: env) '(argnames, retnames, fbody)
     (pick_sp: PickSp) (k: trace)(t: io_trace)(m: mem)(argvals: list word)
@@ -1773,18 +1772,17 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', k2, fpval, (f k1'')))) ->
-            exec e2 (spill_stmt s1) k2 t2 m2 l2 mc2
+            (forall k1'', pick_sp1 (rev k1 ++ k1'') = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'' k2'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
                      k2' = k2'' ++ k2 /\
-                     forall k,
-                       snd (stransform_stmt_trace e1 pick_sp1 (s1, (rev k1'' ++ k), (rev k2), fpval, (f (rev k1'' ++ k)))) =
-                         snd (f (rev k1'' ++ k) (rev k1'') (rev k2'))).
-  Proof.
+                     forall k1''',
+                       stransform_stmt_trace e1 pick_sp1 (s1, rev k1'' ++ k1''', rev k2, fpval, f (rev k1'' ++ k1''')) = f (rev k1'' ++ k1''') (rev k1'') (rev k2')).
+  Proof. Search stransform_stmt_trace.
     intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post pick_sp1.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
     - (* exec.interact *)
@@ -1980,7 +1978,12 @@ Section Spilling.
         intros. move H6 at bottom.
         subst a. specialize (H6 (leak_unit :: k1'')). rewrite stransform_stmt_trace_step in H6. simpl in H6.
         rewrite H in H6.
-      }
+        simpl. rewrite <- app_assoc. simpl. rewrite H6. f_equal. f_equal. f_equal.
+        2: { instantiate (1 := fun kk _ _ => f kk _ _). simpl. reflexivity. }
+        subst k2' kL4.
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        repeat rewrite <- app_assoc. reflexivity. }
+      
       cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & kH5' & tH5' & tL5' & R5 & OC & EkL5 & CT).
       match goal with
       | H: context[outcome], A: context[outcome] |- _ =>
@@ -2075,6 +2078,7 @@ Section Spilling.
           reflexivity. }
         intros.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        rewrite stransform_stmt_trace_step. simpl. rewrite H.
         repeat (rewrite <- app_assoc in H3 || cbn [List.app] in H3). rewrite app_one_cons in H3.
 
         repeat rewrite (app_assoc _ _ (consume_word a :: _)) in H3.
