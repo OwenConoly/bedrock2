@@ -1773,14 +1773,13 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (rev k1 ++ k1'') = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            (forall k1'', pick_sp1 (rev k1'' ++ (*problem: this shouldn't be k1...*)k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
-                 exists k1' t1' m1' l1' mc1' k1'' k2'',
+                 exists k1' t1' m1' l1' mc1' k1'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
-                     k2' = k2'' ++ k2 /\
                      forall k10 k1''' f_,
                        (forall x1 x2 x3, f x1 x2 x3 = f_ x1 x2 x3) ->
                        stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f_ (k10 ++ rev k1'' ++ k1''')) = f_ (k10 ++ rev k1'' ++ k1''') (rev k1'') (rev k2')).
@@ -1828,7 +1827,7 @@ Section Spilling.
         { reflexivity. }
         { unfold a0, a7. blia. }
         { eassumption. }
-        { intros. do 7 eexists.
+        { intros. do 6 eexists.
           split. 1: eassumption.
           eenough _ as Hpost.
           2: { eapply H2p1.
@@ -1841,8 +1840,6 @@ Section Spilling.
           split. 1: eassumption.
           split.
           { instantiate (1 := [_]). reflexivity. }
-          split.
-          { subst k2'0 k2'. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
           (*begin ct stuff for interact*)
           intros. subst k2'0 k2'.
           repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
@@ -1980,13 +1977,13 @@ Section Spilling.
         intros. move H6 at bottom.
         subst a. specialize (H6 (leak_unit :: k1'')). rewrite stransform_stmt_trace_step in H6. simpl in H6.
         rewrite H in H6.
-        simpl. rewrite <- app_assoc. simpl. rewrite H6. f_equal. f_equal. f_equal.
+        simpl. rewrite <- app_assoc in *. simpl in *. rewrite H6. f_equal. f_equal. f_equal.
         2: { instantiate (1 := fun kk _ _ => f kk _ _). simpl. reflexivity. }
         subst k2' kL4.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
         repeat rewrite <- app_assoc. reflexivity. }
       
-      cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & kH5' & tH5' & tL5' & R5 & OC & EkL5 & CT).
+      cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & kH5' & tH5' & R5 & OC & CT).
       match goal with
       | H: context[outcome], A: context[outcome] |- _ =>
         specialize H with (1 := A); move H at bottom; rename H into Q
@@ -2069,13 +2066,11 @@ Section Spilling.
       { reflexivity. }
       { unfold a0, a7. blia. }
       { eassumption. }
-      { intros t22 m22 l22 mc22 k22 R22. do 7 eexists. split; [eassumption|].
+      { intros t22 m22 l22 mc22 k22 R22. do 6 eexists. split; [eassumption|].
         split; [eassumption|].
         (* begin ct stuff for call*)
         split.
-        { subst kH5. rewrite app_one_cons. rewrite app_assoc. reflexivity. }
-        split.
-        { subst k22. subst kL6. subst kL5. subst kL4. subst k2'.
+        { subst k22. subst kL6. subst kH5. subst kL4. subst k2'.
           rewrite app_one_cons. rewrite (app_one_cons leak_unit). repeat rewrite app_assoc.
           reflexivity. }
         intros.
@@ -2107,22 +2102,13 @@ Section Spilling.
       + eassumption.
       + blia.
       + (*begin ct stuff for load*)
-        intros. do 7 eexists. split; [|split]. 2: eassumption. 1: eassumption.
+        intros. do 6 eexists. split; [|split]. 2: eassumption. 1: eassumption.
         split.
         { rewrite app_one_cons. reflexivity. }
-        split.
-        { subst k2'0. subst k2'. rewrite app_one_cons. repeat rewrite app_assoc.
-          reflexivity. }
-        intros. 
+        intros.
+        rewrite stransform_stmt_trace_step. simpl. f_equal. subst k2'0 k2'.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-        split.
-        { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. reflexivity. }
-        intros ? ? Hpredicts. eapply predicts_ext.
-        { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-          reflexivity. }
-        constructor.
-        { intros []. }
-        apply Hpredicts.
+        repeat rewrite <- app_assoc. reflexivity.
         (*end ct stuff for load*)
         
     - (* exec.store *)
@@ -2140,7 +2126,7 @@ Section Spilling.
       { unfold Memory.store, Memory.store_Z, Memory.store_bytes.
         unfold Memory.load_bytes in *.
         erewrite map.getmany_of_tuple_in_disjoint_putmany; eauto. }
-      do 7 eexists. split; [|split]. 2: eassumption.
+      do 6 eexists. split; [|split]. 2: eassumption.
       { unfold related.
         repeat match goal with
                | |- exists _, _ => eexists
@@ -2151,19 +2137,10 @@ Section Spilling.
         all: ecancel_assumption. }
       split.
       { rewrite app_one_cons. reflexivity. }
-      split.
-      { subst k2'0. subst k2'. rewrite app_one_cons. repeat rewrite app_assoc.
-        reflexivity. }
-      intros. 
+      intros.
+      rewrite stransform_stmt_trace_step. simpl. f_equal. subst k2'0 k2'.
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-      split.
-      { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. reflexivity. }
-      intros ? ? Hpredicts. eapply predicts_ext.
-      { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-        reflexivity. }
-      constructor.
-      { intros []. }
-      apply Hpredicts.
+      repeat rewrite <- app_assoc. reflexivity.
       
     - (* exec.inlinetable *)
       eapply exec.seq_cps. eapply load_iarg_reg_correct; (blia || eassumption || idtac).
@@ -2176,19 +2153,14 @@ Section Spilling.
       eapply save_ires_reg_correct''.
       + eassumption.
       + blia.
-      + intros. do 7 eexists. split; [|split].
+      + intros. do 6 eexists. split; [|split].
         2: eassumption. 1: assumption. split.
-        { instantiate (1 := [_]). reflexivity. } split.
-        { subst k2'0 k2'. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
+        { instantiate (1 := [_]). reflexivity. }
+        intros.
+        rewrite stransform_stmt_trace_step. simpl.
+        subst k2'0 k2'.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-        split.
-        { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. reflexivity. }
-        intros ? ? Hpredicts. eapply predicts_ext.
-        { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-          reflexivity. }
-        constructor.
-        { intros []. }
-        apply Hpredicts.
+        repeat rewrite <- app_assoc. reflexivity.
 
     - (* exec.stackalloc *)
       rename H1 into IH.
@@ -2199,7 +2171,13 @@ Section Spilling.
       eapply save_ires_reg_correct''. 1: eassumption. 1: blia.
       intros.
       eapply exec.weaken. {
-        eapply IH; eassumption. }
+        assert (H4' := H4).
+        specialize (H4 nil). simpl in H4. rewrite stransform_stmt_trace_step in H4.
+        simpl in H4. rewrite rev_involutive in H4.
+        eapply IH; try rewrite H4; try eassumption.
+        intros. rewrite H4'. rewrite stransform_stmt_trace_step. simpl.
+        rewrite stransform_stmt_trace_step in H4'.
+      }
       cbv beta. intros. fwd.
       edestruct shrink_related_mem as (mSmall2 & ? & ?). 1,2: eassumption.
       repeat match goal with
