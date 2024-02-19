@@ -1773,7 +1773,10 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (rev k1'' ++ (*problem: this shouldn't be k1...*)k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            (*problem: we don't want k1 below, we might want x ++ k1 after we accumulate some more trace...*)
+            (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            (*following is a bad hypothesis; it's too strong, can't prove it.  One above is too weak.
+              (forall k1'' k1''0, pick_sp1 (rev k1'' ++ k1''0 ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''0 ++ k1'')))))*)
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'',
