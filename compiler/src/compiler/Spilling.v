@@ -192,7 +192,8 @@ Section Spilling.
     : trace * word.
     refine (
         match tup as x return tup = x -> _ with
-        | (s, k, sk_so_far, fpval, f) =>
+        | (s, k, sk_so_far, (*fpval,*) f) =>
+            let fpval := pick_sp (rev sk_so_far) in
             fun _ =>
               match s as x return s = x -> _ with
               | SLoad sz x y o =>
@@ -1766,26 +1767,18 @@ Section Spilling.
       (l1 : locals)
       (mc1 : MetricLog)
       (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop)
-      pick_sp1,
-      exec (pick_sp := pick_sp1) e1 s1 k1 t1 m1 l1 mc1 post ->
+      pick_sp2,
+      exec (pick_sp := some_function pick_sp2) e1 s1 k1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
-        forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
+        forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word) f,
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-          forall pick_sp2 f,
-            (*problem: we don't want k1 below, we might want x ++ k1 after we accumulate some more trace...*)
-            (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
-            (*following is a bad hypothesis; it's too strong, can't prove it.  One above is too weak.
-              (forall k1'' k1''0, pick_sp1 (rev k1'' ++ k1''0 ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''0 ++ k1'')))))*)
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
-                     post k1' t1' m1' l1' mc1' /\
-                     k1' = k1'' ++ k1 /\
-                     forall k10 k1''' f_,
-                       (forall x1 x2 x3, f x1 x2 x3 = f_ x1 x2 x3) ->
-                       stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f_ (k10 ++ rev k1'' ++ k1''')) = f_ (k10 ++ rev k1'' ++ k1''') (rev k1'') (rev k2')).
+                     multi_predict (fpval, k2) = (fpval, k2') /\
+                     post k1' t1' m1' l1' mc1').
   Proof. Search stransform_stmt_trace.
     intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post pick_sp1.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
