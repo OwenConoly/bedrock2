@@ -10,6 +10,23 @@ Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import bedrock2.MetricLogging.
 Require Export bedrock2.Memory.
 
+(* not sure where to put these lemmas *)
+Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
+Proof. intros. cbn. congruence. Qed.
+Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
+Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
+
+Ltac trace_alignment :=
+  repeat match goal with
+    | t := cons _ _ |- _ => subst t
+    end;
+  repeat (eapply align_trace_app
+          || eapply align_trace_cons
+          || exact (eq_refl (List.app nil _))).
+
+Lemma app_one_l {A} (a : A) ll : (a :: ll = (cons a nil) ++ ll)%list.
+Proof. reflexivity. Qed.
+
 Require Import Coq.Lists.List.
 (* BW is not needed on the rhs, but helps infer width *)
 Definition io_event {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
@@ -254,6 +271,8 @@ Section semantics.
       | _ => Some (nil, mc, tr)
     end.
 
+    
+
     Lemma expr_to_other_trace e mc mc' k1 k1' v :
       eval_expr e mc k1 = Some (v, mc', k1') ->
       exists k'',
@@ -313,9 +332,78 @@ Section semantics.
         repeat rewrite <- (app_assoc _ _ k1). intuition. repeat rewrite <- (app_assoc _ _ k2).
         rewrite E1p1. rewrite E2p1. reflexivity.
     Qed.
-    
+
+    Lemma eval_expr_extends_trace :
+    forall e0 mc k v mc' k',
+      eval_expr e0 mc k = Some (v, mc', k') ->
+      exists k'', k' = k'' ++ k /\ forall x, ~In (consume_word x) k''.
+    Proof.
+      intros e0. induction e0; intros; simpl in *;
+        repeat match goal with
+          | H: (let (_, _) := ?x in _) = _ |- _ =>
+              destruct x
+          | H: match ?x with
+               | Some _ => _
+               | None => _
+               end = Some (_, _, _) |- _ =>
+              destruct x eqn:?; try congruence
+          | H: Some (?v1, ?mc1, ?t1) = Some (?v2, ?mc2, ?t2) |- _ =>
+              injection H; intros; subst
+          end.
+      - eexists. split; [trace_alignment|]. auto.
+      - eexists. split; [trace_alignment|]. auto.
+      - specialize IHe0 with (1 := Heqo). fwd. eexists. split; [trace_alignment|].
+        simpl. intros x H. destruct H; [congruence|]. rewrite app_nil_r in H.
+        eapply IHe0p1. eassumption.
+      - specialize IHe0 with (1 := Heqo). fwd. eexists. split; [trace_alignment|].
+      simpl. intros x H. destruct H; [congruence|].  rewrite app_nil_r in H.
+      (*why does eauto not work here:( *) eapply IHe0p1. eassumption.
+    - specialize IHe0_1 with (1 := Heqo). specialize IHe0_2 with (1 := Heqo0). fwd.
+      eexists. split; [trace_alignment|]. intros x H. rewrite app_nil_r in H.
+      assert (In (consume_word x) (k'' ++ k''0)).
+      + destruct op; simpl in H; try assumption.
+        all: destruct H; [congruence|]; try assumption.
+        all: destruct H; [congruence|]; assumption.
+      + Search (In _ (_ ++ _)). apply in_app_or in H0. destruct H0.
+        -- eapply IHe0_2p1. eassumption.
+        -- eapply IHe0_1p1. eassumption.
+    - specialize IHe0_1 with (1 := Heqo). destruct (word.eqb _ _).
+      + specialize IHe0_3 with (1 := H). fwd. eexists. split; [trace_alignment|].
+        intros x H'. rewrite app_nil_r in H'. apply in_app_or in H'. destruct H'.
+        -- eapply IHe0_3p1. eassumption.
+        -- destruct H0; [congruence|]. eapply IHe0_1p1. eassumption.
+      + specialize IHe0_2 with (1 := H). fwd. eexists. split; [trace_alignment|].
+        intros x H'. rewrite app_nil_r in H'. apply in_app_or in H'. destruct H'.
+        -- eapply IHe0_2p1. eassumption.
+        -- destruct H0; [congruence|]. eapply IHe0_1p1. eassumption.
+  Qed.
+
+  Lemma evaluate_call_args_log_extends_trace :
+    forall arges mc k args mc' k',
+    evaluate_call_args_log arges mc k = Some (args, mc', k') ->
+    exists k'', k' = k'' ++ k /\ forall x, ~In (consume_word x) k''.
+  Proof.
+    intros arges. induction arges.
+    - simpl. intros. injection H. intros. subst. eexists. split; [trace_alignment|]. auto.
+    - simpl. intros. destruct (eval_expr  _ _ _) eqn:E1; try congruence.
+      destruct p. destruct p. destruct (evaluate_call_args_log _ _ _) eqn:E2; try congruence.
+      destruct p. destruct p. injection H. intros. subst.
+      apply eval_expr_extends_trace in E1. specialize IHarges with (1 := E2).
+      fwd. eexists. split; [trace_alignment|]. intros x H. rewrite app_nil_r in H.
+      apply in_app_or in H. destruct H.
+      + eapply IHargesp1. eassumption.
+      + eapply E1p1. eassumption.
+  Qed.
   End WithMemAndLocals.
 End semantics.
+
+Ltac subst_exprs :=
+  repeat match goal with
+    | H : eval_expr _ _ _ _ _ = Some _ |- _ =>
+        apply eval_expr_extends_trace in H; destruct H as [? [? ?] ]; subst
+    | H : evaluate_call_args_log _ _ _ _ _ = Some _ |- _ =>
+        apply evaluate_call_args_log_extends_trace in H; destruct H as [? [? ?] ]; subst
+    end.
 
 Module exec. Section WithEnv.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
@@ -812,26 +900,34 @@ Module otherexec. Section WithEnv.
                end.
         eauto 10.
   Qed.
+
+  Lemma otherexec_extends_trace {pick_sp: PickSp} s k t m l mc post :
+    exec s k t m l mc post ->
+    exec s k t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
+  Proof.
+    intros H. induction H; try (econstructor; intuition eauto; subst_exprs; eexists; trace_alignment; fail).
+    - econstructor; intuition eauto. intros. eapply weaken. 1: eapply H1; eauto.
+      simpl. intros. intuition eauto. fwd. eexists. eexists. intuition eauto.
+      eexists. trace_alignment.
+    - eapply if_true; intuition eauto. eapply weaken. 1: eapply IHexec.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - eapply if_false; intuition eauto. eapply weaken. 1: eapply IHexec.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - econstructor; intuition eauto. fwd. eapply weaken. 1: eapply H1; eauto.
+      simpl. intros. fwd. intuition eauto. eexists. trace_alignment.
+    - eapply while_true; eauto. simpl. intros. fwd. eapply weaken. 1: eapply H3; eauto.
+      simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
+    - econstructor; intuition eauto. fwd. specialize H3 with (1 := H4p0). fwd.
+      eexists. intuition eauto. eexists. intuition eauto. subst_exprs.
+      eexists. trace_alignment.
+    - econstructor; intuition eauto. specialize H2 with (1 := H3). fwd.
+      eexists. intuition eauto. subst_exprs. eexists. trace_alignment.
+  Qed.
   End WithEnv.
 End otherexec. Notation otherexec := otherexec.exec.
 Check exec.
 
-(* not sure where to put these lemmas *)
-Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
-Proof. intros. cbn. congruence. Qed.
-Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
-Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
 
-Ltac trace_alignment :=
-  repeat match goal with
-    | t := cons _ _ |- _ => subst t
-    end;
-  repeat (eapply align_trace_app
-          || eapply align_trace_cons
-          || exact (eq_refl (List.app nil _))).
-
-Lemma app_one_l {A} (a : A) l : (a :: l = (cons a nil) ++ l)%list.
-  Proof. reflexivity. Qed.
 
 Module two_execs. Section WithEnv.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
@@ -845,75 +941,7 @@ Module two_execs. Section WithEnv.
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
   Check exec.
 
-  Lemma eval_expr_extends_trace :
-    forall e0 m l mc k v mc' k',
-    eval_expr m l e0 mc k = Some (v, mc', k') ->
-    exists k'', k' = k'' ++ k /\ forall x, ~In (consume_word x) k''.
-  Proof.
-    intros e0. induction e0; intros; simpl in *;
-      repeat match goal with
-        | H: (let (_, _) := ?x in _) = _ |- _ =>
-            destruct x
-        | H: match ?x with
-             | Some _ => _
-             | None => _
-             end = Some (_, _, _) |- _ =>
-            destruct x eqn:?; try congruence
-        | H: Some (?v1, ?mc1, ?t1) = Some (?v2, ?mc2, ?t2) |- _ =>
-            injection H; intros; subst
-        end.
-    - eexists. split; [trace_alignment|]. auto.
-    - eexists. split; [trace_alignment|]. auto.
-    - specialize IHe0 with (1 := Heqo). fwd. eexists. split; [trace_alignment|].
-      simpl. intros x H. destruct H; [congruence|]. rewrite app_nil_r in H.
-      eapply IHe0p1. eassumption.
-    - specialize IHe0 with (1 := Heqo). fwd. eexists. split; [trace_alignment|].
-      simpl. intros x H. destruct H; [congruence|].  rewrite app_nil_r in H.
-      (*why does eauto not work here:( *) eapply IHe0p1. eassumption.
-    - specialize IHe0_1 with (1 := Heqo). specialize IHe0_2 with (1 := Heqo0). fwd.
-      eexists. split; [trace_alignment|]. intros x H. rewrite app_nil_r in H.
-      assert (In (consume_word x) (k'' ++ k''0)).
-      + destruct op; simpl in H; try assumption.
-        all: destruct H; [congruence|]; try assumption.
-        all: destruct H; [congruence|]; assumption.
-      + Search (In _ (_ ++ _)). apply in_app_or in H0. destruct H0.
-        -- eapply IHe0_2p1. eassumption.
-        -- eapply IHe0_1p1. eassumption.
-    - specialize IHe0_1 with (1 := Heqo). destruct (word.eqb _ _).
-      + specialize IHe0_3 with (1 := H). fwd. eexists. split; [trace_alignment|].
-        intros x H'. rewrite app_nil_r in H'. apply in_app_or in H'. destruct H'.
-        -- eapply IHe0_3p1. eassumption.
-        -- destruct H0; [congruence|]. eapply IHe0_1p1. eassumption.
-      + specialize IHe0_2 with (1 := H). fwd. eexists. split; [trace_alignment|].
-        intros x H'. rewrite app_nil_r in H'. apply in_app_or in H'. destruct H'.
-        -- eapply IHe0_2p1. eassumption.
-        -- destruct H0; [congruence|]. eapply IHe0_1p1. eassumption.
-  Qed.
-
-  Lemma evaluate_call_args_log_extends_trace :
-    forall arges m l mc k args mc' k',
-    evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
-    exists k'', k' = k'' ++ k /\ forall x, ~In (consume_word x) k''.
-  Proof.
-    intros arges. induction arges.
-    - simpl. intros. injection H. intros. subst. eexists. split; [trace_alignment|]. auto.
-    - simpl. intros. destruct (eval_expr _ _ _ _ _) eqn:E1; try congruence.
-      destruct p. destruct p. destruct (evaluate_call_args_log _ _ _ _ _) eqn:E2; try congruence.
-      destruct p. destruct p. injection H. intros. subst.
-      apply eval_expr_extends_trace in E1. specialize IHarges with (1 := E2).
-      fwd. eexists. split; [trace_alignment|]. intros x H. rewrite app_nil_r in H.
-      apply in_app_or in H. destruct H.
-      + eapply IHargesp1. eassumption.
-      + eapply E1p1. eassumption.
-  Qed.
-
-  Local Ltac subst_exprs :=
-    repeat match goal with
-      | H : eval_expr _ _ _ _ _ = Some _ |- _ =>
-          apply eval_expr_extends_trace in H; destruct H as [? [? ?] ]; subst
-      | H : evaluate_call_args_log _ _ _ _ _ = Some _ |- _ =>
-          apply evaluate_call_args_log_extends_trace in H; destruct H as [? [? ?] ]; subst
-      end.
+  
 
   Ltac solve_stuff := econstructor; intuition eauto; subst_exprs; try (eexists; split; [trace_alignment|]); eauto.
 
@@ -950,52 +978,155 @@ Module two_execs. Section WithEnv.
     - intros Ha. destruct a; destruct Ha. simpl in H. specialize (H r). tauto.
     - apply IHk. intros x Hx. eapply H. simpl. right. eassumption.
   Qed.
+
+  Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
+                      match l with
+                      | nil => m0
+                      | a1 :: l1 => a1 :: app l1 m0
+                      end) = @List.app event.
+  Proof. reflexivity. Qed.
+
+  Lemma predicts_app k1 k2 f :
+    predicts f k1 ->
+    predicts (fun k => f (k1 ++ k)) k2 ->
+    predicts f (k1 ++ k2).
+  Proof.
+    revert k2. revert f. induction k1.
+    - intros. assumption.
+    - intros. inversion H. subst. clear H. constructor.
+      + assumption.
+      + rewrite fold_app. apply IHk1; assumption.
+  Qed.
       
-  Lemma execs_related :
-    forall pick_sp e k t l m mc s post',
-      exec e s k t m l mc post' ->
-      forall post,
+  Lemma execs_related' pick_sp k t l m mc s post' :
+    exec e s k t m l mc post' ->
+    forall post,
       (forall k' t' m' l' mc',
           post' k' t' m' l' mc' ->
-          exists k'',
-            k' = k'' ++ k /\
-              (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
-               post k' t' m' l' mc')) ->
+          forall k'',
+            k' = k'' ++ k ->
+            predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
+            post k' t' m' l' mc') ->
       otherexec (pick_sp := pick_sp) e s k t m l mc post.
   Proof.
-    intros. induction H.
-    - solve_stuff. apply H0 in H. fwd. apply Hp1. apply append_thing in Hp0. subst.
-      constructor.
-    - solve_stuff. apply H0 in H1. clear H0. fwd. apply app_inv_tail in H1p0. subst.
-      apply H1p1. clear H1p1. apply predicts_trivially. intros x0. specialize (H2 x0).
-      Search (In _ (rev _)). rewrite <- in_rev. assumption.
-    - solve_stuff. apply H0 in H. fwd. apply Hp1. apply append_thing in Hp0. subst.
-      constructor.
-    - solve_stuff. apply H0 in H3. clear H0. fwd. rewrite app_one_l in H3p0.
-      repeat rewrite app_assoc in H3p0. apply app_inv_tail in H3p0. subst.
-      apply H3p1. clear H3p1. apply predicts_trivially. intros x1.
-      rewrite <- in_rev. repeat rewrite <- app_assoc. simpl.
-      intros H'. destruct H'; [congruence|]. apply in_app_or in H. specialize (H1 x1).
-      specialize (H4 x1). tauto.
+    intros H. induction H.
+    - solve_stuff. eapply H0; [auto | trace_alignment | constructor].
+    - solve_stuff. eapply H1; [auto | trace_alignment | ].
+      apply predicts_trivially. intros x1. specialize (H2 x1).
+      rewrite <- in_rev. rewrite app_nil_r. assumption.
+    - solve_stuff. eapply H0; [auto | trace_alignment | constructor].
+    - solve_stuff. eapply H3; [auto | trace_alignment | ].
+      apply predicts_trivially. intros x1 Hx1. rewrite <- in_rev in Hx1.
+      destruct Hx1 as [Hx1|Hx1]; [congruence|]. rewrite app_nil_r in Hx1.
+      apply in_app_or in Hx1. destruct Hx1; intuition eauto.
     - solve_stuff. intros.
-      apply app_inv_tail in H3p0. subst.
-      apply H1p1. clear H1p1. apply predicts_trivially. intros x0. specialize (H2 x0).
-      Search (In _ (rev _)). rewrite <- in_rev. assumption.
-
-      econstructor; intuition eauto. apply eval_expr_extends_trace in H.
-      destruct H as [? [? ?] ]. subst. subst_exprs. try (eexists; split; [trace_alignment|]); eauto.solve_stuff. Search eval_expr. apply eval_expr_extends_trace in H. destruct H. subst. solve_stuff. apply H0 in H1. clear H0. fwd. apply H1p1. apply app_inv_tail in H1p0.
-      subst. apply append_thing in Hp0. subst.
-      constructor.
-      
-      destruct k'' as [|k''0].    
+      eapply H1; try eassumption. intros. fwd. subst. eexists. eexists. intuition eauto.
+      eapply H2; [auto | trace_alignment | ]. rewrite rev_app_distr. simpl. constructor.
+      + intros _. reflexivity.
+      + simpl. eapply predicts_ext. 2: eapply H7. simpl. intros. rewrite <- app_assoc.
+        reflexivity.
+    - solve_stuff. eapply IHexec; try eassumption. intros. subst.
+      eapply H2; [auto | trace_alignment | ]. rewrite app_nil_r. rewrite rev_app_distr.
+      simpl. rewrite <- app_assoc. simpl. apply predicts_app.
+      + apply predicts_trivially. intros x0. rewrite <- in_rev. auto.
       + constructor.
-      + apply append Search (?x = (_ :: _) ++ ?x). subst.
-    - solve_stuff.
-    - solve_stuff.
-    - solve_stuff.
-    - solve_stuff. eapply exec.weaken.
-      { inversion H0. subst. 1: eapply exec.exec_to_other_trace.
-      1: eapply H1.
-      1: eapply H1.
-      
-    
+        -- intros [].
+        -- eapply predicts_ext. 2: eapply H5. simpl. intros. rewrite rev_app_distr.
+           rewrite rev_involutive. simpl. repeat rewrite <- app_assoc. simpl. reflexivity.
+    - intros.
+      (*solve_stuff*)eapply otherexec.if_false; intuition eauto; subst_exprs; try (eexists; split; [trace_alignment|]); eauto.
+      eapply IHexec; try eassumption. intros. subst.
+      eapply H2; [auto | trace_alignment | ]. rewrite app_nil_r. rewrite rev_app_distr.
+      simpl. rewrite <- app_assoc. simpl. apply predicts_app.
+      + apply predicts_trivially. intros x0. rewrite <- in_rev. auto.
+      + constructor.
+        -- intros [].
+        -- eapply predicts_ext. 2: eapply H5. simpl. intros. rewrite rev_app_distr.
+           rewrite rev_involutive. simpl. repeat rewrite <- app_assoc. simpl. reflexivity.
+    - econstructor. Check otherexec.otherexec_extends_trace.
+      1: eapply otherexec.otherexec_extends_trace.
+      1: { eapply IHexec. intros. instantiate
+          (1 := fun k' t' m' l' mc' =>
+                  forall k'',
+                    k' = k'' ++ k ->
+                    predicts (fun k_ : trace => consume_word (pick_sp (rev k_ ++ k))) (rev k'') /\
+                      mid k' t' m' l' mc'). simpl. intuition eauto. subst.
+           apply app_inv_tail in H6. subst. assumption. }
+      simpl. intros. fwd. specialize (H3p0 _ eq_refl). fwd.
+      eapply H1; try eassumption. intros. subst.
+      eapply H2; [auto | trace_alignment | ].
+      rewrite app_nil_r. rewrite rev_app_distr. apply predicts_app.
+      + assumption.
+      + eapply predicts_ext. 2: eapply H5. simpl. intros. rewrite rev_app_distr.
+        rewrite rev_involutive. rewrite <- app_assoc. reflexivity.
+    - solve_stuff. eapply H2; [auto | trace_alignment | ].
+      rewrite app_nil_r. simpl. apply predicts_app.
+      + apply predicts_trivially. intros x0. rewrite <- in_rev. auto.
+      + constructor; [intros []|]. constructor.
+    - intros. eapply otherexec.while_true; [eassumption|eassumption| | ].
+      { eapply otherexec.otherexec_extends_trace. eapply IHexec. intros. instantiate
+          (1 := fun k'0 t'0 m'0 l'0 mc'0 =>
+                  forall k''0,
+                    k'0 = k''0 ++ leak_bool true :: k' ->
+                    predicts (fun k_ : trace => consume_word (pick_sp (rev k_ ++ (leak_bool true :: k')))) (rev k''0) /\
+                      mid k'0 t'0 m'0 l'0 mc'0).
+        simpl. intuition eauto. subst. apply app_inv_tail in H8. subst. auto. }
+      simpl. intros. fwd. specialize (H5p0 _ eq_refl). fwd.
+      eapply H3; try eassumption. intros. subst. subst_exprs.
+      eapply H4; [auto | trace_alignment | ]. rewrite app_nil_r.
+      repeat rewrite rev_app_distr. repeat rewrite <- app_assoc. simpl.
+      apply predicts_app.
+      + apply predicts_trivially. intros x0 Hx0. apply in_app_or in Hx0. destruct Hx0 as [Hx0|Hx0].
+        -- rewrite <- in_rev in Hx0. eapply H6. eapply Hx0.
+        -- simpl in Hx0. destruct Hx0; [congruence|assumption].
+      + apply predicts_app.
+        -- eapply predicts_ext. 2: eapply H5p0p0. simpl. intros. repeat rewrite rev_app_distr.
+           rewrite rev_involutive. repeat rewrite <- app_assoc. simpl. reflexivity.
+        -- eapply predicts_ext. 2: eapply H7. simpl. intros. repeat rewrite rev_app_distr.
+           repeat rewrite rev_involutive. repeat rewrite <- app_assoc. simpl. reflexivity.
+    - econstructor; [eassumption | eassumption | eassumption | |].
+      { eapply otherexec.otherexec_extends_trace. eapply IHexec. intros. instantiate
+          (1 := fun k'0 t'0 m'0 l'0 mc'0 =>
+                  forall k''0,
+                    k'0 = k''0 ++ leak_unit :: k' ->
+                    predicts (fun k_ : trace => consume_word (pick_sp (rev k_ ++ (leak_unit :: k')))) (rev k''0) /\
+                      mid k'0 t'0 m'0 l'0 mc'0).
+        simpl. intuition eauto. subst. apply app_inv_tail in H8. subst. auto. }
+      simpl. intros. intuition eauto. fwd. specialize (H6 _ eq_refl). fwd.
+      apply H3 in H6p1. fwd. eexists. intuition eauto.
+      eexists. intuition eauto. subst_exprs.
+      eapply H4; [auto | trace_alignment | ].
+      rewrite app_nil_r. rewrite rev_app_distr. simpl. apply predicts_app.
+      + apply predicts_trivially. intros x0 Hx0. apply in_app_or in Hx0. destruct Hx0 as [Hx0|Hx0].
+        -- rewrite <- in_rev in Hx0. apply H5 in Hx0. assumption.
+        -- destruct Hx0; [congruence|assumption].
+      + eapply predicts_ext. 2: eapply H6p0. simpl. intros. repeat rewrite rev_app_distr.
+        simpl. rewrite rev_involutive. repeat rewrite <- app_assoc. simpl. reflexivity.
+    - econstructor; intuition eauto. apply H2 in H4. fwd. eexists. intuition eauto. subst_exprs.
+      eapply H3; [auto | trace_alignment | ]. rewrite app_nil_r. simpl.
+      apply predicts_trivially. intros x0 Hx0. apply in_app_or in Hx0. destruct Hx0 as [Hx0|Hx0].
+      + rewrite <- in_rev in Hx0. apply H5 in Hx0. assumption.
+      + destruct Hx0; [congruence|assumption].
+  Qed.
+
+  Lemma execs_related pick_sp k t l m mc s post :
+    exec e s k t m l mc (fun k' t' m' l' mc' =>
+                           exists k'',
+                             k' = k'' ++ k /\
+                               (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
+                                post k' t' m' l' mc')) ->
+    otherexec (pick_sp := pick_sp) e s k t m l mc post.
+  Proof.
+    intros. eapply execs_related' in H. 1: eassumption. intros. fwd.
+    apply app_inv_tail in H1. subst. apply H0p1. apply H2.
+  Qed.
+
+  Lemma execs_related_rephrased k t l m mc s post :
+    (forall pick_sp,
+        exec e s k t m l mc (fun k' t' m' l' mc' =>
+                               exists k'',
+                                 k' = k'' ++ k /\
+                                   (predicts pick_sp (List.rev k'') ->
+                                    post k' t' m' l' mc'))) ->
+    (forall pick_sp, otherexec (pick_sp := pick_sp) e s k t m l mc post).
+  Proof. intros. apply execs_related. apply H. Qed.
