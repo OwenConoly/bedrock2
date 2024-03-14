@@ -555,9 +555,11 @@ Module exec. Section WithEnv.
   | swhile (test : expr) (body : scmd)
   | jump_back
   | scall (binds : list String.string) (function : String.string) (args: list expr)
-  | start_call
-  | end_call
+  | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
+  | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr).
+
+  Definition inclusion : cmd -> scmd. Admitted.
 
   Inductive step :
     scmd -> trace -> io_trace -> mem -> locals -> metrics ->
@@ -633,26 +635,34 @@ Module exec. Section WithEnv.
       k t m l mc
     : step jump_back k t m l mc
         sskip k t m l (ami 2 (aml 2 (amj 1 mc)))
-  | call binds fname arges
+  | call_step binds fname arges
       k t m l mc
       params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
+    : step (scall binds fname arges) k t m l mc
+        (sseq (start_call binds params rets (inclusion fbody) arges) (end_call binds rets l)) k t m l mc
+  | start_call_step binds params rets sfbody arges
+      k t m l mc
       args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
       lf (_ : map.of_list_zip params args = Some lf)
-      mid (_ : exec fbody (leak_unit :: k') t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
-      (_ : forall k'' t' m' st1 mc'', mid k'' t' m' st1 mc'' ->
-          exists retvs, map.getmany_of_list st1 rets = Some retvs /\
-          exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post k'' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
-    : exec (cmd.call binds fname arges) k t m l mc post
-
-  Definition steps_to s k t m l mc s' k' t' m' l' mc' :=
-    match s with
-    | cmd.skip => False
-    | cmd.set x e =>
-        exists v mc1 k1,
-        eval_expr m l e mc k = Some (v, mc1, k1) /\
-          (k', t', m', l', mc') = (k1, t, m, (map.put l x v) (ami 1 (aml 1 mc)))
-    end.
+    : step (start_call binds params rets sfbody arges) k t m l mc
+        sfbody (leak_unit :: k') t m lf (ami 100 (amj 100 (aml 100 (ams 100 mc'))))
+  | end_call_step binds rets (l : locals)
+      k t m (st1 : locals) mc l'
+      (_ : exists retvs,
+          map.getmany_of_list st1 rets = Some retvs /\
+                           map.putmany_of_list_zip binds retvs l = Some l')
+    : step (end_call binds rets l) k t m l mc
+        sskip k t m l' (ami 100 (amj 100 (aml 100 (ams 100 mc))))
+  | interact_step binds action arges
+      k t m l mc post
+      mKeep mGive (_: map.split m mKeep mGive)
+      args mc' k' (_ :  evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      mReceive resvals klist
+      (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
+      l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
+      m' (_ : map.split m' mKeep mReceive)
+    : step (sinteract binds action arges) k t m l mc
+        sskip (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc'))).
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
