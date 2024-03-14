@@ -9,6 +9,7 @@ Require Import bedrock2.Syntax coqutil.Map.Interface coqutil.Map.OfListWord.
 Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import bedrock2.MetricLogging.
 Require Export bedrock2.Memory.
+Print Memory.store.
 
 (* not sure where to put these lemmas *)
 Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
@@ -534,6 +535,125 @@ Module exec. Section WithEnv.
     : exec (cmd.interact binds action arges) k t m l mc post
   .
 
+  Definition state : Type := trace * io_trace * mem * locals * metrics. Print cmd.cmd.
+  Notation ami := addMetricInstructions.
+  Notation aml := addMetricLoads.
+  Notation ams := addMetricStores. Check locals.
+  Notation amj := addMetricJumps.
+
+  Inductive scmd :=
+  | sskip
+  | sset (lhs : String.string) (rhs : expr)
+  | sunset (lhs : String.string)
+  | sstore (_ : access_size) (address : expr) (value : expr)
+  | sstackalloc (lhs : String.string) (nbytes : Z) (body : scmd)
+  | start_stackalloc (lhs : String.string) (nbytes : Z) (a : word)
+  | end_stackalloc (nbytes : Z) (a : word)
+  (* { lhs = alloca(nbytes); body; /*allocated memory freed right here*/ } *)
+  | scond (condition : expr) (nonzero_branch zero_branch : scmd)
+  | sseq (s1 s2: scmd)
+  | swhile (test : expr) (body : scmd)
+  | jump_back
+  | scall (binds : list String.string) (function : String.string) (args: list expr)
+  | start_call
+  | end_call
+  | sinteract (binds : list String.string) (action : String.string) (args: list expr).
+
+  Inductive step :
+    scmd -> trace -> io_trace -> mem -> locals -> metrics ->
+    scmd -> trace -> io_trace -> mem -> locals -> metrics -> Prop :=
+  | set_step x e
+      m l mc
+      k t v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    : step (sset x e) k t m l mc
+        sskip k' t m (map.put l x v) (ami 1 (aml 1 mc'))
+  | unset_step x
+    k t m l mc
+    : step (sunset x) k t m l mc
+        sskip k t m (map.remove l x) mc
+  | store_step sz ea ev
+    k t m l mc
+    a mc' k' (_ : eval_expr m l ea mc k = Some (a, mc', k'))
+    v mc'' k'' (_ : eval_expr m l ev mc' k' = Some (v, mc'', k''))
+    m' (_ : Memory.store sz m a v = Some m')
+    : step (sstore sz ea ev) k t m l mc
+        sskip (leak_word a :: k'') t m' l (ami 1 (aml 1 (ams 1 mc'')))
+  | stackalloc_step x n body a
+      k t m l mc
+    : step (sstackalloc x n body) k t m l mc
+        (sseq (start_stackalloc x n a) (sseq body (end_stackalloc n a))) k t m l mc
+  | stackalloc_start_step x n a
+      k t mSmall l mc
+      mStack mCombined
+      (_ : Z.modulo n (bytes_per_word width) = 0)
+      (_ : anybytes a n mStack)
+      (_ : map.split mCombined mSmall mStack)
+    : step (start_stackalloc x n a) k t mSmall l mc
+        sskip (consume_word a :: k) t mCombined (map.put l x a) (ami 1 (aml 1 mc))
+  | stackalloc_end_step n a
+      k t mCombined l mc
+      mSmall mStack
+      (_ : anybytes a n mStack)
+      (_ : map.split mCombined mSmall mStack)
+    : step (end_stackalloc n a) k t mCombined l mc
+        sskip k t mSmall l mc
+  | if_true_step k t m l mc e c1 c2 post
+    v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    (_ : word.unsigned v <> 0)
+    : step (scond e c1 c2) k t m l mc
+        c1 (leak_bool true :: k') t m l (ami 2 (aml 2 (amj 1 mc')))
+  | if_false_step k t m l mc e c1 c2 post
+    v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    (_ : word.unsigned v = 0)
+    : step (scond e c1 c2) k t m l mc
+        c2 (leak_bool false :: k') t m l (ami 2 (aml 2 (amj 1 mc')))
+  | seq_step c1 c2
+      k t m l mc
+      c1' k' t' m' l' mc'
+    (_ : step c1 k t m l mc c1' k' t' m' l' mc')
+    : step (sseq c1 c2) k t m l mc
+        (sseq c1' c2) k' t' m' l' mc'
+  | seq_done_step c2
+      k t m l mc
+    : step (sseq sskip c2) k t m l mc
+        c2 k t m l mc
+  | while_false_step e c
+      k t m l mc
+      v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+      (_ : word.unsigned v = 0)
+    : step (swhile e c) k t m l mc
+        sskip (leak_bool false :: k') t m l (ami 1 (aml 1 (amj 1 mc')))
+  | while_true_step e c
+      k t m l mc post
+      v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+      (_ : word.unsigned v <> 0)
+    : step (swhile e c) k t m l mc
+        (sseq c (sseq jump_back (swhile e c))) (leak_bool true :: k') t m l mc'
+  | jump_back_step
+      k t m l mc
+    : step jump_back k t m l mc
+        sskip k t m l (ami 2 (aml 2 (amj 1 mc)))
+  | call binds fname arges
+      k t m l mc
+      params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
+      args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      lf (_ : map.of_list_zip params args = Some lf)
+      mid (_ : exec fbody (leak_unit :: k') t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
+      (_ : forall k'' t' m' st1 mc'', mid k'' t' m' st1 mc'' ->
+          exists retvs, map.getmany_of_list st1 rets = Some retvs /\
+          exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
+          post k'' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
+    : exec (cmd.call binds fname arges) k t m l mc post
+
+  Definition steps_to s k t m l mc s' k' t' m' l' mc' :=
+    match s with
+    | cmd.skip => False
+    | cmd.set x e =>
+        exists v mc1 k1,
+        eval_expr m l e mc k = Some (v, mc1, k1) /\
+          (k', t', m', l', mc') = (k1, t, m, (map.put l x v) (ami 1 (aml 1 mc)))
+    end.
+
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
   Lemma weaken: forall s k t m l mc post1,
@@ -807,6 +927,8 @@ Module otherexec. Section WithEnv.
                   (addMetricLoads 2 mc'))))
     : exec (cmd.interact binds action arges) k t m l mc post
   .
+
+  
   
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
