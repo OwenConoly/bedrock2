@@ -1756,7 +1756,8 @@ Section Spilling.
      Unshelve.
     all: try assumption.
   Qed.*)
-  
+
+  (*try this with rewriting semantics to use local pick_sp*) 
   Lemma spilling_correct : forall
       (e1 e2 : env)
       (Ev : spill_functions e1 = Success e2)
@@ -1768,7 +1769,7 @@ Section Spilling.
       (mc1 : MetricLog)
       (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop)
       pick_sp2,
-      exec (pick_sp := some_function pick_sp2) e1 s1 k1 t1 m1 l1 mc1 post ->
+      exec (pick_sp := some_function fpval pick_sp2) e1 s1 k1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word) f,

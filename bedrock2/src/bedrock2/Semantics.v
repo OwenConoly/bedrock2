@@ -291,27 +291,8 @@ Module exec. Section WithEnv.
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
 
-  (*I really want to do the semantics like this:
-    cmd -> io_trace -> mem -> locals -> metrics ->
-    (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop.
-    But it would be ugly.  Using app, screwing up simple postconditions
-    (e.g., in seq case) in semantics.
-    
-    So I suppose I'll do 
-    cmd -> trace -> io_trace -> mem -> locals -> metrics ->
-    (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop.
-    
-    Then we can state a lemma, saying that exec c nil t m l mc post -> exec c k t m l mc (fun k' => post (k' ++ k)).
-    Then use that wherever we want, and it's *almost* like leakage trace isn't passed as a parameter to exec.
-    Still ugly though.  But better?  No, not really.  Would be horribly obnoxious to apply that lemma.  Hm.
-
-    I suppose I had better keep the append-style for leakage traces?  :(
-    Is it still worthwhile to split up the io trace and leakage trace then?
-    I think so.
-    It still should be less of a pain to deal with them if they're separated.
-   *)
-  Inductive exec {pick_sp : PickSp} :
-    cmd -> trace -> io_trace -> mem -> locals -> metrics ->
+  Inductive exec :
+    (trace -> word) cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
     k t m l mc post
@@ -362,10 +343,10 @@ Module exec. Section WithEnv.
     (_ : exec c2 (leak_bool false :: k') t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
     : exec (cmd.cond e c1 c2) k t m l mc post
   | seq c1 c2
-    k t m l mc post
-    mid (_ : exec c1 k t m l mc mid)
-    (_ : forall k' t' m' l' mc', mid k' t' m' l' mc' -> exec c2 k' t' m' l' mc' post)
-    : exec (cmd.seq c1 c2) k t m l mc post
+    k t m l mc pick_sp post
+    mid (_ : exec pick_sp c1 k t m l mc mid)
+    (_ : forall k' t' m' l' mc', mid k' t' m' l' mc' -> exec (fun k => pick_sp (k' ++ k)) c2 k' t' m' l' mc' post)
+    : exec pick_sp (cmd.seq c1 c2) k t m l mc post
   | while_false e c
     k t m l mc post
     v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
