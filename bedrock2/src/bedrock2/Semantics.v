@@ -688,18 +688,171 @@ Module exec. Section WithEnv.
   Definition state_done st1 st2 :=
     get_scmd st1 = sskip /\ get_scmd st2 = sskip.
 
+  Definition done_state f i :=
+    get_scmd (f i) = sskip /\ f (S i) = f i.
+
+  Definition stuck_state f i :=
+    (~exists st, state_step (f i) st) /\ f (S i) = f i.
+
+  Definition step_state f i :=
+    state_step (f i) (f (S i)).
+
+  Definition possible_execution (f : nat -> sstate) :=
+    forall i, step_state f i \/ done_state f i \/ stuck_state f i.
+
   Lemma exec_to_step s k t m l mc post :
     exec s k t m l mc post ->
     forall (f : nat -> _),
       f O = (inclusion s, k, t, m, l, mc) ->
-      (forall i, state_step (f i) (f (i + 1)) \/ state_done (f i) (f (i + 1))) ->
-      exists i, get_scmd (f i) = sskip.
+      possible_execution f ->
+      exists i, get_scmd (f i) = sskip. (*will also need to use post here...*)
   Proof.
     intros H. induction H.
     - intros. exists O. rewrite H0. reflexivity.
-    - intros. assert (H3 := H2 O). rewrite H1 in H3. destruct H3 as [H3 | H3].
-      + exists (S O). simpl in H3. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
+        inversion HSO. subst. reflexivity.
+      + exists O. cbv [done_state] in HSO. destruct HSO as [HSO _]. assumption.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
+        econstructor; eassumption.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
+        inversion HSO. subst. reflexivity.
+      + exists O. cbv [done_state] in HSO. destruct HSO as [HSO _]. assumption.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
+        econstructor; eassumption.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
+        inversion HSO. subst. reflexivity.
+      + exists O. cbv [done_state] in HSO. destruct HSO as [HSO _]. assumption.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
+        econstructor; eassumption.
+    - intros f HO HS. simpl in HO. clear H0. assert (HSO := HS O).
+      destruct HSO as [HSO | [HSO | HSO] ].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:Ef1.
+        inversion HSO. subst. clear HO. assert (HSSO := HS (S O)).
+        destruct HSSO as [HSSO | [HSSO | HSSO] ].
+        * cbv [step_state state_step] in HSSO.
+          simpl in HSO. rewrite Ef1 in HSSO.
+          destruct (f (S (S O))) as [ [ [ [ [s3 k3] t3] m3] l3] mc3] eqn:Ef2.
+          inversion HSSO. subst. clear Ef1 HSO. inversion H14. subst. clear HSSO H14.
+          assert (HSSSO := HS (S (S O))). destruct HSSSO as [HSSSO | [HSSSO | HSSSO] ].
+          -- cbv [step_state state_step] in HSSSO. rewrite Ef2 in HSSSO.
+             destruct (f (S (S (S O)))) as [ [ [ [ [s4 k4] t4] m4] l4] mc4] eqn:Ef3.
+             inversion HSSSO.
+             ++ subst. inversion H15.
+             ++ subst. clear HSSSO Ef2. (*now we need some lemma about sseq... this all looks doable, if somewhat tedious.*)
+  Abort.
+
+  Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
+    (forall f : nat -> A,
+        f O = x ->
+        ~(forall i, R (f (S i)) (f i))) ->
+    Acc R x.
+  Proof. (*standard logical thing, probably on the internet somewhere*) Admitted.
+
+  Definition other_inclusion st : sstate :=
+    let '(s, k, t, m, l, mc) := st in
+    (inclusion s, k, t, m, l, mc).
+  
+  Lemma steps_wf s k t m l mc post :
+    (forall (f : nat -> _),
+        f O = (inclusion s, k, t, m, l, mc) ->
+        possible_execution f ->
+        exists i,
+          let '(s', k', t', m', l', mc') := f i in
+          s' = sskip /\ post k' t' m' l' mc') ->
+    Acc (fun x y => state_step (other_inclusion y) (other_inclusion x)) (s, k, t, m, l, mc).
+  Proof.
+    intros. apply chains_finite_implies_Acc.
+    intros. specialize (H (fun x => other_inclusion (f x))).
+    simpl in H. rewrite H0 in H. specialize (H eq_refl). clear H0. intros H'.
+    assert (possible_execution (fun x => other_inclusion (f x))).
+    { cbv [possible_execution]. intros. left. apply H'. }
+    apply H in H0.
+    destruct H0 as [i H0]. specialize (H' i).
+    destruct (f i) as [ [ [ [ [si ki] ti] mi] li] mci].
+    destruct (f (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
+    simpl in H0. simpl in H'. destruct H0 as [H0 _]. rewrite H0 in H'. simpl in H'. inversion H'.
+  Qed.
+
+  Lemma done_stable f i :
+    possible_execution f ->
+    done_state f i ->
+    forall j,
+      done_state f (j + i).
+  Proof.
+    intros. induction j.
+    - assumption.
+    - simpl. cbv [done_state] in IHj. cbv [possible_execution] in H.
+      (*easy*)
+  Admitted.
+  
+  Lemma step_to_exec s k t m l mc post :
+    (forall (f : nat -> _),
+        f O = (inclusion s, k, t, m, l, mc) ->
+        possible_execution f ->
+        exists i,
+          let '(s', k', t', m', l', mc') := f i in
+          s' = sskip /\ post k' t' m' l' mc') ->
+    exec s k t m l mc post.
+  Proof.
+    intros H. assert (H' := H). apply steps_wf in H'. Search Acc. apply Acc_clos_trans in H'.
+    revert H.
+    eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
+    Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
+    destruct s.
+    - econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
+      destruct H as [i H].
+      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
+      + destruct H as [_ H]. assumption.
+    - 
+      
+      with (3 := H').
+    2: eapply 
+
+
+
+
+
+
+      assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
+        inversion HSO. subst.
+        
+        reflexivity.
+      + exists O. cbv [done_state] in HSO. destruct HSO as [HSO _]. assumption.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
+        econstructor; eassumption.
+    - intros. assert (H3 := H2 O). destruct H3 as [H3 | [H3 | H3] ].
+      + exists (S O). cbv [step_state state_step] in H3.
+        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite H1 in H3.
+        inversion H3. subst. reflexivity.
+      + exists O. cbv [done_state] in H3. destruct H3 as [H3 _]. assumption.
+      + exfalso. apply H3. eexists (_, _, _, _, _, _). rewrite H1. cbv [state_step].
+        constructor. eassumption.
+        simpl in H3.
+        destruct ( cbv [step_state state_step] in H3.
+      rewrite H1 in H3. destruct H3 as [ H3 | H3 | H3 ].
+      + exists (S O). simpl in H3. 
+        inversion H3. subst. reflexivity.
+      + simpl in H3. destruct H3 as [H3p1 H3p2]. simpl in H3p1. congruence.
+    - intros. assert (H2 := H1 O). rewrite H0 in H2. destruct H2 as [H2 | H2].
+      + exists (S O). simpl in H2. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
+        inversion H2. subst. reflexivity.
+      + simpl in H2. destruct H2 as [H2p1 H2p2]. simpl in H2p1. congruence.
+    - intros. assert (H5 := H4 O). rewrite H3 in H5. destruct H5 as [H5 | H5].
+      + exists (S O). simpl in H5. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
+        inversion H5. subst. reflexivity.
+      + simpl in H5. destruct H5 as [H5p1 H5p2]. simpl in H5p1. congruence.
+        
         cbv [state_done] in H3. simpl in H3.
+        
       destruct H
 
       assert (H2 := H1 O). rewrite H0 in H2. destruct H2 as [H2 | H2].
