@@ -558,8 +558,20 @@ Module exec. Section WithEnv.
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr).
-
-  Definition inclusion : cmd -> scmd. Admitted.
+  Print cmd.cmd.
+  Fixpoint inclusion (s : cmd) :=
+    match s with
+    | cmd.skip => sskip
+    | cmd.set x1 x2 => sset x1 x2
+    | cmd.unset x1 => sunset x1
+    | cmd.store x1 x2 x3 => sstore x1 x2 x3
+    | cmd.stackalloc x1 x2 x3 => sstackalloc x1 x2 (inclusion x3)
+    | cmd.cond x1 x2 x3 => scond x1 (inclusion x2) (inclusion x3)
+    | cmd.seq x1 x2 => sseq (inclusion x1) (inclusion x2)
+    | cmd.while x1 x2 => swhile x1 (inclusion x2)
+    | cmd.call x1 x2 x3 => scall x1 x2 x3
+    | cmd.interact x1 x2 x3 => sinteract x1 x2 x3
+    end.
 
   Inductive step :
     scmd -> trace -> io_trace -> mem -> locals -> metrics ->
@@ -663,6 +675,36 @@ Module exec. Section WithEnv.
       m' (_ : map.split m' mKeep mReceive)
     : step (sinteract binds action arges) k t m l mc
         sskip (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc'))).
+
+  Definition sstate : Type := scmd * trace * io_trace * mem * locals * metrics.
+  Definition get_scmd (st : sstate) : scmd :=
+    let '(s, k, t, m, l, mc) := st in s.
+
+  Definition state_step st1 st2 :=
+    let '(s1, k1, t1, m1, l1, mc1) := st1 in
+    let '(s2, k2, t2, m2, l2, mc2) := st2 in
+    step s1 k1 t1 m1 l1 mc1 s2 k2 t2 m2 l2 mc2.
+  
+  Definition state_done st1 st2 :=
+    get_scmd st1 = sskip /\ get_scmd st2 = sskip.
+
+  Lemma exec_to_step s k t m l mc post :
+    exec s k t m l mc post ->
+    forall (f : nat -> _),
+      f O = (inclusion s, k, t, m, l, mc) ->
+      (forall i, state_step (f i) (f (i + 1)) \/ state_done (f i) (f (i + 1))) ->
+      exists i, get_scmd (f i) = sskip.
+  Proof.
+    intros H. induction H.
+    - intros. exists O. rewrite H0. reflexivity.
+    - intros. assert (H3 := H2 O). rewrite H1 in H3. destruct H3 as [H3 | H3].
+      + exists (S O). simpl in H3. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
+        cbv [state_done] in H3. simpl in H3.
+      destruct H
+
+      assert (H2 := H1 O). rewrite H0 in H2. destruct H2 as [H2 | H2].
+      + 
+      eexists.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
