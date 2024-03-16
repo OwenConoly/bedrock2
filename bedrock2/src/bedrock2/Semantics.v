@@ -99,9 +99,9 @@ Module ext_spec.
 End ext_spec.
 Arguments ext_spec.ok {_ _ _ _} _.
 
-Definition PickSp {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
+(*Definition PickSp {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} : Type :=
   trace -> word.
-Existing Class PickSp.
+Existing Class PickSp.*)
 
 Section binops.
   Context {width : Z} {BW: Bitwidth width} {word : Word.Interface.word width}.
@@ -292,112 +292,115 @@ Module exec. Section WithEnv.
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
 
   Inductive exec :
-    (trace -> word) cmd -> trace -> io_trace -> mem -> locals -> metrics ->
+    (trace -> word) -> cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
-    k t m l mc post
+    pick_sp k t m l mc post
     (_ : post k t m l mc)
-    : exec cmd.skip k t m l mc post
+    : exec pick_sp cmd.skip k t m l mc post
   | set x e
-    m l mc post
-    k t v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
-    (_ : post k' t m (map.put l x v) (addMetricInstructions 1
+    pick_sp m l mc post
+    k t v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
+    (_ : post (k' ++ k) t m (map.put l x v) (addMetricInstructions 1
                                       (addMetricLoads 1 mc')))
-    : exec (cmd.set x e) k t m l mc post
+    : exec pick_sp (cmd.set x e) k t m l mc post
   | unset x
-    k t m l mc post
+    pick_sp k t m l mc post
     (_ : post k t m (map.remove l x) mc)
-    : exec (cmd.unset x) k t m l mc post
+    : exec pick_sp (cmd.unset x) k t m l mc post
   | store sz ea ev
-    k t m l mc post
-    a mc' k' (_ : eval_expr m l ea mc k = Some (a, mc', k'))
-    v mc'' k'' (_ : eval_expr m l ev mc' k' = Some (v, mc'', k''))
+    pick_sp k t m l mc post
+    a mc' k' (_ : eval_expr m l ea mc nil = Some (a, mc', k'))
+    v mc'' k'' (_ : eval_expr m l ev mc' nil = Some (v, mc'', k''))
     m' (_ : store sz m a v = Some m')
-    (_ : post (leak_word a :: k'') t m' l (addMetricInstructions 1
-                                             (addMetricLoads 1
-                                                (addMetricStores 1 mc''))))
-    : exec (cmd.store sz ea ev) k t m l mc post
+    (_ : post (leak_word a :: k'' ++ k' ++ k) t m' l (addMetricInstructions 1
+                                                        (addMetricLoads 1
+                                                           (addMetricStores 1 mc''))))
+    : exec pick_sp (cmd.store sz ea ev) k t m l mc post
   | stackalloc x n body
-    k t mSmall l mc post
+    pick_sp k t mSmall l mc post
     (_ : Z.modulo n (bytes_per_word width) = 0)
     (_ : forall mStack mCombined,
-        let a := pick_sp k in
+        let a := pick_sp nil in
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body k t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
+        exec pick_sp body k t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
           (fun k' t' mCombined' l' mc' =>
              exists mSmall' mStack',
               anybytes a n mStack' /\
               map.split mCombined' mSmall' mStack' /\
               post k' t' mSmall' l' mc'))
-    : exec (cmd.stackalloc x n body) k t mSmall l mc post
+    : exec pick_sp (cmd.stackalloc x n body) k t mSmall l mc post
   | if_true k t m l mc e c1 c2 post
-    v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    pick_sp v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v <> 0)
-    (_ : exec c1 (leak_bool true :: k') t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
-    : exec (cmd.cond e c1 c2) k t m l mc post
+    (_ : exec (fun k => pick_sp (k ++ leak_bool true :: k')) c1 (leak_bool true :: k' ++ k) t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
+    : exec pick_sp (cmd.cond e c1 c2) k t m l mc post
   | if_false e c1 c2
-    k t m l mc post
-    v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    pick_sp k t m l mc post
+    v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v = 0)
-    (_ : exec c2 (leak_bool false :: k') t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
-    : exec (cmd.cond e c1 c2) k t m l mc post
+    (_ : exec (fun k => pick_sp (k ++ leak_bool false :: k')) c2 (leak_bool false :: k' ++ k) t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
+    : exec pick_sp (cmd.cond e c1 c2) k t m l mc post
   | seq c1 c2
     k t m l mc pick_sp post
     mid (_ : exec pick_sp c1 k t m l mc mid)
-    (_ : forall k' t' m' l' mc', mid k' t' m' l' mc' -> exec (fun k => pick_sp (k' ++ k)) c2 k' t' m' l' mc' post)
+    (_ : forall k' t' m' l' mc',
+        mid k' t' m' l' mc' ->
+        exec (fun k0 => pick_sp (k0 ++ firstn (length k' - length k) k')) c2 k' t' m' l' mc' post)
     : exec pick_sp (cmd.seq c1 c2) k t m l mc post
   | while_false e c
-    k t m l mc post
-    v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+    pick_sp k t m l mc post
+    v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v = 0)
-    (_ : post (leak_bool false :: k') t m l (addMetricInstructions 1
-                                                (addMetricLoads 1
-                                                   (addMetricJumps 1 mc'))))
-    : exec (cmd.while e c) k t m l mc post
+    (_ : post (leak_bool false :: k' ++ k) t m l (addMetricInstructions 1
+                                                    (addMetricLoads 1
+                                                       (addMetricJumps 1 mc'))))
+    : exec pick_sp (cmd.while e c) k t m l mc post
   | while_true e c
-      k t m l mc post
-      v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
+      pick_sp k t m l mc post
+      v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
       (_ : word.unsigned v <> 0)
-      mid (_ : exec c (leak_bool true :: k') t m l mc' mid)
-      (_ : forall k'' t' m' l' mc'', mid k'' t' m' l' mc'' ->
-                                      exec (cmd.while e c) k'' t' m' l' (addMetricInstructions 2
-                                                                           (addMetricLoads 2
-                                                                              (addMetricJumps 1 mc''))) post)
-    : exec (cmd.while e c) k t m l mc post
+      mid (_ : exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k')) c (leak_bool true :: k' ++ k) t m l mc' mid)
+      (_ : forall k'' t' m' l' mc'',
+          mid k'' t' m' l' mc'' ->
+          exec (fun k0 => pick_sp (k0 ++ firstn (length k'' - length k) k'')) (cmd.while e c) k'' t' m' l' (addMetricInstructions 2
+                                                                                                              (addMetricLoads 2
+                                                                                                                 (addMetricJumps 1 mc''))) post)
+    : exec pick_sp (cmd.while e c) k t m l mc post
   | call binds fname arges
-      k t m l mc post
+      pick_sp k t m l mc post
       params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
-      args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      args mc' k' (_ : evaluate_call_args_log m l arges mc nil = Some (args, mc', k'))
       lf (_ : map.of_list_zip params args = Some lf)
-      mid (_ : exec fbody (leak_unit :: k') t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
+      mid (_ : exec (fun k0 => pick_sp (k0 ++ leak_unit :: k')) fbody (leak_unit :: k' ++ k) t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
       (_ : forall k'' t' m' st1 mc'', mid k'' t' m' st1 mc'' ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
           post k'' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
-    : exec (cmd.call binds fname arges) k t m l mc post
+    : exec pick_sp (cmd.call binds fname arges) k t m l mc post
   | interact binds action arges
-      k t m l mc post
+      pick_sp k t m l mc post
       mKeep mGive (_: map.split m mKeep mGive)
-      args mc' k' (_ :  evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      args mc' k' (_ :  evaluate_call_args_log m l arges mc nil = Some (args, mc', k'))
       mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals klist, mid mReceive resvals klist ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
+          post (leak_list klist :: k' ++ k)%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
             (addMetricInstructions 1
                (addMetricStores 1
                   (addMetricLoads 2 mc'))))
-    : exec (cmd.interact binds action arges) k t m l mc post
+    : exec pick_sp (cmd.interact binds action arges) k t m l mc post
   .
   
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma weaken {pick_sp: PickSp} : forall s k t m l mc post1,
-      exec s k t m l mc post1 ->
+  Lemma weaken : forall pick_sp s k t m l mc post1,
+      exec pick_sp s k t m l mc post1 ->
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-        exec s k t m l mc post2.
+        exec pick_sp s k t m l mc post2.
   Proof.
     induction 1; intros; try solve [econstructor; eauto].
     - eapply stackalloc. 1: assumption.
@@ -416,16 +419,16 @@ Module exec. Section WithEnv.
       eauto 10.
   Qed.
 
-  Lemma intersect {pick_sp: PickSp} : forall k t l m mc s post1,
-      exec s k t m l mc post1 ->
+  Lemma intersect : forall pick_sp k t l m mc s post1,
+      exec pick_sp s k t m l mc post1 ->
       forall post2,
-        exec s k t m l mc post2 ->
-        exec s k t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
+        exec pick_sp s k t m l mc post2 ->
+        exec pick_sp s k t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
   Proof.
     induction 1;
       intros;
       match goal with
-      | H: exec _ _ _ _ _ _ _ |- _ => inversion H; subst; clear H
+      | H: exec _ _ _ _ _ _ _ _ |- _ => inversion H; subst; clear H
       end;
       repeat match goal with
              | H1: ?e = Some (?v1, ?mc1, ?t1), H2: ?e = Some (?v2, ?mc2, ?t2) |- _ =>
