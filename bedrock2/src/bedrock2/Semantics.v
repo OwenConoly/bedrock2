@@ -782,15 +782,25 @@ Module exec. Section WithEnv.
 
   Lemma done_stable f i :
     possible_execution f ->
-    done_state f i ->
+    get_scmd (f i) = sskip ->
     forall j,
-      done_state f (j + i).
+      f i = f (j + i).
   Proof.
-    intros. induction j.
-    - assumption.
-    - simpl. cbv [done_state] in IHj. cbv [possible_execution] in H.
-      (*easy*)
-  Admitted.
+    intros. induction j. (*easy*) Admitted.
+
+  Lemma possible_execution_exists s k t m l mc :
+    exists f, f O = (s, k, t, m, l, mc) /\
+                possible_execution f.
+  Proof. Admitted.
+
+  Lemma step_until_done f i :
+    possible_execution f ->
+    get_scmd (f i) = sskip ->
+    forall j,
+      done_state f j \/ step_state f j.
+  Proof. Admitted.
+
+  Require Import Lia.
   
   Lemma step_to_exec s k t m l mc post :
     (forall (f : nat -> _),
@@ -810,7 +820,33 @@ Module exec. Section WithEnv.
       destruct H as [i H].
       + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
       + destruct H as [_ H]. assumption.
-    - 
+    - assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
+      destruct H' as [f [H'1 H'2] ]. specialize (H f H'1 H'2). destruct H as [i H].
+      assert (H'' := step_until_done f i). specialize (H'' H'2).
+      destruct (f i) as [ [ [ [ [s' k'] t'] m'] l'] mc'] eqn:Ei. fwd. specialize (H'' eq_refl).
+      specialize (H'' O). destruct H'' as [H'' | H''].
+      + cbv [done_state] in H''. rewrite H'1 in H''. simpl in H''. destruct H'' as [H'' _].
+        congruence.
+      + cbv [step_state state_step] in H''. rewrite H'1 in H''.
+        destruct (f 1%nat) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:E1. inversion H''. subst.
+        econstructor; try eassumption. Search i. destruct i.
+        -- rewrite Ei in H'1. simpl in H'1. congruence.
+        -- assert (H' := done_stable f 1 H'2). rewrite E1 in H'. specialize (H' eq_refl).
+           specialize (H' i). replace (i + 1) with (S i) in * by lia. rewrite Ei in H'.
+           inversion H'. subst. assumption. simpl in H'.
+           eapply done_stable in H'2. rewriet H'2 in E. cbv [possible_execution] in H'2.
+      
+      + instantiate (1 := fun n => match n with | O => _ | _ => _ end). reflexivity.
+      + cbv [possible_execution]. intros i. destruct i as [| i].
+        * simpl. left. cbv [step_state state_step]. instantiate (1 := (_, _, _, _, _, _)).
+          simpl. econstructor.
+      specialize (H (fun n =>
+                       match n with
+                       | O => _
+                       | _ => _ end) eq_refl).
+      destruct H as [i H].
+      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
+      + destruct H as [_ H]. assumption.
       
       with (3 := H').
     2: eapply 
