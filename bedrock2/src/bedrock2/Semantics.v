@@ -291,6 +291,7 @@ Module exec. Section WithEnv.
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
 
+  (*maybe input trace should be entire trace so far, but trace in postcondition should just be trace accumulated during execution.*)
   Inductive exec :
     (trace -> word) -> cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
