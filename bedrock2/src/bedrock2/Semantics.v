@@ -758,6 +758,9 @@ Module exec. Section WithEnv.
   Definition other_inclusion st : sstate :=
     let '(s, k, t, m, l, mc) := st in
     (inclusion s, k, t, m, l, mc).
+
+  Definition comes_right_after s1 s2 :=
+    state_step (other_inclusion s2) (other_inclusion s1).
   
   Lemma steps_wf s k t m l mc post :
     (forall (f : nat -> _),
@@ -766,7 +769,7 @@ Module exec. Section WithEnv.
         exists i,
           let '(s', k', t', m', l', mc') := f i in
           s' = sskip /\ post k' t' m' l' mc') ->
-    Acc (fun x y => state_step (other_inclusion y) (other_inclusion x)) (s, k, t, m, l, mc).
+    Acc comes_right_after (s, k, t, m, l, mc).
   Proof.
     intros. apply chains_finite_implies_Acc.
     intros. specialize (H (fun x => other_inclusion (f x))).
@@ -777,7 +780,8 @@ Module exec. Section WithEnv.
     destruct H0 as [i H0]. specialize (H' i).
     destruct (f i) as [ [ [ [ [si ki] ti] mi] li] mci].
     destruct (f (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
-    simpl in H0. simpl in H'. destruct H0 as [H0 _]. rewrite H0 in H'. simpl in H'. inversion H'.
+    simpl in H0. simpl in H'. destruct H0 as [H0 _].
+    cbv [comes_right_after] in H'. simpl in H'. rewrite H0 in H'. simpl in H'. inversion H'.
   Qed.
 
   Lemma done_stable f i :
@@ -801,6 +805,39 @@ Module exec. Section WithEnv.
   Proof. Admitted.
 
   Require Import Lia.
+
+  Lemma invert_seq s1 s2 k t m l mc post :
+    (forall (f : nat -> _),
+        f O = (sseq s1 s2, k, t, m, l, mc) ->
+        possible_execution f ->
+        (exists i,
+            let '(s', k', t', m', l', mc') := f i in
+            s' = sskip /\ post k' t' m' l' mc')) ->
+    (forall (f : nat -> _),
+        f O = (s1, k, t, m, l, mc) ->
+        possible_execution f ->
+        (exists i,
+            let '(s', k', t', m', l', mc') := f i in
+            s' = sskip /\
+              forall (g : nat -> _),
+                g O = (s2, k', t', m', l', mc') ->
+                possible_execution g ->
+                (exists j,
+                    let '(s'', k'', t'', m'', l'', mc'') := g j in
+                    s'' = sskip /\ post k'' t'' m'' l'' mc''))).
+  Proof. Admitted.
+
+  Definition comes_after := clos_trans _ comes_right_after.
+
+  Lemma comes_right_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
+          comes_right_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+          comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
+  Proof. Admitted.
+
+  Lemma comes_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
+          comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+          comes_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
+  Proof. Admitted.
   
   Lemma step_to_exec s k t m l mc post :
     (forall (f : nat -> _),
@@ -811,16 +848,18 @@ Module exec. Section WithEnv.
           s' = sskip /\ post k' t' m' l' mc') ->
     exec s k t m l mc post.
   Proof.
-    intros H. assert (H' := H). apply steps_wf in H'. Search Acc. apply Acc_clos_trans in H'.
-    revert H.
+    intros H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
+    fold comes_after in H'.
+    revert H. revert post.    
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
     Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
-    destruct s.
+    revert X. revert H. revert post.
+    induction s.
     - econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
       destruct H as [i H].
       + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
       + destruct H as [_ H]. assumption.
-    - assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
+    - intros. assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
       destruct H' as [f [H'1 H'2] ]. specialize (H f H'1 H'2). destruct H as [i H].
       assert (H'' := step_until_done f i). specialize (H'' H'2).
       destruct (f i) as [ [ [ [ [s' k'] t'] m'] l'] mc'] eqn:Ei. fwd. specialize (H'' eq_refl).
@@ -833,7 +872,27 @@ Module exec. Section WithEnv.
         -- rewrite Ei in H'1. simpl in H'1. congruence.
         -- assert (H' := done_stable f 1 H'2). rewrite E1 in H'. specialize (H' eq_refl).
            specialize (H' i). replace (i + 1) with (S i) in * by lia. rewrite Ei in H'.
-           inversion H'. subst. assumption. simpl in H'.
+           inversion H'. subst. assumption.
+    - admit.
+    - admit.
+    - admit.
+    - admit.
+    - intros. assert (H' := invert_seq _ _ _ _ _ _ _ _ H). fold inclusion in *.
+      clear IHs2. specialize (IHs1 _ H'). econstructor.
+      + apply IHs1. intros. destruct y as [ [ [ [ [ s1' k' ] t' ] m' ] l' ] mc' ].
+        eapply comes_after_seq in H0. apply X in H0. intros post'.
+        intros H''.
+        specialize (H0 post').
+
+        
+      
+
+      
+        exists i,
+          let '(s', k', t', m', l', mc') := f i in
+          s' = s2 /\ forall
+      econstructor.
+           simpl in H'.
            eapply done_stable in H'2. rewriet H'2 in E. cbv [possible_execution] in H'2.
       
       + instantiate (1 := fun n => match n with | O => _ | _ => _ end). reflexivity.
