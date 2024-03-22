@@ -760,7 +760,28 @@ Module exec. Section WithEnv.
     (inclusion s, k, t, m, l, mc).
 
   Definition comes_right_after s1 s2 :=
-    state_step (other_inclusion s2) (other_inclusion s1).
+    state_step s2 s1.
+  Definition lifted_comes_right_after s1 s2 :=
+    comes_right_after (other_inclusion s1) (other_inclusion s2).
+  Print state.
+  Inductive prefix : sstate -> sstate -> Prop :=
+  | bprefix : forall s1 s2 k t m l mc,
+      prefix (s1, k, t, m, l, mc) (sseq s1 s2, k, t, m, l, mc).
+
+  Definition comes_right_after_or_prefix s1 s2 :=
+    comes_right_after s1 s2 \/ prefix s1 s2.
+
+  Definition lifted_comes_right_after_or_prefix s1 s2 :=
+    comes_right_after_or_prefix (other_inclusion s1) (other_inclusion s2).
+
+  Lemma steps_with_cuts_to_steps f :
+    (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
+    exists g,
+      g O = f O /\
+        (forall i, comes_right_after (g (S i)) (g i)).
+  Proof.
+  (*just remove all the cuts.
+    there can only be finitely many in a row, since statements have finite size.*) Admitted.    
   
   Lemma steps_wf s k t m l mc post :
     (forall (f : nat -> _),
@@ -769,19 +790,21 @@ Module exec. Section WithEnv.
         exists i,
           let '(s', k', t', m', l', mc') := f i in
           s' = sskip /\ post k' t' m' l' mc') ->
-    Acc comes_right_after (s, k, t, m, l, mc).
+    Acc lifted_comes_right_after_or_prefix (s, k, t, m, l, mc).
   Proof.
-    intros. apply chains_finite_implies_Acc.
-    intros. specialize (H (fun x => other_inclusion (f x))).
-    simpl in H. rewrite H0 in H. specialize (H eq_refl). clear H0. intros H'.
-    assert (possible_execution (fun x => other_inclusion (f x))).
-    { cbv [possible_execution]. intros. left. apply H'. }
+    intros. apply chains_finite_implies_Acc. Search Acc.
+    intros. intros H'. apply steps_with_cuts_to_steps in H'. destruct H' as [g [H'1 H'2] ].
+    specialize (H g).
+    simpl in H. rewrite H'1 in H. rewrite H0 in H. specialize (H eq_refl). clear H0.
+    clear H'1.
+    assert (possible_execution g).
+    { cbv [possible_execution]. intros. left. apply H'2. }
     apply H in H0.
-    destruct H0 as [i H0]. specialize (H' i).
-    destruct (f i) as [ [ [ [ [si ki] ti] mi] li] mci].
-    destruct (f (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
-    simpl in H0. simpl in H'. destruct H0 as [H0 _].
-    cbv [comes_right_after] in H'. simpl in H'. rewrite H0 in H'. simpl in H'. inversion H'.
+    destruct H0 as [i H0]. specialize (H'2 i).
+    destruct (g i) as [ [ [ [ [si ki] ti] mi] li] mci].
+    destruct (g (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
+    simpl in H0. simpl in H'2. destruct H0 as [H0 _].
+    cbv [comes_right_after] in H'2. simpl in H'2. rewrite H0 in H'2. simpl in H'2. inversion H'2.
   Qed.
 
   Lemma done_stable f i :
@@ -806,6 +829,12 @@ Module exec. Section WithEnv.
 
   Require Import Lia.
 
+  Definition comes_after := clos_trans _ comes_right_after.
+  Definition lifted_comes_after s1 s2 := comes_after (other_inclusion s1) (other_inclusion s2).
+
+  Definition comes_after_or_prefix := clos_trans _ comes_right_after_or_prefix.
+  Definition lifted_comes_after_or_prefix s1 s2 := comes_after_or_prefix (other_inclusion s1) (other_inclusion s2).
+
   Lemma invert_seq s1 s2 k t m l mc post :
     (forall (f : nat -> _),
         f O = (sseq s1 s2, k, t, m, l, mc) ->
@@ -819,24 +848,23 @@ Module exec. Section WithEnv.
         (exists i,
             let '(s', k', t', m', l', mc') := f i in
             s' = sskip /\
+              (comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) /\
               forall (g : nat -> _),
                 g O = (s2, k', t', m', l', mc') ->
                 possible_execution g ->
                 (exists j,
                     let '(s'', k'', t'', m'', l'', mc'') := g j in
-                    s'' = sskip /\ post k'' t'' m'' l'' mc''))).
+                    s'' = sskip /\ post k'' t'' m'' l'' mc'')))).
   Proof. Admitted.
 
-  Definition comes_after := clos_trans _ comes_right_after.
-
   Lemma comes_right_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
-          comes_right_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-          comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
+          lifted_comes_right_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+          lifted_comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
 
   Lemma comes_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
-          comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-          comes_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
+          lifted_comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+          lifted_comes_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
   
   Lemma step_to_exec s k t m l mc post :
@@ -848,13 +876,43 @@ Module exec. Section WithEnv.
           s' = sskip /\ post k' t' m' l' mc') ->
     exec s k t m l mc post.
   Proof.
+    (*revert post. induction s.
+    - intros. econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
+      destruct H as [i H].
+      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
+      + destruct H as [_ H]. assumption.
+    - intros. assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
+      destruct H' as [f [H'1 H'2] ]. specialize (H f H'1 H'2). destruct H as [i H].
+      assert (H'' := step_until_done f i). specialize (H'' H'2).
+      destruct (f i) as [ [ [ [ [s' k'] t'] m'] l'] mc'] eqn:Ei. fwd. specialize (H'' eq_refl).
+      specialize (H'' O). destruct H'' as [H'' | H''].
+      + cbv [done_state] in H''. rewrite H'1 in H''. simpl in H''. destruct H'' as [H'' _].
+        congruence.
+      + cbv [step_state state_step] in H''. rewrite H'1 in H''.
+        destruct (f 1%nat) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:E1. inversion H''. subst.
+        econstructor; try eassumption. Search i. destruct i.
+        -- rewrite Ei in H'1. simpl in H'1. congruence.
+        -- assert (H' := done_stable f 1 H'2). rewrite E1 in H'. specialize (H' eq_refl).
+           specialize (H' i). replace (i + 1) with (S i) in * by lia. rewrite Ei in H'.
+           inversion H'. subst. assumption.
+    - admit.
+    - admit.
+    - admit.
+    - admit.
+    - intros post H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
+      fold comes_after in H'. revert H. revert post.
+      eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
+      Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
+      revert X. revert H. revert post.*)
+
+    (*here's how it goes when we try execution order, then command structure.*)
     intros H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
-    fold comes_after in H'.
-    revert H. revert post.    
+    fold lifted_comes_after_or_prefix in H'. (*fix this.*)
+    revert H. revert post.
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
     Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
     revert X. revert H. revert post.
-    induction s.
+    destruct s.
     - econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
       destruct H as [i H].
       + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
@@ -877,8 +935,23 @@ Module exec. Section WithEnv.
     - admit.
     - admit.
     - admit.
-    - intros. assert (H' := invert_seq _ _ _ _ _ _ _ _ H). fold inclusion in *.
-      clear IHs2. specialize (IHs1 _ H'). econstructor.
+    - intros. Check invert_seq. assert (H' := invert_seq _ _ _ _ _ _ _ _ H). fold inclusion in *.
+      econstructor.
+      + eapply (X (s1, k, t, m, l, mc)).
+        -- cbv [comes_after_or_prefix]. Print clos_trans. apply t_step.
+           cbv [comes_right_after_or_prefix]. right. constructor.
+        -- apply H'.
+      + simpl. intros. destruct H0 as [H1 H2]. eapply (X (s2, k', t', m', l', mc')).
+        -- (*easy, use H1*) admit.
+        -- apply H2.
+    - 
+          
+      assert (Hs1 := X (s1, k, t, m, l, mc)).
+      assert (H0 : comes_after_or_prefix (s1, k, t, m, l, mc) (cmd.seq s1 s2, k, t, m, l, mc)).
+      {  }
+      specialize (Hs1 H0). clear H0. simpl in Hs1.
+      
+      edestruct Hs1. specialize Hs1 with (1 := ltac:(dconstructor)). econstructor.
       + apply IHs1. intros. destruct y as [ [ [ [ [ s1' k' ] t' ] m' ] l' ] mc' ].
         eapply comes_after_seq in H0. apply X in H0. intros post'.
         intros H''.
