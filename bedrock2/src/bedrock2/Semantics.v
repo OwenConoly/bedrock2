@@ -779,6 +779,17 @@ Module exec. Section WithEnv.
     replace (k + S i) with (S (k + i)) by lia. assumption.
   Qed.
 
+  Lemma satisfies_offset f k post :
+    possible_execution f ->
+    satisfies (fun i => f (k + i)) post ->
+    satisfies f post.
+  Proof.
+    intros H1 H2. destruct H2.
+    - eapply terminates; eauto.
+    - eapply nondet_stuck_stackalloc; eauto.
+    - eapply nondet_stuck_interact; eauto.
+  Qed.
+
   Ltac unify_eval_exprs :=
     repeat match goal with
       | H1: ?e = Some (?v1, ?mc1, ?t1), H2: ?e = Some (?v2, ?mc2, ?t2) |- _ =>
@@ -790,6 +801,17 @@ Module exec. Section WithEnv.
       | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
           replace v2 with v1 in * by congruence; clear H2
       end.
+
+  Ltac destr_sstate st :=
+    (*this is not exactly what I want, I want all of them to be named the same way...*)
+    let s := fresh "s" in
+    let k := fresh "k" in
+    let t := fresh "t" in
+    let m := fresh "m" in
+    let l := fresh "l" in
+    let mc := fresh "mc" in
+    let Ef := fresh "Ef" in
+    destruct st as [ [ [ [ [s k] t] m] l] mc] eqn:Ef.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
@@ -877,7 +899,29 @@ Module exec. Section WithEnv.
           apply HSSO. clear HSSO. cbv [state_step] in H'. fwd. eexists (_, _, _, _, _, _).
           rewrite Ef1. cbv [state_step]. eassumption.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor.
-    -                 
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
+        destr_sstate (f 1%nat). inversion HSO; try congruence. subst. unify_eval_exprs.
+        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Ef in IHexec.
+        specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
+        specialize (IHexec Hposs). clear Hposs. Search satisfies.
+        apply (satisfies_offset _ 1%nat) in IHexec; eauto.
+      + cbv [stuck_state] in HSO. exfalso. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
+        rewrite HO. eapply if_true_step; eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
+        destr_sstate (f 1%nat). inversion HSO; try congruence. subst. unify_eval_exprs.
+        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Ef in IHexec.
+        specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
+        specialize (IHexec Hposs). clear Hposs. Search satisfies.
+        apply (satisfies_offset _ 1%nat) in IHexec; eauto.
+      + cbv [stuck_state] in HSO. exfalso. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
+        rewrite HO. eapply if_false_step; eauto.
+    - 
+        
+        ssumption. destruct IHexec as [IHexec | IHexec | IHexec].
+        -- eap
+        Print satisfies. eapply terminates
   Abort.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
