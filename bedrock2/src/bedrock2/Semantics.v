@@ -662,8 +662,8 @@ Module exec. Section WithEnv.
       k t m (st1 : locals) mc l'
       (_ : exists retvs,
           map.getmany_of_list st1 rets = Some retvs /\
-                           map.putmany_of_list_zip binds retvs l = Some l')
-    : step (end_call binds rets l) k t m l mc
+            map.putmany_of_list_zip binds retvs l = Some l')
+    : step (end_call binds rets l) k t m st1 mc
         sskip k t m l' (ami 100 (amj 100 (aml 100 (ams 100 mc))))
   | interact_step binds action arges
       k t m l mc post
@@ -780,9 +780,19 @@ Module exec. Section WithEnv.
   Qed.
 
   Lemma satisfies_offset f k post :
-    possible_execution f ->
     satisfies (fun i => f (k + i)) post ->
     satisfies f post.
+  Proof.
+    intros H. destruct H.
+    - eapply terminates; eauto.
+    - eapply nondet_stuck_stackalloc; eauto.
+    - eapply nondet_stuck_interact; eauto.
+  Qed.
+
+  Lemma satisfies_weaken f post1 post2 :
+    (forall k t m l mc, post1 k t m l mc -> post2 k t m l mc) ->
+    satisfies f post1 ->
+    satisfies f post2.
   Proof.
     intros H1 H2. destruct H2.
     - eapply terminates; eauto.
@@ -857,41 +867,32 @@ Module exec. Section WithEnv.
              destruct (f (S (S (S O)))) as [ [ [ [ [s4 k4] t4] m4] l4] mc4] eqn:Ef3.
              inversion HSSSO.
              ++ subst. inversion H15.
-             ++ subst. clear HSSSO Ef2. Check build_seq.
-                enough (satisfies (fun k => f (3 + k)) post).
-                { destruct H0.
-                  - eapply terminates; eauto.
-                  - eapply nondet_stuck_stackalloc; eauto.
-                  - eapply nondet_stuck_interact; eauto. }
+             ++ subst. clear HSSSO Ef2. eapply satisfies_offset; eauto.
+                instantiate (1 := 3%nat). 
                 eapply build_seq.
                 2: apply Ef3.
                 2: apply possible_execution_offset; assumption.
                 intros.
-                (*we want to apply something like a weakening lemma here, then apply H1...
-                  don't have a weakening lemma though.*)
-                specialize (H1 _ _ _ ltac:(eassumption) ltac:(eassumption) _ ltac:(eassumption) ltac:(eassumption)).
-                destruct H1.
-                --- eapply terminates; eauto. intros.
-                    specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
-                    rewrite H5 in *. clear H5.
-                    destruct (g (S O)) as [ [ [ [ [s6 k6] t6] m6] l6] mc6] eqn:EgSO.
-                    repeat match goal with
-                           | H: anybytes _ _ _ |- _ => clear H
-                           | H: map.split _ _ _ |- _ => clear H
-                           end.
-                    destruct H6 as [H6 | H6].
-                    +++ inversion H6. subst. fwd.
-                        match goal with
-                        | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-                            specialize @map.split_diff with (4 := A) (5 := B) as P
-                        end.
-                        edestruct P; try typeclasses eauto.
-                        1: eapply anybytes_unique_domain; eassumption.
-                        subst. eapply terminates; eauto.
-                    +++ exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
-                        econstructor; eauto.
-                --- eapply nondet_stuck_stackalloc; eauto.
-                --- exfalso. assumption.
+                eapply satisfies_weaken. 2: eapply H1; eauto.
+                simpl. intros.
+                specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
+                rewrite H5 in *. clear H5.
+                destruct (g (S O)) as [ [ [ [ [s6 k6] t6] m6] l6] mc6] eqn:EgSO.
+                repeat match goal with
+                       | H: anybytes _ _ _ |- _ => clear H
+                       | H: map.split _ _ _ |- _ => clear H
+                       end.
+                destruct H6 as [H6 | H6].
+                +++ inversion H6. subst. fwd.
+                    match goal with
+                    | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
+                        specialize @map.split_diff with (4 := A) (5 := B) as P
+                    end.
+                    edestruct P; try typeclasses eauto.
+                    1: eapply anybytes_unique_domain; eassumption.
+                    subst. eapply terminates; eauto.
+                +++ exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
+                    econstructor; eauto.
           -- cbv [stuck_state] in HSSSO. exfalso. apply HSSSO. clear HSSSO.
              eexists (_, _, _, _, _, _). rewrite Ef2. cbv [state_step].
              apply seq_done_step.
@@ -917,11 +918,51 @@ Module exec. Section WithEnv.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
       + cbv [stuck_state] in HSO. exfalso. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
         rewrite HO. eapply if_false_step; eauto.
+    - eapply build_seq. fold inclusion. intros f H2 H3. eapply satisfies_weaken; eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+        inversion HSO; try congruence. subst. unify_eval_exprs. eapply terminates; eauto.
+      + exfalso. cbv [stuck_state] in HSO. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
+        rewrite HO. econstructor; eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+        inversion HSO; try congruence. subst. unify_eval_exprs. eapply satisfies_offset; eauto.
+        instantiate (1 := 1%nat). eapply build_seq; eauto.
+        2: eapply possible_execution_offset; eauto.
+        intros. eapply satisfies_weaken; eauto. intros * g ? HgO HgS.
+        assert (HgSO := HgS O). destruct HgSO as [HgSO | HgSO].
+        -- cbv [step_state state_step] in HgSO. rewrite HgO in HgSO. destr_sstate (g0 1%nat).
+           inversion HgSO. subst. inversion H20. subst. assert (HgSSO := HgS (S O)).
+           destruct HgSSO as [HgSSO | HgSSO].
+           ++ cbv [step_state state_step] in HgSSO. rewrite Ef0 in HgSSO.
+              destr_sstate (g0 2%nat). inversion HgSSO; subst.
+              --- inversion H21.
+              --- eapply satisfies_offset; eauto. instantiate (1 := 2%nat).
+                  eapply H3; eauto. apply possible_execution_offset. assumption.
+           ++ exfalso. apply HgSSO. eexists (_, _, _, _, _, _). rewrite Ef0.
+              eapply seq_done_step.
+        -- exfalso. apply HgSO. eexists (_, _, _, _, _, _). rewrite HgO. econstructor.
+           econstructor.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. eapply while_true_step; eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+        inversion HSO. subst. unify_eval_exprs. eapply satisfies_offset.
+        instantiate (1 := 1%nat). eapply build_seq; eauto.
+        2: eapply possible_execution_offset; eauto.
+        intros g HgO HgS. eapply satisfies_weaken.
+        2: { assert (HgSO := HgS O). destruct HgSO as [HgSO | HgSO].
+             - cbv [step_state state_step] in HgSO. rewrite HgO in HgSO. destr_sstate (g 1%nat).
+               inversion HgSO. subst. unify_eval_exprs. eapply satisfies_offset with (k := 1%nat).
+               eapply IHexec; eauto. apply possible_execution_offset; auto.
+             - exfalso. apply HgSO. eexists (_, _, _, _, _, _). rewrite HgO. econstructor; eauto. }
+        intros * Hmid h HhO HhS. apply H3 in Hmid. fwd.
+        assert (HhSO := HhS O). destruct HhSO as [HhSO | HhSO].
+        -- cbv [step_state state_step] in HhSO. rewrite HhO in HhSO. destr_sstate (h 1%nat).
+           inversion HhSO. subst. fwd. unify_eval_exprs. eapply terminates; eauto.
+        -- exfalso. apply HhSO. eexists (_, _, _, _, _, _). rewrite HhO. econstructor; eauto.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
     - 
-        
-        ssumption. destruct IHexec as [IHexec | IHexec | IHexec].
-        -- eap
-        Print satisfies. eapply terminates
+                                                                                     eapply IHexec; eauto.
   Abort.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
