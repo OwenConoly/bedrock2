@@ -701,6 +701,21 @@ Module exec. Section WithEnv.
   Definition possible_execution (f : nat -> sstate) :=
     forall i, step_state f i \/ stuck_state f i.
 
+  Inductive satisfies (f : nat -> sstate) post : Prop :=
+  | terminates : forall i k' t' m' l' mc',
+      post k' t' m' l' mc' ->
+      f i = (sskip, k', t', m', l', mc') ->
+      satisfies f post
+  | nondet_stuck_stackalloc : forall i k' t' m' l' mc' x n a s'',
+      f i = (sseq (start_stackalloc x n a) s'', k', t', m', l', mc') ->
+      Z.modulo n (bytes_per_word width) = 0 ->
+      (~exists st, state_step (sseq (start_stackalloc x n a) s'', k', t', m', l', mc') st) ->
+      satisfies f post
+  | nondet_stuck_interact : forall i s' k' t' m' l' mc',
+      f i = (s', k', t', m', l', mc') ->
+      False ->
+      satisfies f post.
+
   Definition comes_right_after s1 s2 :=
     state_step s2 s1.
   Definition lifted_comes_right_after s1 s2 :=
@@ -726,21 +741,15 @@ Module exec. Section WithEnv.
     (forall (f : nat -> _),
         f O = (s1, k, t, m, l, mc) ->
         possible_execution f ->
-        (exists i,
-            let '(s', k', t', m', l', mc') := f i in
-            s' = sskip /\
-              forall (g : nat -> _),
-                g O = (s2, k', t', m', l', mc') ->
-                possible_execution g ->
-                (exists j,
-                    let '(s'', k'', t'', m'', l'', mc'') := g j in
-                    s'' = sskip /\ post k'' t'' m'' l'' mc''))) ->
+        satisfies f (fun k' t' m' l' mc' =>
+                       forall (g : nat -> _),
+                         g O = (s2, k', t', m', l', mc') ->
+                         possible_execution g ->
+                         satisfies g post)) ->
     forall (f : nat -> _),
       f O = (sseq s1 s2, k, t, m, l, mc) ->
       possible_execution f ->
-      (exists i,
-          let '(s', k', t', m', l', mc') := f i in
-          s' = sskip /\ post k' t' m' l' mc').
+      satisfies f post.
   Proof.
     intros. Admitted.
     
@@ -748,26 +757,19 @@ Module exec. Section WithEnv.
     (forall (f : nat -> _),
         f O = (sseq s1 s2, k, t, m, l, mc) ->
         possible_execution f ->
-        (exists i,
-            let '(s', k', t', m', l', mc') := f i in
-            s' = sskip /\ post k' t' m' l' mc')) ->
+        satisfies f post) ->
     (forall (f : nat -> _),
         f O = (s1, k, t, m, l, mc) ->
         possible_execution f ->
-        (exists i,
-            let '(s', k', t', m', l', mc') := f i in
-            s' = sskip /\
-              (comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) /\
-              forall (g : nat -> _),
-                g O = (s2, k', t', m', l', mc') ->
-                possible_execution g ->
-                (exists j,
-                    let '(s'', k'', t'', m'', l'', mc'') := g j in
-                    s'' = sskip /\ post k'' t'' m'' l'' mc'')))).
+        satisfies f (fun k' t' m' l' mc' =>
+                       comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) /\
+                         forall (g : nat -> _),
+                           g O = (s2, k', t', m', l', mc') ->
+                           possible_execution g ->
+                           satisfies g post)).
   Proof. Admitted.
 
   Require Import Lia.
-
 
   Lemma possible_execution_offset f k :
     possible_execution f ->
@@ -789,25 +791,7 @@ Module exec. Section WithEnv.
           replace v2 with v1 in * by congruence; clear H2
       end.
 
-  (*lazymatch goal with
-      | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-        specialize @map.split_diff with (4 := A) (5 := B) as P
-      end.
-      edestruct P; try typeclasses eauto. 2: subst; eauto 10.
-      eapply anybytes_unique_domain; eassumption.*)
-
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
-
-  (*NEXT STEP: make this nicer (an inductive?) and start using it everywhere, e.g. in seq lemmas.*)
-  Definition satisfies (f : nat -> sstate) post :=
-    exists i,
-      let '(s', k', t', m', l', mc') := f i in
-      (s' = sskip /\ post k' t' m' l' mc') \/
-        (stuck_state f i /\
-           ((exists x n a s'',
-                s' = sseq (start_stackalloc x n a) s'' /\
-                  Z.modulo n (bytes_per_word width) = 0 /\
-                  stuck_state f i))).
 
   Lemma exec_to_step s k t m l mc post :
     exec s k t m l mc post ->
@@ -817,23 +801,23 @@ Module exec. Section WithEnv.
       satisfies f post.
   Proof.
     intros H. induction H.
-    - intros. exists O. rewrite H0. auto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
+    - intros. eapply terminates; eauto.
+    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
         destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. auto.
+        inversion HSO. subst. unify_eval_exprs. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
+    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
         destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. auto.
+        inversion HSO. subst. unify_eval_exprs. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
+    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
         destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. auto.
+        inversion HSO. subst. unify_eval_exprs. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
     - intros f HO HS. simpl in HO. clear H0. assert (HSO := HS O).
@@ -852,10 +836,11 @@ Module exec. Section WithEnv.
              inversion HSSSO.
              ++ subst. inversion H15.
              ++ subst. clear HSSSO Ef2. Check build_seq.
-                enough (exists i, let '(s', k', t', m', l', mc') := (fun k => f (3 + k)) i in
-                                  s' = sskip /\ post k' t' m' l' mc').
-                { destruct H0 as [i H0]. exists (3 + i).
-                  destruct (f (3 + i)) as [ [ [ [ [si ki] ti] mi] li] mci]. auto. }
+                enough (satisfies (fun k => f (3 + k)) post).
+                { destruct H0.
+                  - eapply terminates; eauto.
+                  - eapply nondet_stuck_stackalloc; eauto.
+                  - eapply nondet_stuck_interact; eauto. }
                 eapply build_seq.
                 2: apply Ef3.
                 2: apply possible_execution_offset; assumption.
@@ -863,40 +848,36 @@ Module exec. Section WithEnv.
                 (*we want to apply something like a weakening lemma here, then apply H1...
                   don't have a weakening lemma though.*)
                 specialize (H1 _ _ _ ltac:(eassumption) ltac:(eassumption) _ ltac:(eassumption) ltac:(eassumption)).
-                destruct H1 as [i H1]. exists i.
-                destruct (f0 i) as [ [ [ [ [s' k'] t'] m'] l'] mc'].
-                destruct H1 as [H1 | H1].
-                --- destruct H1 as [H1_1 H1_2]. subst. split; auto.
-                    intros.
-                    exists (S O).
-                    specialize (H3 O). cbv [step_state stuck_state state_step] in H3.
-                    rewrite H1 in *. clear H1.
-                    destruct (g (S O)) as [ [ [ [ [s6 k6] t6] m6] l6] mc6].
+                destruct H1.
+                --- eapply terminates; eauto. intros.
+                    specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
+                    rewrite H5 in *. clear H5.
+                    destruct (g (S O)) as [ [ [ [ [s6 k6] t6] m6] l6] mc6] eqn:EgSO.
                     repeat match goal with
                            | H: anybytes _ _ _ |- _ => clear H
                            | H: map.split _ _ _ |- _ => clear H
                            end.
-                    destruct H3 as [H3 | H3].
-                    +++ inversion H3. subst. auto. cbv [step_state state_step] in H3.
-                        Check map.split_diff. fwd.
+                    destruct H6 as [H6 | H6].
+                    +++ inversion H6. subst. fwd.
                         match goal with
                         | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
                             specialize @map.split_diff with (4 := A) (5 := B) as P
                         end.
                         edestruct P; try typeclasses eauto.
-                    1: eapply anybytes_unique_domain; eassumption.
-                    subst. auto.
-                    +++ exfalso. apply H3. clear H3. fwd. eexists (_, _, _, _, _, _).
+                        1: eapply anybytes_unique_domain; eassumption.
+                        subst. eapply terminates; eauto.
+                    +++ exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
                         econstructor; eauto.
-                --- fwd.
+                --- eapply nondet_stuck_stackalloc; eauto.
+                --- exfalso. assumption.
           -- cbv [stuck_state] in HSSSO. exfalso. apply HSSSO. clear HSSSO.
              eexists (_, _, _, _, _, _). rewrite Ef2. cbv [state_step].
              apply seq_done_step.
-        * cbv [stuck_state] in HSSO. exfalso. apply HSSO. clear HSSO.
-          eexists (_, _, _, _, _, _). rewrite Ef1. econstructor. econstructor. eauto.
-                
-                apply H1.
-                (*now we need some lemma about sseq... this all looks doable, if somewhat tedious.*)
+        * cbv [stuck_state] in HSSO. eapply nondet_stuck_stackalloc; eauto. intros H'.
+          apply HSSO. clear HSSO. cbv [state_step] in H'. fwd. eexists (_, _, _, _, _, _).
+          rewrite Ef1. cbv [state_step]. eassumption.
+      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor.
+    -                 
   Abort.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
