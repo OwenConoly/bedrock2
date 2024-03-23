@@ -961,7 +961,13 @@ Module exec. Section WithEnv.
            inversion HhSO. subst. fwd. unify_eval_exprs. eapply terminates; eauto.
         -- exfalso. apply HhSO. eexists (_, _, _, _, _, _). rewrite HhO. econstructor; eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
-    - 
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+        inversion HSO. subst.
+        match goal with
+        | H: forall _, ext_spec _ _ _ _ _ -> _, G: ext_spec _ _ _ _ _ |- _ => apply H in G
+    end.
+        unify_eval_exprs.
                                                                                      eapply IHexec; eauto.
   Abort.
 
