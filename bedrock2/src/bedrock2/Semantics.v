@@ -669,6 +669,7 @@ Module exec. Section WithEnv.
       k t m l mc post
       mKeep mGive (_: map.split m mKeep mGive)
       args mc' k' (_ :  evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      (_: forall t0 mGive0 action0 args0 mid0, ext_spec t0 mGive0 action0 args0 mid0 -> map.same_domain mGive0 mGive)
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
@@ -963,7 +964,7 @@ Module exec. Section WithEnv.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
-        inversion HSO. subst.
+        inversion HSO. subst. unify_eval_exprs. specialize (H8 _ H1).
         match goal with
         | H: forall _, ext_spec _ _ _ _ _ -> _, G: ext_spec _ _ _ _ _ |- _ => apply H in G
     end.
