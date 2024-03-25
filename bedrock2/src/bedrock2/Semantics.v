@@ -9,6 +9,8 @@ Require Import bedrock2.Syntax coqutil.Map.Interface coqutil.Map.OfListWord.
 Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import bedrock2.MetricLogging.
 Require Export bedrock2.Memory.
+Require Import Coq.Logic.ClassicalFacts.
+
 Print Memory.store.
 
 (* not sure where to put these lemmas *)
@@ -666,10 +668,10 @@ Module exec. Section WithEnv.
     : step (end_call binds rets l) k t m st1 mc
         sskip k t m l' (ami 100 (amj 100 (aml 100 (ams 100 mc))))
   | interact_step binds action arges
-      k t m l mc post
+      k t m l mc
       mKeep mGive (_: map.split m mKeep mGive)
       args mc' k' (_ :  evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
-      (_: forall t0 mGive0 action0 args0 mid0, ext_spec t0 mGive0 action0 args0 mid0 -> map.same_domain mGive0 mGive)
+      (_: forall (*t0 don't need this.*) mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive)
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
@@ -712,9 +714,12 @@ Module exec. Section WithEnv.
       Z.modulo n (bytes_per_word width) = 0 ->
       (~exists st, state_step (sseq (start_stackalloc x n a) s'', k', t', m', l', mc') st) ->
       satisfies f post
-  | nondet_stuck_interact : forall i s' k' t' m' l' mc',
-      f i = (s', k', t', m', l', mc') ->
-      False ->
+  | nondet_stuck_interact : forall i k' t' m' l' mc' binds action arges mKeep mGive args mc'' k'',
+      f i = (sinteract binds action arges, k', t', m', l', mc') ->
+      map.split m' mKeep mGive ->
+      evaluate_call_args_log m' l' arges mc' k' = Some (args, mc'', k'') ->
+      (forall mGive0 mid0, ext_spec t' mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->
+      (~exists st, state_step (sinteract binds action arges, k', t', m', l', mc') st) ->
       satisfies f post.
 
   Definition comes_right_after s1 s2 :=
@@ -826,14 +831,31 @@ Module exec. Section WithEnv.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma exec_to_step s k t m l mc post :
+  (*Definition three_is_even (n : nat) : Prop :=
+    (exists m : nat, n = m + m)%nat.
+
+  Definition z : nat. Admitted.
+  Check exec.
+  Check (fun x y => 2 * x + y).
+  Definition f x y := 2 * x + y.
+  Check f.
+  Compute (f z).
+  f z = (fun y => 2 * z + y)
+  
+  f 
+  nat -> (nat -> nat)*)
+
+
+
+  Lemma exec_to_step (s : cmd) k t m l mc post :
+    excluded_middle ->
     exec s k t m l mc post ->
     forall (f : nat -> _),
       f O = (inclusion s, k, t, m, l, mc) ->
       possible_execution f ->
       satisfies f post.
   Proof.
-    intros H. induction H.
+    intros em H. induction H.
     - intros. eapply terminates; eauto.
     - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
       + instantiate (1 := S O). cbv [step_state state_step] in HSO.
@@ -964,13 +986,33 @@ Module exec. Section WithEnv.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
-        inversion HSO. subst. unify_eval_exprs. specialize (H8 _ H1).
-        match goal with
-        | H: forall _, ext_spec _ _ _ _ _ -> _, G: ext_spec _ _ _ _ _ |- _ => apply H in G
-    end.
-        unify_eval_exprs.
-                                                                                     eapply IHexec; eauto.
-  Abort.
+        inversion HSO. subst. unify_eval_exprs. specialize (H8 _ _ H1).
+        Check map.split_diff.
+        destruct (map.split_diff H8 H H6). subst. clear H6 H8.
+        specialize (H9 _ H1). apply H2 in H9. fwd. apply H9p1 in H22. clear H9p1.
+        unify_eval_exprs. eapply terminates; eauto.
+      + assert (step_or_not :=
+                  em (exists mReceive resvals klist,
+                        (exists m', map.split m' mKeep mReceive)(*map.disjoint mKeep mReceive*) /\
+                          forall mid',
+                            ext_spec t mGive action args mid' ->
+                            mid' mReceive resvals klist)).
+        destruct step_or_not as [step | not_step].
+        -- fwd. assert (Hmid := stepp1 _ H1). apply H2 in Hmid. fwd.
+           Search map.split.
+           exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO.
+           econstructor; eauto.
+           destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto.
+        -- Print satisfies. eapply nondet_stuck_interact; eauto.
+           { destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto. }
+           intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_state] in H'.
+           destr_sstate st. inversion H'. subst.
+           unify_eval_exprs.
+           specialize (H8 _ _ H1). Check map.split_diff.
+           destruct (map.split_diff H8 H H6). subst. clear H6 H8. assert (Hmid := H9 _ H1).
+           eexists. eexists. eexists. intuition eauto. eapply H9. apply H3.
+           Unshelve. (*where did that come from?*) exact (word.of_Z 0).
+  Qed.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
     (forall f : nat -> A,
