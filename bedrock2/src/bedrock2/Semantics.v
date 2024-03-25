@@ -560,7 +560,7 @@ Module exec. Section WithEnv.
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr).
-  Print cmd.cmd.
+  
   Fixpoint inclusion (s : cmd) :=
     match s with
     | cmd.skip => sskip
@@ -743,6 +743,74 @@ Module exec. Section WithEnv.
   Definition comes_after_or_prefix := clos_trans _ comes_right_after_or_prefix.
   Definition lifted_comes_after_or_prefix s1 s2 := comes_after_or_prefix (other_inclusion s1) (other_inclusion s2).
 
+  Definition first_part st : sstate :=
+    match st with
+    | (sseq s1 s2, k, t, m, l, mc) => (s1, k, t, m, l, mc)
+    | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
+    end.
+  Fixpoint execution_of_first_part (f : nat -> sstate) n :=
+    match n with
+    | O => first_part (f O)
+    | S n' =>
+        match (execution_of_first_part f n') with
+        | (sskip, _, _, _, _, _) => execution_of_first_part f n'
+        | _ => first_part (f n)
+        end
+    end.
+
+  Ltac destr_sstate st :=
+    (*this is not exactly what I want, I want all of them to be named the same way...*)
+    let s := fresh "s" in
+    let k := fresh "k" in
+    let t := fresh "t" in
+    let m := fresh "m" in
+    let l := fresh "l" in
+    let mc := fresh "mc" in
+    let Ef := fresh "Ef" in
+    destruct st as [ [ [ [ [s k] t] m] l] mc] eqn:Ef.
+
+  Lemma possible_first_part f :
+    possible_execution f ->
+    possible_execution (execution_of_first_part f).
+  Proof.
+    cbv [possible_execution]. intros H. intros n. revert H. induction n.
+    - intros H. assert (HO := H O). destr_sstate (f 0%nat). destruct s.
+      all: try (right; cbv [stuck_state]; split;
+                [intros H'; destruct H' as [st H']; simpl in H'; rewrite Ef in H'; simpl in H';
+                 destr_sstate st; inversion H' |
+                  simpl; rewrite Ef; reflexivity]).
+      destruct HO as [HO | HO].
+      + cbv [step_state state_step execution_of_first_part] in *.
+        rewrite Ef in *. destr_sstate (f 1%nat). inversion HO; subst.
+        -- left. simpl. inversion H13; subst; apply H13.
+        -- right. fold execution_of_first_part. cbv [stuck_state]. split.
+           ++ intros H'. fwd. simpl in H'. rewrite Ef in H'. simpl in H'.
+              destr_sstate st. inversion H'.
+           ++ simpl. rewrite Ef. simpl. reflexivity.
+      + right. cbv [stuck_state]. destruct HO as [HO1 HO2]. split.
+        -- intros H'. destruct H' as [st H']. simpl in H'. rewrite Ef in H'. simpl in H'.
+           apply HO1. destr_sstate st.
+           eexists (_, _, _, _, _, _). rewrite Ef. cbv [state_step step_state].
+           eapply seq_step. eassumption.
+        -- simpl. rewrite Ef. simpl. rewrite HO2. rewrite Ef. destruct s1; reflexivity.
+    - intros H. assert (Hn := H n).
+
+
+
+
+
+        cbv [step_state state_step execution_of_first_part]. rewrite Ef. simpl.
+        destruct s1.
+        -- fold execution_of_first_part. right. cbv [stuck_state]. split;
+             [intros H'; destruct H' as [st H']; simpl in H'; rewrite Ef in H'; simpl in H';
+              destr_sstate st; inversion H' |
+               simpl; rewrite Ef; reflexivity].
+        -- fold execution_of_first_part. left. right. cbv [stuck_state]. split;
+             [intros H'; destruct H' as [st H']; simpl in H'; rewrite Ef in H'; simpl in H';
+              destr_sstate st; inversion H' |
+               simpl; rewrite Ef; reflexivity].
+        right. fold execution_of_first_part.
+  
   Lemma build_seq s1 s2 k t m l mc post :
     (forall (f : nat -> _),
         f O = (s1, k, t, m, l, mc) ->
@@ -757,7 +825,9 @@ Module exec. Section WithEnv.
       possible_execution f ->
       satisfies f post.
   Proof.
-    intros. Admitted.
+    intros. specialize (H (execution_of_first_part f)).
+    simpl in H. rewrite H0 in H. specialize (H eq_refl). cbv [possible_execution] in H1. Search metrics.
+    
     
   Lemma invert_seq s1 s2 k t m l mc post :
     (forall (f : nat -> _),
@@ -818,34 +888,7 @@ Module exec. Section WithEnv.
           replace v2 with v1 in * by congruence; clear H2
       end.
 
-  Ltac destr_sstate st :=
-    (*this is not exactly what I want, I want all of them to be named the same way...*)
-    let s := fresh "s" in
-    let k := fresh "k" in
-    let t := fresh "t" in
-    let m := fresh "m" in
-    let l := fresh "l" in
-    let mc := fresh "mc" in
-    let Ef := fresh "Ef" in
-    destruct st as [ [ [ [ [s k] t] m] l] mc] eqn:Ef.
-
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
-
-  (*Definition three_is_even (n : nat) : Prop :=
-    (exists m : nat, n = m + m)%nat.
-
-  Definition z : nat. Admitted.
-  Check exec.
-  Check (fun x y => 2 * x + y).
-  Definition f x y := 2 * x + y.
-  Check f.
-  Compute (f z).
-  f z = (fun y => 2 * z + y)
-  
-  f 
-  nat -> (nat -> nat)*)
-
-
 
   Lemma exec_to_step (s : cmd) k t m l mc post :
     excluded_middle ->
