@@ -670,7 +670,7 @@ Module exec. Section WithEnv.
   | interact_step binds action arges
       k t m l mc
       mKeep mGive (_: map.split m mKeep mGive)
-      args mc' k' (_ :  evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
+      args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
       (_: forall (*t0 don't need this.*) mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive)
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
@@ -704,23 +704,26 @@ Module exec. Section WithEnv.
   Definition possible_execution (f : nat -> sstate) :=
     forall i, step_state f i \/ stuck_state f i.
 
-  Inductive satisfies (f : nat -> sstate) post : Prop :=
-  | terminates : forall i k' t' m' l' mc',
-      post k' t' m' l' mc' ->
-      f i = (sskip, k', t', m', l', mc') ->
-      satisfies f post
-  | nondet_stuck_stackalloc : forall i k' t' m' l' mc' x n a s'',
-      f i = (sseq (start_stackalloc x n a) s'', k', t', m', l', mc') ->
+  Inductive nondet_stuck : sstate -> Prop :=
+  | nondet_stuck_stackalloc : forall k t m l mc x n a,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (~exists st, state_step (sseq (start_stackalloc x n a) s'', k', t', m', l', mc') st) ->
-      satisfies f post
-  | nondet_stuck_interact : forall i k' t' m' l' mc' binds action arges mKeep mGive args mc'' k'',
-      f i = (sinteract binds action arges, k', t', m', l', mc') ->
-      map.split m' mKeep mGive ->
-      evaluate_call_args_log m' l' arges mc' k' = Some (args, mc'', k'') ->
-      (forall mGive0 mid0, ext_spec t' mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->
-      (~exists st, state_step (sinteract binds action arges, k', t', m', l', mc') st) ->
-      satisfies f post.
+      (~exists st, state_step (start_stackalloc x n a, k, t, m, l, mc) st) ->
+      nondet_stuck (start_stackalloc x n a, k, t, m, l, mc)
+  | nondet_stuck_interact : forall k t m l mc binds action arges mKeep mGive args mc' k',
+      map.split m mKeep mGive ->
+      evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
+      (forall mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->
+      (~exists st, state_step (sinteract binds action arges, k, t, m, l, mc) st) ->
+      nondet_stuck (sinteract binds action arges, k, t, m, l, mc)
+  | nondet_stuck_seq : forall s1 s2 k t m l mc,
+    nondet_stuck (s1, k, t, m, l, mc) ->
+    nondet_stuck (sseq s1 s2, k, t, m, l, mc).
+
+  Definition state_satisfies st post : Prop :=
+    (let '(s, k, t, m, l, mc) := st in s = sskip /\ post k t m l mc) \/
+      nondet_stuck st.
+
+  Definition satisfies (f : nat -> _) post := exists i, state_satisfies (f i) post.
 
   Definition comes_right_after s1 s2 :=
     state_step s2 s1.
@@ -833,20 +836,85 @@ Module exec. Section WithEnv.
            destruct s; reflexivity.
   Qed.
 
-  Lemma nats_have_mins n (P : _ -> Prop) :
-    P n ->
-    exists n',
-      P n' /\ forall p, p < n' -> ~P p.
-  Proof. Admitted.
-
   Require Import Lia.
 
-  Lemma execution_of_first_part_stable f n1 n2 :
+  Lemma nats_have_mins n (P : _ -> Prop) :
+    (forall i, P i \/ ~P i) ->
+    P n ->
+    exists m,
+      P m /\ forall i, i < m -> ~P i.
+  Proof.
+    revert P. induction n.
+    - intros. exists O. split; [assumption|]. intros. lia.
+    - intros. specialize (IHn (fun i => P (S i))). simpl in IHn.
+      specialize (IHn (fun i => H (S i))). specialize (IHn H0). fwd.
+      clear H0 n. destruct (H O).
+      + exists O. split; [assumption|]. lia.
+      + exists (S m). split; [assumption|]. intros. destruct i.
+        -- assumption.
+        -- apply IHnp1. lia.
+  Qed.
+
+  Lemma possible_execution_offset f k :
     possible_execution f ->
+    possible_execution (fun i => f (k + i)).
+  Proof.
+    cbv [possible_execution step_state stuck_state]. intros. specialize (H (k + i)).
+    replace (k + S i) with (S (k + i)) by lia. assumption.
+  Qed.
+
+  Lemma satisfies_offset f k post :
+    satisfies (fun i => f (k + i)) post ->
+    satisfies f post.
+  Proof.
+    intros [i H]. cbv [satisfies]. exists (k + i). assumption.
+  Qed.
+
+  Lemma satisfies_weaken f post1 post2 :
+    (forall k t m l mc, post1 k t m l mc -> post2 k t m l mc) ->
+    satisfies f post1 ->
+    satisfies f post2.
+  Proof.
+    intros H1 [i H2]. cbv [satisfies]. exists i. destruct H2.
+    - destr_sstate (f i). left. intuition.
+    - right. assumption.
+  Qed.
+
+  Lemma execution_of_first_part_stable' f n :
+    get_scmd (execution_of_first_part f n) = sskip ->
+    forall m, n <= m ->
+              execution_of_first_part f n = execution_of_first_part f m.
+  Proof.
+    intros. replace m with ((m - n) + n) by lia. clear H0.
+    induction (m - n).
+    - reflexivity.
+    - simpl. rewrite <- IHn0. clear IHn0.
+      destr_sstate (execution_of_first_part f n). simpl in H. subst.
+      reflexivity.
+  Qed.
+
+  Lemma execution_of_first_part_stable f n1 n2 :
     get_scmd (execution_of_first_part f n1) = sskip ->
     get_scmd (execution_of_first_part f n2) = sskip ->
     execution_of_first_part f n1 = execution_of_first_part f n2.
-  Proof. Admitted.
+  Proof.
+    intros H1 H2. assert (H3 := execution_of_first_part_stable' _ _ H1).
+    assert (H4 := execution_of_first_part_stable' _ _ H2).
+    Search (_ <= _ \/ _ <= _). assert (H := PeanoNat.Nat.le_ge_cases n1 n2).
+    destruct H as [H | H].
+    - apply H3. assumption.
+    - symmetry. apply H4. assumption.
+  Qed.
+
+  Lemma first_part_1 f i :
+    get_scmd (execution_of_first_part f i) <> sskip ->
+    execution_of_first_part f i = first_part (f i).
+  Proof.
+    intros H. destruct i.
+    - reflexivity.
+    - simpl in *. destr_sstate (execution_of_first_part f i).
+      destruct s; try reflexivity. simpl in H. congruence.
+  Qed.
 
   Lemma second_comes_after_first s1 s2 k t m l mc k' t' m' l' mc' f i :
     f O = (sseq s1 s2, k, t, m, l, mc) ->
@@ -857,9 +925,11 @@ Module exec. Section WithEnv.
   Proof.
     intros H1 H2 H3. assert (H4: get_scmd (execution_of_first_part f i) = sskip).
     { rewrite H3. reflexivity. }
-    apply (nats_have_mins i) in H4. destruct H4 as [n' [H4 H5] ].
-    assert (forall n, n < n' ->
-                      exists s, get_scmd (f n) = sseq s s2).
+    apply (nats_have_mins i) in H4.
+    2: { intros x. destr_sstate (execution_of_first_part f x). simpl.
+         destruct s; (left; reflexivity) || (right; congruence). }
+    destruct H4 as [n' [H4 H5] ].
+    assert (forall n, n < n' -> exists s, get_scmd (f n) = sseq s s2). (*this deserves to be its own lemma*)
     { intros n. induction n.
       - intros. simpl. rewrite H1. simpl. eexists. reflexivity.
       - intros H. specialize (IHn ltac:(lia)). fwd. specialize (H5 n ltac:(lia)).
@@ -880,7 +950,7 @@ Module exec. Section WithEnv.
         + destruct Hn as [_ Hn]. rewrite Hn. rewrite Ef0. eexists. reflexivity. }
     assert (H3': get_scmd (execution_of_first_part f i) = sskip).
     { rewrite H3. reflexivity. }
-    assert (H6 := execution_of_first_part_stable _ _ _ H2 H4 H3').
+    assert (H6 := execution_of_first_part_stable _ _ _ H4 H3').
     rewrite <- H6 in *. clear H6. clear i. clear H3' H4.
     exists (S n').
     destruct n'.
@@ -936,15 +1006,28 @@ Module exec. Section WithEnv.
   Proof.
     intros. specialize (H (execution_of_first_part f)).
     simpl in H. rewrite H0 in H. specialize (H eq_refl (possible_first_part _ H1)).
-    destruct H.
-    - (*pick the smallest *)
-      
-      exists i, f i = (s2, k', t', m', l', mc')
-    Print satisfies.
-    
-    cbv [possible_execution] in H1.
-    specialize (H ltac:(admit)). Search metrics.
-    
+    destruct H as [i H]. destruct H as [H | H].
+    - destr_sstate (execution_of_first_part f i). destruct H. subst.
+      assert (H3 := second_comes_after_first).
+      specialize H3 with (1 := H0) (2 := H1) (3 := Ef).
+      destruct H3 as [j H3]. specialize (H2 (fun i => f (j + i))).
+      simpl in H2. replace (j + 0) with j in H2 by lia.
+      specialize (H2 H3 (possible_execution_offset _ _ H1)).
+      eapply satisfies_offset. eapply H2.
+    - rewrite first_part_1 in H.
+      + remember (first_part (f i)) as st eqn:E. cbv [satisfies]. exists i.
+        cbv [state_satisfies]. right. destr_sstate (f i). destruct H.
+        -- destruct s; simpl in E; try congruence.
+           inversion E. subst. clear E. constructor. constructor.
+           ++ assumption.
+           ++ assumption.
+        -- destruct s; simpl in E; try congruence.
+           inversion E. subst. clear E. constructor. econstructor; eassumption.
+        -- destruct s; simpl in E; try congruence.
+           inversion E. subst. clear E. constructor. constructor. assumption.
+      + destr_sstate (execution_of_first_part f i). destruct s; simpl; try congruence.
+        inversion H.
+  Qed.
     
   Lemma invert_seq s1 s2 k t m l mc post :
     (forall (f : nat -> _),
@@ -961,35 +1044,6 @@ Module exec. Section WithEnv.
                            possible_execution g ->
                            satisfies g post)).
   Proof. Admitted.
-
-  Lemma possible_execution_offset f k :
-    possible_execution f ->
-    possible_execution (fun i => f (k + i)).
-  Proof.
-    cbv [possible_execution step_state stuck_state]. intros. specialize (H (k + i)).
-    replace (k + S i) with (S (k + i)) by lia. assumption.
-  Qed.
-
-  Lemma satisfies_offset f k post :
-    satisfies (fun i => f (k + i)) post ->
-    satisfies f post.
-  Proof.
-    intros H. destruct H.
-    - eapply terminates; eauto.
-    - eapply nondet_stuck_stackalloc; eauto.
-    - eapply nondet_stuck_interact; eauto.
-  Qed.
-
-  Lemma satisfies_weaken f post1 post2 :
-    (forall k t m l mc, post1 k t m l mc -> post2 k t m l mc) ->
-    satisfies f post1 ->
-    satisfies f post2.
-  Proof.
-    intros H1 H2. destruct H2.
-    - eapply terminates; eauto.
-    - eapply nondet_stuck_stackalloc; eauto.
-    - eapply nondet_stuck_interact; eauto.
-  Qed.
 
   Ltac unify_eval_exprs :=
     repeat match goal with
@@ -1014,51 +1068,47 @@ Module exec. Section WithEnv.
       satisfies f post.
   Proof.
     intros em H. induction H.
-    - intros. eapply terminates; eauto.
-    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. eauto.
+    - intros. exists O. left. rewrite H0. eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destr_sstate (f (S O)). rewrite HO in HSO.
+        inversion HSO. subst. unify_eval_exprs. left. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
-    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destr_sstate (f (S O)). rewrite HO in HSO.
+        inversion HSO. subst. unify_eval_exprs. left. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
-    - intros f HO HS. eapply terminates; eauto. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + instantiate (1 := S O). cbv [step_state state_step] in HSO.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
+      + exists (S O). cbv [step_state state_step] in HSO.
+        destr_sstate (f (S O)). rewrite HO in HSO.
+        inversion HSO. subst. unify_eval_exprs. left. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
     - intros f HO HS. simpl in HO. clear H0. assert (HSO := HS O).
       destruct HSO as [HSO | HSO ].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:Ef1.
-        inversion HSO. subst. clear HO. assert (HSSO := HS (S O)).
+        destr_sstate (f (S O)). inversion HSO. subst. clear HO. assert (HSSO := HS (S O)).
         destruct HSSO as [HSSO | HSSO ].
         * cbv [step_state state_step] in HSSO.
-          simpl in HSO. rewrite Ef1 in HSSO.
-          destruct (f (S (S O))) as [ [ [ [ [s3 k3] t3] m3] l3] mc3] eqn:Ef2.
-          inversion HSSO. subst. clear Ef1 HSO. inversion H14. subst. clear HSSO H14.
+          simpl in HSO. rewrite Ef in HSSO. destr_sstate (f (S (S O))).
+          inversion HSSO. subst. clear Ef HSO. inversion H14. subst. clear HSSO H14.
           assert (HSSSO := HS (S (S O))). destruct HSSSO as [HSSSO | HSSSO ].
-          -- cbv [step_state state_step] in HSSSO. rewrite Ef2 in HSSSO.
-             destruct (f (S (S (S O)))) as [ [ [ [ [s4 k4] t4] m4] l4] mc4] eqn:Ef3.
-             inversion HSSSO.
+          -- cbv [step_state state_step] in HSSSO. rewrite Ef0 in HSSSO.
+             destr_sstate (f (S (S (S O)))). inversion HSSSO.
              ++ subst. inversion H15.
-             ++ subst. clear HSSSO Ef2. eapply satisfies_offset; eauto.
+             ++ subst. clear HSSSO Ef0. eapply satisfies_offset; eauto.
                 instantiate (1 := 3%nat). 
                 eapply build_seq.
-                2: apply Ef3.
+                2: apply Ef.
                 2: apply possible_execution_offset; assumption.
                 intros.
                 eapply satisfies_weaken. 2: eapply H1; eauto.
                 simpl. intros.
                 specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
-                rewrite H5 in *. clear H5.
-                destruct (g (S O)) as [ [ [ [ [s6 k6] t6] m6] l6] mc6] eqn:EgSO.
+                rewrite H5 in *. clear H5. destr_sstate (g (S O)).
                 repeat match goal with
                        | H: anybytes _ _ _ |- _ => clear H
                        | H: map.split _ _ _ |- _ => clear H
@@ -1071,15 +1121,16 @@ Module exec. Section WithEnv.
                     end.
                     edestruct P; try typeclasses eauto.
                     1: eapply anybytes_unique_domain; eassumption.
-                    subst. eapply terminates; eauto.
+                    subst. eexists (S O). left. rewrite Ef0. auto.
                 +++ exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
                     econstructor; eauto.
           -- cbv [stuck_state] in HSSSO. exfalso. apply HSSSO. clear HSSSO.
-             eexists (_, _, _, _, _, _). rewrite Ef2. cbv [state_step].
+             eexists (_, _, _, _, _, _). rewrite Ef0. cbv [state_step].
              apply seq_done_step.
-        * cbv [stuck_state] in HSSO. eapply nondet_stuck_stackalloc; eauto. intros H'.
+        * cbv [stuck_state] in HSSO. exists (S O).
+          right. rewrite Ef. constructor. constructor; eauto. intros H'.
           apply HSSO. clear HSSO. cbv [state_step] in H'. fwd. eexists (_, _, _, _, _, _).
-          rewrite Ef1. cbv [state_step]. eassumption.
+          rewrite Ef. cbv [state_step]. constructor. eassumption.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO.
@@ -1102,7 +1153,8 @@ Module exec. Section WithEnv.
     - eapply build_seq. fold inclusion. intros f H2 H3. eapply satisfies_weaken; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
-        inversion HSO; try congruence. subst. unify_eval_exprs. eapply terminates; eauto.
+        inversion HSO; try congruence. subst. unify_eval_exprs. exists (S O). left.
+        rewrite Ef. eauto.
       + exfalso. cbv [stuck_state] in HSO. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
         rewrite HO. econstructor; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
@@ -1139,7 +1191,7 @@ Module exec. Section WithEnv.
         intros * Hmid h HhO HhS. apply H3 in Hmid. fwd.
         assert (HhSO := HhS O). destruct HhSO as [HhSO | HhSO].
         -- cbv [step_state state_step] in HhSO. rewrite HhO in HhSO. destr_sstate (h 1%nat).
-           inversion HhSO. subst. fwd. unify_eval_exprs. eapply terminates; eauto.
+           inversion HhSO. subst. fwd. unify_eval_exprs. exists (S O). left. rewrite Ef0. eauto.
         -- exfalso. apply HhSO. eexists (_, _, _, _, _, _). rewrite HhO. econstructor; eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
@@ -1148,7 +1200,7 @@ Module exec. Section WithEnv.
         Check map.split_diff.
         destruct (map.split_diff H8 H H6). subst. clear H6 H8.
         specialize (H9 _ H1). apply H2 in H9. fwd. apply H9p1 in H22. clear H9p1.
-        unify_eval_exprs. eapply terminates; eauto.
+        unify_eval_exprs. exists (S O). rewrite Ef. left. auto.
       + assert (step_or_not :=
                   em (exists mReceive resvals klist,
                         (exists m', map.split m' mKeep mReceive)(*map.disjoint mKeep mReceive*) /\
@@ -1161,7 +1213,7 @@ Module exec. Section WithEnv.
            exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO.
            econstructor; eauto.
            destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto.
-        -- Print satisfies. eapply nondet_stuck_interact; eauto.
+        -- exists O. right. rewrite HO. econstructor; eauto.
            { destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto. }
            intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_state] in H'.
            destr_sstate st. inversion H'. subst.
