@@ -1281,23 +1281,54 @@ Module exec. Section WithEnv.
       destruct H2 as [_ H2]. simpl. apply H2.
   Qed.
 
+  (*can I define g : sstate -> sstate -> bool such that
+    forall s1 s2, comes_right_after_or_prefix s1 s2 -> comes_right_after s1 s2 <-> g s1 s2 = true?*)
+  Print prefix.
+
+  (*This should be true without choice and middle,
+    since all the relevant things have decidable equality.
+    But it doesn't seem nice to do it without them,
+    and I'm using them elsewhere anyway...*)
+  Lemma prefix_dec' :
+    excluded_middle ->
+    FunctionalChoice_on (sstate*sstate) bool ->
+    exists g, forall s1 s2,
+      prefix s1 s2 <-> g s1 s2 = true.
+  Proof.
+    intros em choice. cbv [FunctionalChoice_on] in choice.
+    specialize (choice (fun s1_s2 y => let '(s1, s2) := s1_s2 in prefix s1 s2 <-> y = true)).
+    simpl in choice. destruct choice as [f f_correct].
+    - intros x. specialize (em (let '(s1, s2) := x in prefix s1 s2)). destruct em as [em|em].
+      + exists true. destruct x. split; auto.
+      + exists false. destruct x. split; auto. congruence.
+    - exists (fun s1 s2 => f (s1, s2)). intros. specialize (f_correct (s1, s2)). apply f_correct.
+  Qed.
+
+  Fixpoint next_index dec_prefix f n fn : (nat,  :=
+    match dec_prefix (f (S n)) fn with
+    | true =>
+        
+
   Lemma steps_with_cuts_to_steps f :
     (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
     exists g,
       g O = f O /\
         (forall i, comes_right_after (g (S i)) (g i)).
-  Proof.
+  Proof. Print comes_right_after_or_prefix. Print prefix.
   (*just remove all the cuts.
     there can only be finitely many in a row, since statements have finite size.*) Admitted.    
   
   Lemma steps_wf s k t m l mc post :
+    excluded_middle ->
+    FunctionalChoice_on (cmd * trace * io_trace * mem * locals * metrics) (cmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> _),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     Acc lifted_comes_right_after_or_prefix (s, k, t, m, l, mc).
   Proof.
-    intros. apply chains_finite_implies_Acc. Search Acc.
+    intros em choice. intros. apply chains_finite_implies_Acc; [apply em|apply choice|].
+    clear em choice.
     intros. intros H'. apply steps_with_cuts_to_steps in H'. destruct H' as [g [H'1 H'2] ].
     specialize (H g).
     simpl in H. rewrite H'1 in H. rewrite H0 in H. specialize (H eq_refl). clear H0.
