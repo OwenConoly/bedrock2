@@ -1244,9 +1244,7 @@ Module exec. Section WithEnv.
     (forall (f : nat -> _),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
-        exists i,
-          let '(s', k', t', m', l', mc') := f i in
-          s' = sskip /\ post k' t' m' l' mc') ->
+        satisfies f post) ->
     Acc lifted_comes_right_after_or_prefix (s, k, t, m, l, mc).
   Proof.
     intros. apply chains_finite_implies_Acc. Search Acc.
@@ -1260,8 +1258,19 @@ Module exec. Section WithEnv.
     destruct H0 as [i H0]. specialize (H'2 i).
     destruct (g i) as [ [ [ [ [si ki] ti] mi] li] mci].
     destruct (g (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
-    simpl in H0. simpl in H'2. destruct H0 as [H0 _].
-    cbv [comes_right_after] in H'2. simpl in H'2. rewrite H0 in H'2. simpl in H'2. inversion H'2.
+    simpl in H0. simpl in H'2. destruct H0 as [H0 | H0].
+    - destruct H0 as [H0p1 H0p2]. subst. inversion H'2.
+    - remember (si, ki, ti, mi, li, mci) as st eqn:Est.
+      assert (H'2' : let '(s, k, t, m, l, mc) := st in
+                     exists s' k' t' m' l' mc',
+                       step s k t m l mc s' k' t' m' l' mc').
+      { subst. do 6 eexists. eassumption. }
+      clear H'2 Est. induction H0.
+      + apply H1. clear H1. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply H3. clear H3. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply IHnondet_stuck. clear IHnondet_stuck. fwd. inversion H'2'; subst.
+        -- do 6 eexists. eassumption.
+        -- inversion H0.
   Qed.
 
   Lemma done_stable f i :
