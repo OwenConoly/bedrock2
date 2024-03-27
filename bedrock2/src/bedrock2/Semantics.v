@@ -1224,12 +1224,62 @@ Module exec. Section WithEnv.
            Unshelve. (*where did that come from?*) exact (word.of_Z 0).
   Qed.
 
+  Require Import Coq.Logic.ChoiceFacts.
+
+  Lemma enna (A : Type) (P : A -> Prop) :
+    (forall y, P y) ->
+    ~exists y, ~P y.
+  Proof. intros H [y H']. apply H'. apply H. Qed.
+  
+  Lemma naen (A : Type) (P : A -> Prop) :
+    excluded_middle ->
+    ~(forall y, P y) ->
+    exists y, ~P y.
+  Proof.
+    clear. cbv [excluded_middle]. intros em H. assert (H1 := em (exists y, ~P y)).
+    destruct H1 as [H1|H1].
+    - assumption.
+    - exfalso. apply H. clear H. intros y. assert (H2 := em (P y)).
+      destruct H2 as [H2|H2].
+      + assumption.
+      + exfalso. apply H1. exists y. assumption.
+  Qed.
+
+  Fixpoint repeat_f {A: Type} (f : A -> A) x n :=
+    match n with
+    | O => x
+    | S n' => f (repeat_f f x n')
+    end.
+
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
+    excluded_middle ->
+    FunctionalChoice_on A A ->
     (forall f : nat -> A,
         f O = x ->
         ~(forall i, R (f (S i)) (f i))) ->
     Acc R x.
-  Proof. (*standard logical thing, probably on the internet somewhere*) Admitted.
+  Proof.
+    intros em choice H. cbv [FunctionalChoice_on] in choice.
+    specialize (choice (fun x y => ~Acc R x -> ~Acc R y /\ R y x)). destruct choice as [f H'].
+    { clear -em. intros x. cbv [excluded_middle] in em.
+      assert (H1 := em (forall y : A, R y x -> Acc R y)). destruct H1 as [H1|H1].
+      - exists x. intros H. exfalso. apply H. constructor. assumption.
+      - assert (H2 := naen). specialize H2 with (1 := em) (2 := H1).
+        simpl in H2. destruct H2 as [y H2]. exists y. intros _. split.
+        + intros H. apply H2. intros. assumption.
+        + assert (H3 := em (R y x)). destruct H3 as [H3|H3].
+          -- assumption.
+          -- exfalso. apply H2. intros. exfalso. apply H3. apply H. }
+    assert (H1 := em (Acc R x)). destruct H1 as [H1|H1].
+    - assumption.
+    - specialize (H (repeat_f f x) eq_refl).
+      assert (H2: forall n, ~ Acc R (repeat_f f x n)).
+      { intros n. induction n.
+        - apply H1.
+        - apply H' in IHn. destruct IHn as [IHn _]. simpl. apply IHn. }
+      exfalso. apply H. intros i. specialize (H2 i). apply H' in H2.
+      destruct H2 as [_ H2]. simpl. apply H2.
+  Qed.
 
   Lemma steps_with_cuts_to_steps f :
     (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
