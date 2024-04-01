@@ -1289,7 +1289,7 @@ Module exec. Section WithEnv.
     since all the relevant things have decidable equality.
     But it doesn't seem nice to do it without them,
     and I'm using them elsewhere anyway...*)
-  Lemma prefix_dec' :
+  Lemma prefix_dec :
     excluded_middle ->
     FunctionalChoice_on (sstate*sstate) bool ->
     exists g, forall s1 s2,
@@ -1304,9 +1304,54 @@ Module exec. Section WithEnv.
     - exists (fun s1 s2 => f (s1, s2)). intros. specialize (f_correct (s1, s2)). apply f_correct.
   Qed.
 
-  Fixpoint next_index dec_prefix f n fn : (nat,  :=
-    match dec_prefix (f (S n)) fn with
+  (*given f (infinite seq of comes_right_after_or_prefix),
+    returns g (infinite seq of comes_right_after_or_prefix) such that f O steps to g O.*)
+  Fixpoint next_seq dec_prefix (f : nat -> sstate) fOcmd :=
+    match dec_prefix (f (S O)) (f O) with
     | true =>
+        match fOcmd with
+        | sseq s1 s2 =>
+            (fun i =>
+               let '(s, k, t, m, l, mc) := next_seq dec_prefix (fun j => f (S j)) s1 i in
+               (sseq s s2, k, t, m, l, mc))
+        | _ => (fun _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog))
+        end
+    | false => (fun k => f (S k))
+    end.
+
+  Lemma next_seq_correct dec_prefix f :
+    (forall s1 s2, prefix s1 s2 <-> dec_prefix s1 s2 = true) ->
+    (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
+    let g := next_seq dec_prefix f (get_scmd (f O)) in
+    (forall i, comes_right_after_or_prefix (g (S i)) (g i)) /\
+      comes_right_after (g O) (f O).
+  Proof.
+    intros Hdec. remember (get_scmd (f O)) as fOcmd eqn:E. revert E. revert f.
+    induction fOcmd; intros; simpl in g; subst g; destr_sstate (f O); simpl in E; subst.
+    (*this is terrible, should fix*)
+    all: try solve [replace (dec_prefix _ _) with false;
+              [split;
+               [intros; apply H|
+                 specialize (H O); rewrite Ef in H; destruct H as [H|H];
+                 [assumption|inversion H]]|
+                destruct (dec_prefix _ _) eqn:E; [|reflexivity];
+                rewrite <- Hdec in E; inversion E]].
+    (*just left with the seq case*)
+    destruct (dec_prefix _ _) eqn:E.
+    - destr_sstate (f (S O)). rewrite <- Hdec in E. inversion E. subst. clear E.
+      clear IHfOcmd2. specialize (IHfOcmd1 (fun j => f (S j))).
+      simpl in IHfOcmd1. rewrite Ef0 in IHfOcmd1. specialize (IHfOcmd1 eq_refl).
+      specialize (IHfOcmd1 (fun i => H (S i))). destruct IHfOcmd1 as [IH1 IH2].
+      remember (next_seq dec_prefix (fun j => f (S j))) as g eqn:Eg. clear Eg.
+      split.
+      + clear IH2. intros i. specialize (IH1 i). destr_sstate (g fOcmd1 (S i)).
+        destr_sstate (g fOcmd1 i). destruct IH1 as [IH1|IH1].
+        -- left. constructor. apply IH1.
+        -- right. inversion IH1. subst. Print prefix. constructor.
+        clear Eg. destr_sstate 
+        specialize (
+      cbv [next_seq] in g. subst g.
+    
         
 
   Lemma steps_with_cuts_to_steps f :
