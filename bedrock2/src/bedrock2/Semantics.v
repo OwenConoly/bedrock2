@@ -962,33 +962,17 @@ Module otherexec. Section WithEnv.
       eexists. intuition eauto. subst_exprs. eexists. trace_alignment.
   Qed.
 
-  (*Lemma exec_ext pick_sp1 s k t m l mc post :
+  Lemma exec_ext pick_sp1 s k t m l mc post :
     exec pick_sp1 s k t m l mc post ->
     forall pick_sp2,
     (forall k', pick_sp1 k' = pick_sp2 k') ->
     exec pick_sp2 s k t m l mc post.
   Proof.
-    Set Printing Implicit.
-    intros H1 pick_sp2. induction H1; intros; try solve [econstructor; eauto].
-    - econstructor; eauto. intros. replace (pick_sp nil) with (pick_sp2 nil) in *.
-      { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
-      symmetry. apply H2 with (k' := nil).
-    - eapply if_true; eauto. eapply IHexec. subst_exprs.
-      intros. eassert (H2' := H2 (_ ++ _ :: _)). rewrite <- app_assoc in H2'. eapply H2'.
-    - eapply if_false; eauto. eapply IHexec. subst_exprs.
-      intros. eassert (H2' := H2 (_ ++ _ :: _)). rewrite <- app_assoc in H2'. eapply H2'.
-    - econstructor. 1: eapply exec_extends_trace; eauto. simpl. intros. fwd.
-      eapply H0; eauto. intros. repeat rewrite app_assoc. apply H2.
-    - eapply while_true; intuition eauto.
-      { eapply exec_extends_trace. eapply IHexec. subst_exprs.
-        intros. repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto. }
-      simpl in *. fwd. eapply H3; eauto. intros. subst_exprs.
-      repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto.
-    - econstructor. 4: eapply exec_extends_trace. all: intuition eauto.
-      { eapply IHexec. subst_exprs. intros.
-        repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto. }
-      fwd. specialize H3 with (1 := H5p0). fwd. intuition eauto.
-  Qed.*)
+    intros H1. induction H1; intros; try solve [econstructor; eauto].
+    econstructor; eauto. intros. replace (pick_sp nil) with (pick_sp2 nil) in *.
+    { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
+    symmetry. apply H2 with (k' := nil).
+  Qed.
   
   Local Ltac solve_picksps_equal :=
     intros; cbv beta; f_equal;
@@ -1072,13 +1056,142 @@ Module twoexecs. Section WithEnv.
 
   Local Notation metrics := MetricLog.
 
-  Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *) Check exec.
+  Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *) Print eval_expr.
+  Check call_args_to_other_trace.
+
+  Ltac start_with_nil :=
+    repeat match goal with
+      | H: eval_expr _ _ _ _ ?k = Some (_, _, _) |- _ =>
+        tryif (assert (k = nil) by reflexivity) then fail else
+        (apply expr_to_other_trace in H;
+        let H' := fresh "H" in
+        destruct H as [? [? H']];
+        subst;
+        specialize (H' nil))
+    end.
+
+  Require Import Lia.
 
   Lemma global_to_local pick_sp s k t m l mc post :
     exec e (pick_sp := pick_sp) s k t m l mc post ->
-    otherexec e pick_sp s k t m l mc post.
+    otherexec e (fun k' => pick_sp (k' ++ k)) s k t m l mc post.
   Proof.
-    intros H. induction H; try solve [econstructor; eauto].
-    - econstructor; eauto. econstructor; auto.
-     
+    intros H. induction H; start_with_nil; try solve [econstructor; eauto; repeat rewrite app_nil_r; assumption].
+    - eapply otherexec.if_true; eauto. repeat rewrite app_nil_r.
+      eapply otherexec.exec_ext; try eassumption. intros. simpl.
+      repeat rewrite <- app_assoc. reflexivity.
+    - eapply otherexec.if_false; eauto. repeat rewrite app_nil_r.
+      eapply otherexec.exec_ext; try eassumption. intros. simpl.
+      repeat rewrite <- app_assoc. reflexivity.
+    - econstructor.
+      + eapply otherexec.exec_extends_trace. eassumption.
+      + simpl. intros. fwd. rewrite app_length. (*terrible name*)
+        replace (length k'' + _ - _) with (length k'') by lia.
+        rewrite List.firstn_app_l by reflexivity.
+        eapply otherexec.exec_ext.
+        -- eapply H1; eauto.
+        -- intros. simpl. repeat rewrite <- app_assoc. reflexivity.
+    - eapply otherexec.while_true.
+      + eassumption.
+      + assumption.
+      + repeat rewrite app_nil_r. eapply otherexec.exec_extends_trace.
+        eapply otherexec.exec_ext; try eassumption.
+        intros. simpl. repeat rewrite <- app_assoc. reflexivity.
+      + simpl. intros. fwd. eapply otherexec.exec_ext.
+        -- eapply H3; eauto.
+        -- simpl. intros. f_equal. repeat rewrite <- app_assoc. f_equal.
+           remember (k''0 ++ leak_bool true :: x) as dontcare.
+           replace (k''0 ++ leak_bool true :: x ++ k) with (dontcare ++ k).
+           { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. lia. }
+           subst. rewrite <- app_assoc. reflexivity.
+    - apply call_args_to_other_trace in H0. fwd. specialize (H0p1 nil).
+      econstructor; eauto. rewrite app_nil_r.
+      eapply otherexec.exec_ext; try eassumption.
+      simpl. intros. repeat rewrite <- app_assoc. reflexivity.
+    - apply call_args_to_other_trace in H0. fwd. specialize (H0p1 nil).
+      econstructor; eauto. intros. specialize (H2 _ _ _ ltac:(eassumption)).
+      fwd. eexists; intuition eauto. rewrite app_nil_r. auto.
+  Qed.
 
+  Ltac from_nil :=
+    repeat match goal with
+      | H: eval_expr _ _ _ _ ?k = Some (_, _, _) |- _ =>
+          let E := fresh in
+          assert (E:k = nil) by reflexivity; clear E;
+          apply expr_to_other_trace in H;
+          destruct H as [? [? ?]];
+          subst;
+          rewrite app_nil_r in *
+    end.
+
+  Lemma local_to_global pick_sp s k t m l mc post :
+    otherexec e pick_sp s k t m l mc post ->
+    exec e (pick_sp := (fun k' => pick_sp (firstn (length k' - length k) k'))) s k t m l mc post.
+  Proof.
+    intros H. induction H; from_nil; try solve [econstructor; eauto].
+    - econstructor; eauto. replace (_ - _) with 0%nat by lia. assumption.
+    - eapply exec.if_true; eauto. eapply exec.exec_ext; try eassumption.
+      simpl. intros. f_equal. repeat (rewrite app_length || simpl).
+      replace (_ + _ - _) with (length k') by lia.
+      replace (_ + _ - _) with (length k' + S (length x)) by lia.
+      rewrite List.firstn_app_l; try reflexivity.
+      replace (k' ++ leak_bool true :: x ++ k) with ((k' ++ leak_bool true :: x) ++ k).
+      { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. simpl. lia. }
+      repeat (rewrite <- app_assoc || simpl). reflexivity.
+    - eapply exec.if_false; eauto. eapply exec.exec_ext; try eassumption.
+      simpl. intros. f_equal. repeat (rewrite app_length || simpl).
+      replace (_ + _ - _) with (length k') by lia.
+      replace (_ + _ - _) with (length k' + S (length x)) by lia.
+      rewrite List.firstn_app_l; try reflexivity.
+      replace (k' ++ leak_bool false :: x ++ k) with ((k' ++ leak_bool false :: x) ++ k).
+      { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. simpl. lia. }
+      repeat (rewrite <- app_assoc || simpl). reflexivity.
+    - econstructor.
+      + eapply exec.exec_extends_trace. eassumption.
+      + simpl. intros. fwd. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
+        repeat rewrite app_length.
+        replace _ with (length k') by lia.
+        replace (_ + _ - _) with (length k'') by lia.
+        replace (_ + _ - _) with (length k' + length k'') by lia.
+        rewrite firstn_app_2. repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+    - eapply exec.while_true; [eauto | eauto | eauto | ..].
+      + eapply exec.exec_extends_trace. eapply exec.exec_ext; eauto.
+        simpl. intros. f_equal. repeat rewrite app_length || simpl.
+        replace _ with (length k') by lia.
+        replace (_ + _ - _) with (length k' + S (length x)) by lia.
+        rewrite firstn_app_2. simpl.
+        repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+      + simpl. intros. fwd. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
+        repeat rewrite app_length || simpl.
+        replace _ with (length k') by lia.
+        replace (_ + _ - _) with (length k''0 + S (length x)) by lia.
+        replace (_ + _ - _) with (length k' + (length k''0 + S (length x))) by lia.
+        repeat rewrite firstn_app_2 || simpl.
+        repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+    - apply call_args_to_other_trace in H0. fwd. econstructor; eauto.
+      rewrite app_nil_r in *. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
+      repeat rewrite app_length || simpl.
+      replace _ with (length k') by lia.
+      replace (_ + _ - _) with (length k' + S (length k'')) by lia.
+      rewrite firstn_app_2. simpl.
+      repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+    - apply call_args_to_other_trace in H0. fwd. rewrite app_nil_r in *.
+      econstructor; eauto.
+  Qed.
+     
+  Lemma local_equiv_global s k t m l mc post :
+    (forall pick_sp, otherexec e pick_sp s k t m l mc post) <->
+      (forall pick_sp, exec e (pick_sp := pick_sp) s k t m l mc post).
+  Proof.
+    split; intros H pick_sp.
+    - eapply exec.exec_ext with (pick_sp1 := _).
+      + eapply local_to_global. eauto.
+      + instantiate (1 := fun k' => (pick_sp (k' ++ k))). intros. simpl.
+        rewrite app_length. replace (_ + _ - _) with (length k') by lia.
+        rewrite List.firstn_app_l by reflexivity. reflexivity.
+    - eapply otherexec.exec_ext.
+      + eapply global_to_local. eauto.
+      + instantiate (1 := fun k' => pick_sp (firstn (length k' - length k) k')).
+        intros. simpl. rewrite app_length. replace (_ + _ - _) with (length k') by lia.
+        rewrite List.firstn_app_l by reflexivity. reflexivity.
+  Qed.
