@@ -694,115 +694,116 @@ Module otherexec. Section WithEnv.
 
   (*maybe input trace should be entire trace so far, but trace in postcondition should just be trace accumulated during execution.*)
   Inductive exec :
-    (trace -> word) -> cmd -> trace -> io_trace -> mem -> locals -> metrics ->
+    (trace -> word) -> cmd -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
-    pick_sp k t m l mc post
-    (_ : post k t m l mc)
-    : exec pick_sp cmd.skip k t m l mc post
+    pick_sp t m l mc post
+    (_ : post nil t m l mc)
+    : exec pick_sp cmd.skip t m l mc post
   | set x e
     pick_sp m l mc post
-    k t v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
-    (_ : post (k' ++ k) t m (map.put l x v) (addMetricInstructions 1
+    t v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
+    (_ : post k' t m (map.put l x v) (addMetricInstructions 1
                                       (addMetricLoads 1 mc')))
-    : exec pick_sp (cmd.set x e) k t m l mc post
+    : exec pick_sp (cmd.set x e) t m l mc post
   | unset x
-    pick_sp k t m l mc post
-    (_ : post k t m (map.remove l x) mc)
-    : exec pick_sp (cmd.unset x) k t m l mc post
+    pick_sp t m l mc post
+    (_ : post nil t m (map.remove l x) mc)
+    : exec pick_sp (cmd.unset x) t m l mc post
   | store sz ea ev
-    pick_sp k t m l mc post
+    pick_sp t m l mc post
     a mc' k' (_ : eval_expr m l ea mc nil = Some (a, mc', k'))
     v mc'' k'' (_ : eval_expr m l ev mc' nil = Some (v, mc'', k''))
     m' (_ : store sz m a v = Some m')
-    (_ : post (leak_word a :: k'' ++ k' ++ k) t m' l (addMetricInstructions 1
-                                                        (addMetricLoads 1
-                                                           (addMetricStores 1 mc''))))
-    : exec pick_sp (cmd.store sz ea ev) k t m l mc post
+    (_ : post (leak_word a :: k'' ++ k') t m' l (addMetricInstructions 1
+                                                   (addMetricLoads 1
+                                                      (addMetricStores 1 mc''))))
+    : exec pick_sp (cmd.store sz ea ev) t m l mc post
   | stackalloc x n body
-    pick_sp k t mSmall l mc post
+    pick_sp t mSmall l mc post
     (_ : Z.modulo n (bytes_per_word width) = 0)
     (_ : forall mStack mCombined,
         let a := pick_sp nil in
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec pick_sp body k t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
+        exec pick_sp body t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
           (fun k' t' mCombined' l' mc' =>
              exists mSmall' mStack',
-              anybytes a n mStack' /\
-              map.split mCombined' mSmall' mStack' /\
-              post k' t' mSmall' l' mc'))
-    : exec pick_sp (cmd.stackalloc x n body) k t mSmall l mc post
-  | if_true k t m l mc e c1 c2 post
+               anybytes a n mStack' /\
+                 map.split mCombined' mSmall' mStack' /\
+                 post k' t' mSmall' l' mc'))
+    : exec pick_sp (cmd.stackalloc x n body) t mSmall l mc post
+  | if_true t m l mc e c1 c2 post
     pick_sp v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v <> 0)
-    (_ : exec (fun k => pick_sp (k ++ leak_bool true :: k')) c1 (leak_bool true :: k' ++ k) t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
-    : exec pick_sp (cmd.cond e c1 c2) k t m l mc post
+    (_ : exec (fun k => pick_sp (k ++ leak_bool true :: k')) c1 t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) (fun k'' => post (k'' ++ leak_bool true :: k')))
+    : exec pick_sp (cmd.cond e c1 c2) t m l mc post
   | if_false e c1 c2
-    pick_sp k t m l mc post
+    pick_sp t m l mc post
     v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v = 0)
-    (_ : exec (fun k => pick_sp (k ++ leak_bool false :: k')) c2 (leak_bool false :: k' ++ k) t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) post)
-    : exec pick_sp (cmd.cond e c1 c2) k t m l mc post
+    (_ : exec (fun k => pick_sp (k ++ leak_bool false :: k')) c2 t m l (addMetricInstructions 2 (addMetricLoads 2 (addMetricJumps 1 mc'))) (fun k'' => post (k'' ++ leak_bool false :: k')))
+    : exec pick_sp (cmd.cond e c1 c2) t m l mc post
   | seq c1 c2
-    k t m l mc pick_sp post
-    mid (_ : exec pick_sp c1 k t m l mc mid)
+    t m l mc pick_sp post
+    mid (_ : exec pick_sp c1 t m l mc mid)
     (_ : forall k' t' m' l' mc',
         mid k' t' m' l' mc' ->
-        exec (fun k0 => pick_sp (k0 ++ firstn (length k' - length k) k')) c2 k' t' m' l' mc' post)
-    : exec pick_sp (cmd.seq c1 c2) k t m l mc post
+        exec (fun k => pick_sp (k ++ k')) c2 t' m' l' mc' (fun k'' => post (k'' ++ k')))
+    : exec pick_sp (cmd.seq c1 c2) t m l mc post
   | while_false e c
-    pick_sp k t m l mc post
+    pick_sp t m l mc post
     v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
     (_ : word.unsigned v = 0)
-    (_ : post (leak_bool false :: k' ++ k) t m l (addMetricInstructions 1
-                                                    (addMetricLoads 1
-                                                       (addMetricJumps 1 mc'))))
-    : exec pick_sp (cmd.while e c) k t m l mc post
+    (_ : post (leak_bool false :: k') t m l (addMetricInstructions 1
+                                               (addMetricLoads 1
+                                                  (addMetricJumps 1 mc'))))
+    : exec pick_sp (cmd.while e c) t m l mc post
   | while_true e c
-      pick_sp k t m l mc post
+      pick_sp t m l mc post
       v mc' k' (_ : eval_expr m l e mc nil = Some (v, mc', k'))
       (_ : word.unsigned v <> 0)
-      mid (_ : exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k')) c (leak_bool true :: k' ++ k) t m l mc' mid)
+      mid (_ : exec (fun k => pick_sp (k ++ leak_bool true :: k')) c t m l mc' mid)
       (_ : forall k'' t' m' l' mc'',
           mid k'' t' m' l' mc'' ->
-          exec (fun k0 => pick_sp (k0 ++ firstn (length k'' - length k) k'')) (cmd.while e c) k'' t' m' l' (addMetricInstructions 2
-                                                                                                              (addMetricLoads 2
-                                                                                                                 (addMetricJumps 1 mc''))) post)
-    : exec pick_sp (cmd.while e c) k t m l mc post
+          exec (fun k => pick_sp (k ++ k'' ++ leak_bool true :: k')) (cmd.while e c) t' m' l' (addMetricInstructions 2
+                                                                                                 (addMetricLoads 2
+                                                                                                    (addMetricJumps 1 mc'')))
+            (fun k''' => post (k''' ++ k'' ++ leak_bool true :: k')))
+    : exec pick_sp (cmd.while e c) t m l mc post
   | call binds fname arges
-      pick_sp k t m l mc post
+      pick_sp t m l mc post
       params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
       args mc' k' (_ : evaluate_call_args_log m l arges mc nil = Some (args, mc', k'))
       lf (_ : map.of_list_zip params args = Some lf)
-      mid (_ : exec (fun k0 => pick_sp (k0 ++ leak_unit :: k')) fbody (leak_unit :: k' ++ k) t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
+      mid (_ : exec (fun k => pick_sp (k ++ leak_unit :: k')) fbody t m lf (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc')))) mid)
       (_ : forall k'' t' m' st1 mc'', mid k'' t' m' st1 mc'' ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post k'' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
-    : exec pick_sp (cmd.call binds fname arges) k t m l mc post
+          post (k'' ++ leak_unit :: k') t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'')))))
+    : exec pick_sp (cmd.call binds fname arges) t m l mc post
   | interact binds action arges
-      pick_sp k t m l mc post
+      pick_sp t m l mc post
       mKeep mGive (_: map.split m mKeep mGive)
       args mc' k' (_ :  evaluate_call_args_log m l arges mc nil = Some (args, mc', k'))
       mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals klist, mid mReceive resvals klist ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (leak_list klist :: k' ++ k)%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
+          post (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l'
             (addMetricInstructions 1
                (addMetricStores 1
                   (addMetricLoads 2 mc'))))
-    : exec pick_sp (cmd.interact binds action arges) k t m l mc post
+    : exec pick_sp (cmd.interact binds action arges) t m l mc post
   .
   
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma weaken : forall pick_sp s k t m l mc post1,
-      exec pick_sp s k t m l mc post1 ->
+  Lemma weaken : forall pick_sp s t m l mc post1,
+      exec pick_sp s t m l mc post1 ->
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-        exec pick_sp s k t m l mc post2.
+        exec pick_sp s t m l mc post2.
   Proof.
     induction 1; intros; try solve [econstructor; eauto].
     - eapply stackalloc. 1: assumption.
@@ -821,16 +822,16 @@ Module otherexec. Section WithEnv.
       eauto 10.
   Qed.
 
-  Lemma intersect : forall pick_sp k t l m mc s post1,
-      exec pick_sp s k t m l mc post1 ->
+  Lemma intersect : forall pick_sp t l m mc s post1,
+      exec pick_sp s t m l mc post1 ->
       forall post2,
-        exec pick_sp s k t m l mc post2 ->
-        exec pick_sp s k t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
+        exec pick_sp s t m l mc post2 ->
+        exec pick_sp s t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
   Proof.
     induction 1;
       intros;
       match goal with
-      | H: exec _ _ _ _ _ _ _ _ |- _ => inversion H; subst; clear H
+      | H: exec _ _ _ _ _ _ _ |- _ => inversion H; subst; clear H
       end;
       repeat match goal with
              | H1: ?e = Some (?v1, ?mc1, ?t1), H2: ?e = Some (?v2, ?mc2, ?t2) |- _ =>
@@ -846,7 +847,7 @@ Module otherexec. Section WithEnv.
     
     - econstructor. 1: eassumption.
       intros.
-      rename H0 into Ex1, H14 into Ex2.
+      rename H0 into Ex1, H13 into Ex2.
       eapply weaken. 1: eapply H1. 1,2: eassumption.
       1: eapply Ex2. 1,2: eassumption.
       cbv beta.
@@ -864,23 +865,23 @@ Module otherexec. Section WithEnv.
       + eapply IHexec. exact H10. (* not H1 *)
       + simpl. intros *. intros [? ?]. eauto.
     - eapply call. 1, 2, 3: eassumption.
-      + eapply IHexec. exact H18. (* not H2 *)
+      + eapply IHexec. exact H17. (* not H2 *)
       + simpl. intros *. intros [? ?].
         edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-        edestruct H19 as (? & ? & ? & ? & ?); [eassumption|].
+        edestruct H18 as (? & ? & ? & ? & ?); [eassumption|].
         repeat match goal with
                | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
                  replace v2 with v1 in * by congruence; clear H2
                end.
         eauto 10.
     - pose proof ext_spec.unique_mGive_footprint as P.
-      specialize P with (1 := H1) (2 := H16).
+      specialize P with (1 := H1) (2 := H15).
       destruct (map.split_diff P H H7). subst mKeep0 mGive0. clear H7.
       eapply interact. 1,2: eassumption.
-      + eapply ext_spec.intersect; [ exact H1 | exact H16 ].
+      + eapply ext_spec.intersect; [ exact H1 | exact H15 ].
       + simpl. intros *. intros [? ?].
         edestruct H2 as (? & ? & ?); [eassumption|].
-        edestruct H17 as (? & ? & ?); [eassumption|].
+        edestruct H16 as (? & ? & ?); [eassumption|].
         repeat match goal with
                | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
                  replace v2 with v1 in * by congruence; clear H2
@@ -940,9 +941,10 @@ Module otherexec. Section WithEnv.
           apply evaluate_call_args_log_extends_trace in H; destruct H; subst
         end.
 
-  Lemma exec_extends_trace pick_sp s k t m l mc post :
-    exec pick_sp s k t m l mc post ->
-    exec pick_sp s k t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
+  (*hooray don't need this anymore
+    Lemma exec_extends_trace pick_sp s t m l mc post :
+    exec pick_sp s t m l mc post ->
+    exec pick_sp s t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
   Proof.
     intros H. induction H; try (econstructor; intuition eauto; subst_exprs; eexists; trace_alignment; fail).
     - econstructor; intuition eauto. intros. eapply weaken. 1: eapply H1; eauto.
@@ -960,18 +962,18 @@ Module otherexec. Section WithEnv.
       eexists. trace_alignment.
     - econstructor; intuition eauto. specialize H2 with (1 := H3). fwd.
       eexists. intuition eauto. subst_exprs. eexists. trace_alignment.
-  Qed.
+  Qed.*)
 
-  Lemma exec_ext pick_sp1 s k t m l mc post :
-    exec pick_sp1 s k t m l mc post ->
+  Lemma exec_ext pick_sp1 s t m l mc post :
+    exec pick_sp1 s t m l mc post ->
     forall pick_sp2,
-    (forall k', pick_sp1 k' = pick_sp2 k') ->
-    exec pick_sp2 s k t m l mc post.
+    (forall k, pick_sp1 k = pick_sp2 k) ->
+    exec pick_sp2 s t m l mc post.
   Proof.
     intros H1. induction H1; intros; try solve [econstructor; eauto].
     econstructor; eauto. intros. replace (pick_sp nil) with (pick_sp2 nil) in *.
     { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
-    symmetry. apply H2 with (k' := nil).
+    symmetry. apply H2.
   Qed.
   
   Local Ltac solve_picksps_equal :=
@@ -1074,40 +1076,40 @@ Module twoexecs. Section WithEnv.
 
   Lemma global_to_local pick_sp s k t m l mc post :
     exec e (pick_sp := pick_sp) s k t m l mc post ->
-    otherexec e (fun k' => pick_sp (k' ++ k)) s k t m l mc post.
+    otherexec e (fun k' => pick_sp (k' ++ k)) s t m l mc (fun k' => post (k' ++ k)).
   Proof.
-    intros H. induction H; start_with_nil; try solve [econstructor; eauto; repeat rewrite app_nil_r; assumption].
+    intros H. induction H; start_with_nil; try solve [econstructor; eauto; repeat rewrite app_nil_r;
+                                                      repeat rewrite <- app_assoc || simpl; assumption].
     - eapply otherexec.if_true; eauto. repeat rewrite app_nil_r.
-      eapply otherexec.exec_ext; try eassumption. intros. simpl.
-      repeat rewrite <- app_assoc. reflexivity.
+      eapply otherexec.exec_ext.
+      + eapply otherexec.weaken; try eassumption. simpl. intros.
+        repeat rewrite <- app_assoc || simpl. assumption.
+      + simpl. intros. repeat rewrite <- app_assoc || simpl. reflexivity.
     - eapply otherexec.if_false; eauto. repeat rewrite app_nil_r.
-      eapply otherexec.exec_ext; try eassumption. intros. simpl.
-      repeat rewrite <- app_assoc. reflexivity.
-    - econstructor.
-      + eapply otherexec.exec_extends_trace. eassumption.
-      + simpl. intros. fwd. rewrite app_length. (*terrible name*)
-        replace (length k'' + _ - _) with (length k'') by lia.
-        rewrite List.firstn_app_l by reflexivity.
-        eapply otherexec.exec_ext.
-        -- eapply H1; eauto.
-        -- intros. simpl. repeat rewrite <- app_assoc. reflexivity.
+      eapply otherexec.exec_ext.
+      + eapply otherexec.weaken; try eassumption. simpl. intros.
+        repeat rewrite <- app_assoc || simpl. assumption.
+      + simpl. intros. repeat rewrite <- app_assoc || simpl. reflexivity.
+    - econstructor; eauto. simpl. intros. eapply otherexec.exec_ext.
+      + eapply otherexec.weaken; eauto. simpl. intros.
+        repeat rewrite <- app_assoc || simpl. assumption.
+      + simpl. intros. repeat rewrite <- app_assoc || simpl. reflexivity.
     - eapply otherexec.while_true.
       + eassumption.
       + assumption.
-      + repeat rewrite app_nil_r. eapply otherexec.exec_extends_trace.
-        eapply otherexec.exec_ext; try eassumption.
-        intros. simpl. repeat rewrite <- app_assoc. reflexivity.
-      + simpl. intros. fwd. eapply otherexec.exec_ext.
-        -- eapply H3; eauto.
-        -- simpl. intros. f_equal. repeat rewrite <- app_assoc. f_equal.
-           remember (k''0 ++ leak_bool true :: x) as dontcare.
-           replace (k''0 ++ leak_bool true :: x ++ k) with (dontcare ++ k).
-           { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. lia. }
-           subst. rewrite <- app_assoc. reflexivity.
+      + repeat rewrite app_nil_r. eapply otherexec.exec_ext; try eassumption.
+        intros. simpl. repeat rewrite <- app_assoc || simpl. reflexivity.
+      + simpl. intros. repeat rewrite app_nil_r. eapply otherexec.exec_ext.
+        -- eapply otherexec.weaken. 1: eapply H3; eauto. simpl. intros.
+           repeat rewrite <- app_assoc || simpl. assumption.
+        -- simpl. intros. repeat rewrite <- app_assoc || simpl. reflexivity.
     - apply call_args_to_other_trace in H0. fwd. specialize (H0p1 nil).
-      econstructor; eauto. rewrite app_nil_r.
-      eapply otherexec.exec_ext; try eassumption.
-      simpl. intros. repeat rewrite <- app_assoc. reflexivity.
+      econstructor; eauto.
+      ++ rewrite app_nil_r. eapply otherexec.exec_ext; try eassumption.
+         simpl. intros. repeat rewrite <- app_assoc. reflexivity.
+      ++ simpl. intros * H'. specialize H3 with (1 := H'). fwd. eexists. intuition eauto.
+         eexists. intuition eauto. rewrite app_nil_r.
+         repeat rewrite <- app_assoc || simpl. assumption.
     - apply call_args_to_other_trace in H0. fwd. specialize (H0p1 nil).
       econstructor; eauto. intros. specialize (H2 _ _ _ ltac:(eassumption)).
       fwd. eexists; intuition eauto. rewrite app_nil_r. auto.
@@ -1124,36 +1126,66 @@ Module twoexecs. Section WithEnv.
           rewrite app_nil_r in *
     end.
 
-  Lemma local_to_global pick_sp s k t m l mc post :
-    otherexec e pick_sp s k t m l mc post ->
-    exec e (pick_sp := (fun k' => pick_sp (firstn (length k' - length k) k'))) s k t m l mc post.
+  Lemma local_to_global pick_sp s t m l mc post :
+    otherexec e pick_sp s t m l mc post ->
+    forall k,
+    exec e (pick_sp := (fun k' => pick_sp (firstn (length k' - length k) k'))) s k t m l mc (fun k' => post (firstn (length k' - length k) k')).
   Proof.
-    intros H. induction H; from_nil; try solve [econstructor; eauto].
-    - econstructor; eauto. replace (_ - _) with 0%nat by lia. assumption.
-    - eapply exec.if_true; eauto. eapply exec.exec_ext; try eassumption.
-      simpl. intros. f_equal. repeat (rewrite app_length || simpl).
-      replace (_ + _ - _) with (length k') by lia.
-      replace (_ + _ - _) with (length k' + S (length x)) by lia.
-      rewrite List.firstn_app_l; try reflexivity.
-      replace (k' ++ leak_bool true :: x ++ k) with ((k' ++ leak_bool true :: x) ++ k).
-      { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. simpl. lia. }
-      repeat (rewrite <- app_assoc || simpl). reflexivity.
-    - eapply exec.if_false; eauto. eapply exec.exec_ext; try eassumption.
-      simpl. intros. f_equal. repeat (rewrite app_length || simpl).
-      replace (_ + _ - _) with (length k') by lia.
-      replace (_ + _ - _) with (length k' + S (length x)) by lia.
-      rewrite List.firstn_app_l; try reflexivity.
-      replace (k' ++ leak_bool false :: x ++ k) with ((k' ++ leak_bool false :: x) ++ k).
-      { rewrite List.firstn_app_l; try reflexivity. rewrite app_length. simpl. lia. }
-      repeat (rewrite <- app_assoc || simpl). reflexivity.
+    intros H. induction H; intros; from_nil.
+    - econstructor. replace _ with 0%nat by lia. assumption.
+    - econstructor; eauto. rewrite app_length. replace _ with (length x0) by lia.
+      rewrite List.firstn_app_l by reflexivity. assumption.
+    - econstructor; eauto. replace _ with 0%nat by lia. assumption.
+    - econstructor; eauto. repeat cbn [length] || rewrite app_length.
+      replace _ with (S (length x + length x0)) by lia. simpl.
+      rewrite firstn_app_2. rewrite List.firstn_app_l by reflexivity. assumption.
+    - econstructor; eauto. replace _ with 0%nat by lia. simpl in *. intros. eauto.
+    - eapply exec.if_true; eauto. eapply exec.exec_ext.
+      + eapply exec.weaken.
+        -- eapply exec.exec_extends_trace; eauto.
+        -- simpl. intros. fwd. repeat (rewrite app_length in * || cbn [length] in * ).
+           replace _ with (length k'') in Hp0 by lia.
+           replace _ with (length k'' + S (length x)) by lia.
+           rewrite firstn_app_2. simpl. rewrite List.firstn_app_l in * by reflexivity.
+           assumption.
+      + simpl. intros. repeat (rewrite app_length in * || cbn [length] in * ).
+        replace _ with (length k') by lia. rewrite List.firstn_app_l by reflexivity.
+        replace _ with (length k' + S (length x)) by lia.
+        rewrite firstn_app_2. simpl. rewrite List.firstn_app_l in * by reflexivity.
+        reflexivity.
+    - eapply exec.if_false; eauto. eapply exec.exec_ext.
+      + eapply exec.weaken.
+        -- eapply exec.exec_extends_trace; eauto.
+        -- simpl. intros. fwd. repeat (rewrite app_length in * || cbn [length] in * ).
+           replace _ with (length k'') in Hp0 by lia.
+           replace _ with (length k'' + S (length x)) by lia.
+           rewrite firstn_app_2. simpl. rewrite List.firstn_app_l in * by reflexivity.
+           assumption.
+      + simpl. intros. repeat (rewrite app_length in * || cbn [length] in * ).
+        replace _ with (length k') by lia. rewrite List.firstn_app_l by reflexivity.
+        replace _ with (length k' + S (length x)) by lia.
+        rewrite firstn_app_2. simpl. rewrite List.firstn_app_l in * by reflexivity.
+        reflexivity.
     - econstructor.
-      + eapply exec.exec_extends_trace. eassumption.
-      + simpl. intros. fwd. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
-        repeat rewrite app_length.
-        replace _ with (length k') by lia.
-        replace (_ + _ - _) with (length k'') by lia.
-        replace (_ + _ - _) with (length k' + length k'') by lia.
-        rewrite firstn_app_2. repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+      + eapply exec.exec_extends_trace. eauto.
+      + simpl. intros. fwd. eapply exec.exec_ext.
+        -- eapply exec.weaken.
+           ++ eapply exec.exec_extends_trace; eauto.
+           ++ simpl. intros. fwd. repeat (rewrite app_length in * || cbn [length] in * ).
+              replace _ with (length k''0) in H2p1 by lia.
+              replace (_ + _ - _) with (length k'') in H2p1 by lia.
+              replace _ with (length k''0 + length k'') by lia.
+              rewrite firstn_app_2. repeat rewrite List.firstn_app_l in * by reflexivity.
+              assumption.
+        -- simpl. intros. repeat rewrite app_length.
+           replace _ with (length k') by lia. rewrite List.firstn_app_l by reflexivity.
+           replace _ with (length k'') by lia. rewrite List.firstn_app_l by reflexivity.
+           replace _ with (length k' + length k'') by lia.
+           rewrite firstn_app_2. rewrite List.firstn_app_l by reflexivity.
+           reflexivity.
+    - eapply exec.while_false; eauto. repeat (rewrite app_length in * || cbn [length] in * ).
+      replace _ with (S (length x)) by lia.
+      simpl. rewrite List.firstn_app_l by reflexivity. assumption.
     - eapply exec.while_true; [eauto | eauto | eauto | ..].
       + eapply exec.exec_extends_trace. eapply exec.exec_ext; eauto.
         simpl. intros. f_equal. repeat rewrite app_length || simpl.
@@ -1161,37 +1193,57 @@ Module twoexecs. Section WithEnv.
         replace (_ + _ - _) with (length k' + S (length x)) by lia.
         rewrite firstn_app_2. simpl.
         repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
-      + simpl. intros. fwd. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
-        repeat rewrite app_length || simpl.
-        replace _ with (length k') by lia.
-        replace (_ + _ - _) with (length k''0 + S (length x)) by lia.
-        replace (_ + _ - _) with (length k' + (length k''0 + S (length x))) by lia.
-        repeat rewrite firstn_app_2 || simpl.
-        repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+      + simpl. intros. fwd. eapply exec.exec_ext.
+        -- eapply exec.weaken.
+           ++ eapply exec.exec_extends_trace. eauto.
+           ++ simpl. intros. fwd. repeat rewrite app_length in * || cbn [length] in *.
+              replace _ with (length k'') in Hp1 by lia.
+              replace (_ + _ - _) with (length k''0) in Hp1 by lia.
+              replace _ with (length k'' + (length k''0 + S (length x))) by lia.
+              repeat rewrite firstn_app_2. simpl.
+              repeat rewrite List.firstn_app_l in * by reflexivity. assumption.
+        -- simpl. intros. repeat rewrite app_length || cbn [length].
+           replace _ with (length k') by lia. rewrite List.firstn_app_l by reflexivity.
+           replace _ with (length k''0) by lia. rewrite List.firstn_app_l by reflexivity.
+           replace _ with (length k' + (length k''0 + S (length x))) by lia.
+           repeat rewrite firstn_app_2. simpl.
+           repeat rewrite List.firstn_app_l in * by reflexivity. reflexivity.
     - apply call_args_to_other_trace in H0. fwd. econstructor; eauto.
-      rewrite app_nil_r in *. eapply exec.exec_ext; eauto. simpl. intros. f_equal.
-      repeat rewrite app_length || simpl.
-      replace _ with (length k') by lia.
-      replace (_ + _ - _) with (length k' + S (length k'')) by lia.
-      rewrite firstn_app_2. simpl.
-      repeat rewrite List.firstn_app_l by reflexivity. reflexivity.
+      + eapply exec.exec_ext.
+        -- eapply exec.exec_extends_trace; eauto.
+        -- simpl. intros. repeat rewrite app_length || cbn [length].
+           replace _ with (length k') by lia. rewrite List.firstn_app_l by reflexivity.
+           replace _ with (length k' + (S (length k''))) by lia.
+           rewrite firstn_app_2. simpl. rewrite List.firstn_app_l by reflexivity.
+           rewrite app_nil_r. reflexivity.
+      + simpl. intros. fwd. repeat rewrite app_length in * || cbn [length] in *.
+        replace _ with (length k''1) in H0p0 by lia.
+        replace _ with (length k''1 + S (length k'')) by lia.
+        rewrite firstn_app_2. simpl. rewrite List.firstn_app_l in * by reflexivity.
+        apply H3 in H0p0. fwd. eexists. intuition eauto. eexists. intuition eauto.
+        rewrite app_nil_r in *. assumption.
     - apply call_args_to_other_trace in H0. fwd. rewrite app_nil_r in *.
-      econstructor; eauto.
+      econstructor; eauto. repeat rewrite app_length || cbn [length].
+      replace _ with (S (length k'')) by lia. simpl.
+      rewrite List.firstn_app_l by reflexivity. assumption.
   Qed.
-     
-  Lemma local_equiv_global s k t m l mc post :
-    (forall pick_sp, otherexec e pick_sp s k t m l mc post) <->
-      (forall pick_sp, exec e (pick_sp := pick_sp) s k t m l mc post).
+
+  (*could write this in other ways (without firstn), but not clear that that would be any nicer*)
+  Lemma local_equiv_global s t m l mc post :
+    (forall pick_sp, otherexec e pick_sp s t m l mc post) <->
+    (forall k pick_sp, exec e (pick_sp := pick_sp) s k t m l mc (fun k' => post (firstn (length k' - length k) k'))).
   Proof.
-    split; intros H pick_sp.
-    - eapply exec.exec_ext with (pick_sp1 := _).
-      + eapply local_to_global. eauto.
+    split.
+    - intros H k pick_sp. eapply exec.exec_ext with (pick_sp1 := _).
+      + Check local_to_global. eapply local_to_global. eauto.
       + instantiate (1 := fun k' => (pick_sp (k' ++ k))). intros. simpl.
         rewrite app_length. replace (_ + _ - _) with (length k') by lia.
         rewrite List.firstn_app_l by reflexivity. reflexivity.
-    - eapply otherexec.exec_ext.
-      + eapply global_to_local. eauto.
-      + instantiate (1 := fun k' => pick_sp (firstn (length k' - length k) k')).
-        intros. simpl. rewrite app_length. replace (_ + _ - _) with (length k') by lia.
-        rewrite List.firstn_app_l by reflexivity. reflexivity.
+    - intros H pick_sp. specialize (H nil). eapply otherexec.exec_ext.
+      + eapply otherexec.weaken.
+        -- eapply global_to_local. eauto.
+        -- simpl. intros. rewrite app_nil_r in H0.
+           replace _ with (length k') in H0 by lia. Search (firstn (length _) _).
+           rewrite firstn_all in H0. assumption.
+      + intros. simpl. rewrite app_nil_r. reflexivity.
   Qed.
