@@ -192,7 +192,7 @@ Section Spilling.
     : trace * word.
     refine (
         match tup as x return tup = x -> _ with
-        | (s, k, sk_so_far, (*fpval,*) f) =>
+        | (s, k, sk_so_far, fpval, f) =>
             let fpval := pick_sp (rev sk_so_far) in
             fun _ =>
               match s as x return s = x -> _ with
@@ -1528,7 +1528,7 @@ Section Spilling.
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
     forall (k1 : trace) (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
            (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop) pick_sp1,
-      exec (pick_sp := pick_sp1) e1 s1 k1 t1 m1 l1 mc1 post ->
+      otherexec e1 pick_sp1 s1 k1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),

@@ -325,12 +325,12 @@ Module exec.
       end.
 
     (* alternative semantics which allow non-determinism *)
-    Inductive exec {pick_sp: PickSp} :
-      stmt varname ->
-      trace -> io_trace -> mem -> locals -> metrics ->
+    Inductive exec :
+      (trace -> word) -> stmt varname ->
+      io_trace -> mem -> locals -> metrics ->
       (trace -> io_trace -> mem -> locals -> metrics -> Prop)
     -> Prop :=
-    | interact: forall k t m mKeep mGive l mc action argvars argvals resvars outcome post,
+    | interact: forall pick_sp t m mKeep mGive l mc action argvars argvals resvars outcome post,
         map.split m mKeep mGive ->
         map.getmany_of_list l argvars = Some argvals ->
         ext_spec t mGive action argvals outcome ->
@@ -338,100 +338,100 @@ Module exec.
             outcome mReceive resvals klist ->
             exists l', map.putmany_of_list_zip resvars resvals l = Some l' /\
             forall m', map.split m' mKeep mReceive ->
-            post (leak_list klist :: k) (((mGive, action, argvals), (mReceive, resvals)) :: t) m' l'
+            post (leak_list klist :: nil) (((mGive, action, argvals), (mReceive, resvals)) :: t) m' l'
                  (addMetricInstructions 1
                  (addMetricStores 1
                  (addMetricLoads 2 mc)))) ->
-        exec (SInteract resvars action argvars) k t m l mc post
-    | call: forall k t m l mc binds fname args params rets fbody argvs st0 post outcome,
+        exec pick_sp (SInteract resvars action argvars) t m l mc post
+    | call: forall pick_sp t m l mc binds fname args params rets fbody argvs st0 post outcome,
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st0 ->
-        exec fbody (leak_unit :: k) t m st0 (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc)))) outcome ->
+        exec (fun k => pick_sp (k ++ [leak_unit])) fbody t m st0 (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc)))) outcome ->
         (forall k' t' m' mc' st1,
             outcome k' t' m' st1 mc' ->
             exists retvs l',
               map.getmany_of_list st1 rets = Some retvs /\
               map.putmany_of_list_zip binds retvs l = Some l' /\
               post k' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
-        exec (SCall binds fname args) k t m l mc post
+        exec pick_sp (SCall binds fname args) t m l mc post
         (* TODO think about a non-fixed bound on the cost of function preamble and postamble *)
-    | load: forall k t m l mc sz x a o v addr post,
+    | load: forall pick_sp t m l mc sz x a o v addr post,
         map.get l a = Some addr ->
         load sz m (word.add addr (word.of_Z o)) = Some v ->
-        post (leak_word (word.add addr (word.of_Z o)) :: k) t m (map.put l x v)
+        post [leak_word (word.add addr (word.of_Z o))] t m (map.put l x v)
              (addMetricLoads 2
              (addMetricInstructions 1 mc)) ->
-        exec (SLoad sz x a o) k t m l mc post
-    | store: forall k t m m' mc l sz a o addr v val post,
+        exec pick_sp (SLoad sz x a o) t m l mc post
+    | store: forall pick_sp t m m' mc l sz a o addr v val post,
         map.get l a = Some addr ->
         map.get l v = Some val ->
         store sz m (word.add addr (word.of_Z o)) val = Some m' ->
-        post (leak_word (word.add addr (word.of_Z o)) :: k) t m' l
+        post [leak_word (word.add addr (word.of_Z o))] t m' l
              (addMetricLoads 1
              (addMetricInstructions 1
              (addMetricStores 1 mc))) ->
-        exec (SStore sz a v o) k t m l mc post
-    | inlinetable: forall sz x table i v index k t m l mc post,
+        exec pick_sp (SStore sz a v o) t m l mc post
+    | inlinetable: forall pick_sp sz x table i v index t m l mc post,
         (* compiled riscv code uses x as a tmp register and this shouldn't overwrite i *)
         x <> i ->
         map.get l i = Some index ->
         load sz (map.of_list_word table) index = Some v ->
-        post (leak_word index :: k) t m (map.put l x v)
+        post [leak_word index] t m (map.put l x v)
              (addMetricLoads 4
              (addMetricInstructions 3
              (addMetricJumps 1 mc))) ->
-        exec (SInlinetable sz x table i) k t m l mc post
-    | stackalloc: forall k t mSmall l mc x n body post,
+        exec pick_sp (SInlinetable sz x table i) t m l mc post
+    | stackalloc: forall pick_sp t mSmall l mc x n body post,
         n mod (bytes_per_word width) = 0 ->
         (forall mStack mCombined,
-            let a := pick_sp k in
+            let a := pick_sp nil in
             anybytes a n mStack ->
             map.split mCombined mSmall mStack ->
-            exec body k t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
+            exec pick_sp body t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
               (fun k' t' mCombined' l' mc' =>
                  exists mSmall' mStack',
                    anybytes a n mStack' /\
                      map.split mCombined' mSmall' mStack' /\
                      post k' t' mSmall' l' mc')) ->
-        exec (SStackalloc x n body) k t mSmall l mc post
-    | lit: forall k t m l mc x v post,
-        post k t m (map.put l x (word.of_Z v))
+        exec pick_sp (SStackalloc x n body) t mSmall l mc post
+    | lit: forall pick_sp t m l mc x v post,
+        post nil t m (map.put l x (word.of_Z v))
              (addMetricLoads 8
              (addMetricInstructions 8 mc)) ->
-        exec (SLit x v) k t m l mc post
-    | op: forall k t m l mc x op y y' z z' post,
+        exec pick_sp (SLit x v) t m l mc post
+    | op: forall pick_sp t m l mc x op y y' z z' post,
         map.get l y = Some y' ->
         lookup_op_locals l z = Some z' ->
-        post (leak_binop op y' z' ++ k) t m (map.put l x (interp_binop op y' z'))
+        post (leak_binop op y' z') t m (map.put l x (interp_binop op y' z'))
              (addMetricLoads 2
              (addMetricInstructions 2 mc)) ->
-        exec (SOp x op y z) k t m l mc post
-    | set: forall k t m l mc x y y' post,
+        exec pick_sp (SOp x op y z) t m l mc post
+    | set: forall pick_sp t m l mc x y y' post,
         map.get l y = Some y' ->
-        post k t m (map.put l x y')
+        post nil t m (map.put l x y')
              (addMetricLoads 1
              (addMetricInstructions 1 mc)) ->
-        exec (SSet x y) k t m l mc post
-    | if_true: forall k t m l mc cond bThen bElse post,
+        exec pick_sp (SSet x y) t m l mc post
+    | if_true: forall pick_sp t m l mc cond bThen bElse post,
         eval_bcond l cond = Some true ->
-        exec bThen (leak_bool true :: k) t m l
+        exec (fun k => pick_sp (k ++ [leak_bool true])) bThen t m l
              (addMetricLoads 2
              (addMetricInstructions 2
              (addMetricJumps 1 mc))) post ->
-        exec (SIf cond bThen bElse) k t m l mc post
-    | if_false: forall k t m l mc cond bThen bElse post,
+        exec pick_sp (SIf cond bThen bElse) t m l mc post
+    | if_false: forall pick_sp t m l mc cond bThen bElse post,
         eval_bcond l cond = Some false ->
-        exec bElse (leak_bool false :: k) t m l
+        exec (fun k => pick_sp (k ++ [leak_bool false])) bElse t m l
              (addMetricLoads 2
              (addMetricInstructions 2
              (addMetricJumps 1 mc))) post ->
-        exec (SIf cond bThen bElse) k t m l mc post
-    | loop: forall k t m l mc cond body1 body2 mid1 mid2 post,
+        exec pick_sp (SIf cond bThen bElse) t m l mc post
+    | loop: forall pick_sp t m l mc cond body1 body2 mid1 mid2 post,
         (* This case is carefully crafted in such a way that recursive uses of exec
          only appear under forall and ->, but not under exists, /\, \/, to make sure the
          auto-generated induction principle contains an IH for all recursive uses. *)
-        exec body1 k t m l mc mid1 ->
+        exec pick_sp body1 t m l mc mid1 ->
         (forall k' t' m' l' mc',
             mid1 k' t' m' l' mc' ->
             eval_bcond l' cond <> None) ->
@@ -445,26 +445,27 @@ Module exec.
         (forall k' t' m' l' mc',
             mid1 k' t' m' l' mc' ->
             eval_bcond l' cond = Some true ->
-            exec body2 (leak_bool true :: k') t' m' l' mc' mid2) ->
+            exec (fun k => pick_sp (k ++ leak_bool true :: k')) body2 t' m' l' mc' mid2) ->
         (forall k'' t'' m'' l'' mc'',
             mid2 k'' t'' m'' l'' mc'' ->
-            exec (SLoop body1 cond body2) k'' t'' m'' l''
+            exec (fun k => pick_sp (k ++ k'')) (SLoop body1 cond body2) t'' m'' l''
                  (addMetricLoads 2
                  (addMetricInstructions 2
                  (addMetricJumps 1 mc''))) post) ->
-        exec (SLoop body1 cond body2) k t m l mc post
-    | seq: forall k t m l mc s1 s2 mid post,
-        exec s1 k t m l mc mid ->
-        (forall k' t' m' l' mc', mid k' t' m' l' mc' -> exec s2 k' t' m' l' mc' post) ->
-        exec (SSeq s1 s2) k t m l mc post
-    | skip: forall k t m l mc post,
-        post k t m l mc ->
-        exec SSkip k t m l mc post.
+        exec pick_sp (SLoop body1 cond body2) t m l mc post
+    | seq: forall pick_sp t m l mc s1 s2 mid post,
+        exec pick_sp s1 t m l mc mid ->
+        (forall k' t' m' l' mc', mid k' t' m' l' mc' ->
+                                 exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' post) ->
+        exec pick_sp (SSeq s1 s2) t m l mc post
+    | skip: forall pick_sp t m l mc post,
+        post nil t m l mc ->
+        exec pick_sp SSkip t m l mc post.
 
-    Lemma det_step {pick_sp: PickSp} : forall k0 t0 m0 l0 mc0 s1 s2 k1 t1 m1 l1 mc1 post,
-        exec s1 k0 t0 m0 l0 mc0 (fun k1' t1' m1' l1' mc1' => k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1') ->
-        exec s2 k1 t1 m1 l1 mc1 post ->
-        exec (SSeq s1 s2) k0 t0 m0 l0 mc0 post.
+    Lemma det_step : forall pick_sp t0 m0 l0 mc0 k1 s1 s2 t1 m1 l1 mc1 post,
+        exec pick_sp s1 t0 m0 l0 mc0 (fun k1' t1' m1' l1' mc1' => k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1') ->
+        exec (fun k => pick_sp (k ++ k1)) s2 t1 m1 l1 mc1 post ->
+        exec pick_sp (SSeq s1 s2) t0 m0 l0 mc0 post.
     Proof.
       intros.
       eapply seq; [eassumption|].
@@ -472,37 +473,38 @@ Module exec.
       assumption.
     Qed.
 
-    Lemma seq_cps {pick_sp: PickSp} : forall s1 s2 k t m (l: locals) mc post,
-        exec s1 k t m l mc (fun k' t' m' l' mc' => exec s2 k' t' m' l' mc' post) ->
-        exec (SSeq s1 s2) k t m l mc post.
+    Lemma seq_cps : forall pick_sp s1 s2 t m (l: locals) mc post,
+        exec pick_sp s1 t m l mc (fun k' t' m' l' mc' =>
+                                    exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' post) ->
+        exec pick_sp (SSeq s1 s2) t m l mc post.
     Proof.
       intros. eapply seq. 1: eassumption. simpl. clear. auto.
     Qed.
 
-    Lemma call_cps {pick_sp: PickSp} : forall fname params rets binds args fbody argvs k t (l: locals) m mc st post,
+    Lemma call_cps : forall fname params rets binds args fbody argvs pick_sp t (l: locals) m mc st post,
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st ->
-        exec fbody (leak_unit :: k) t m st (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc))))
+        exec (fun k => pick_sp (k ++ [leak_unit])) fbody t m st (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc))))
              (fun k' t' m' st' mc' =>
                 exists retvs l',
                   map.getmany_of_list st' rets = Some retvs /\
                     map.putmany_of_list_zip binds retvs l = Some l' /\
                     post k' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
-      exec (SCall binds fname args) k t m l mc post.
+      exec pick_sp (SCall binds fname args) t m l mc post.
     Proof.
       intros. eapply call; try eassumption.
       cbv beta. intros *. exact id.
     Qed.
 
-    Lemma loop_cps {pick_sp: PickSp} : forall body1 cond body2 k t m l mc post,
-      exec body1 k t m l mc (fun k t m l mc => exists b,
+    Lemma loop_cps : forall body1 cond body2 pick_sp t m l mc post,
+      exec pick_sp body1 t m l mc (fun k t m l mc => exists b,
         eval_bcond l cond = Some b /\
         (b = false -> post (leak_bool false :: k) t m l (addMetricLoads 1 (addMetricInstructions 1 (addMetricJumps 1 mc)))) /\
-        (b = true -> exec body2 (leak_bool true :: k) t m l mc (fun k t m l mc =>
-           exec (SLoop body1 cond body2) k t m l
+        (b = true -> exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k)) body2 t m l mc (fun k t m l mc =>
+           exec (fun k0 => pick_sp (k0 ++ k)) (SLoop body1 cond body2) t m l
                 (addMetricLoads 2 (addMetricInstructions 2 (addMetricJumps 1 mc))) post))) ->
-      exec (SLoop body1 cond body2) k t m l mc post.
+      exec pick_sp (SLoop body1 cond body2) t m l mc post.
     Proof.
       intros. eapply loop. 1: eapply H. all: cbv beta; intros; simp.
       - congruence.
@@ -511,11 +513,11 @@ Module exec.
       - assumption.
     Qed.
 
-    Lemma weaken {pick_sp: PickSp} : forall s k t m l mc post1,
-        exec s k t m l mc post1 ->
+    Lemma weaken : forall pick_sp s t m l mc post1,
+        exec pick_sp s t m l mc post1 ->
         forall post2,
           (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-          exec s k t m l mc post2.
+          exec pick_sp s t m l mc post2.
     Proof.
       induction 1; intros; try solve [econstructor; eauto].
       - eapply interact; try eassumption.
@@ -534,16 +536,18 @@ Module exec.
         intros. simp. eauto 10.
     Qed.
 
-    Lemma seq_assoc {pick_sp: PickSp} : forall s1 s2 s3 k t m l mc post,
-        exec (SSeq s1 (SSeq s2 s3)) k t m l mc post ->
-        exec (SSeq (SSeq s1 s2) s3) k t m l mc post.
+    Lemma seq_assoc : forall pick_sp s1 s2 s3 t m l mc post,
+        exec pick_sp (SSeq s1 (SSeq s2 s3)) t m l mc post ->
+        exec pick_sp (SSeq (SSeq s1 s2) s3) t m l mc post.
     Proof.
       intros. simp.
       eapply seq_cps.
       eapply seq_cps.
-      eapply weaken. 1: eassumption. intros.
+      eapply weaken.
+      1: eassumption. intros.
       specialize H9 with (1 := H). simp.
       eapply weaken. 1: eassumption. intros.
+o      eapply H11.
       eauto.
     Qed.
 
