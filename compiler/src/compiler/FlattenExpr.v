@@ -857,9 +857,10 @@ Section FlattenExpr1.
          and the expression to avoid issues later. This is a modified version of the
          postcondition offered by IHexec - the metric differences are now between the
          start and end of the loop rather than after the expression execution and the end
-         of the loop *) Search mc.
-      eapply @FlatImp.exec.loop with (mid2 := (fun k' t' m' lL' mcL' => exists lH' mcH',
-        mid k' t' m' lH' mcH' /\
+         of the loop *)
+      eapply @FlatImp.exec.loop with (mid2 := (fun k'0 k'' t' m' lL' mcL' => exists lH' mcH',
+        k'0 = k' /\
+        mid k'' t' m' lH' mcH' /\
         map.extends lL' lH' /\
         map.only_differ l (ExprImp.modVars c) lH' /\
         (mcL' - mcL <= mcH' - mc)%metricsH));
@@ -888,8 +889,9 @@ Section FlattenExpr1.
             { clear IH3 IHexec. rewrite E. rewrite E0. reflexivity. }
             1,3: solve [maps].
             pose proof (ExprImp.modVars_subset_allVars c). maps.
-          * simpl. intros. simp.
-            repeat eexists; repeat (split || eassumption || solve_MetricLog). maps.
+          * intros. reflexivity. }
+        simpl. intros. simp.
+        repeat eexists; repeat (split || eassumption || solve_MetricLog). maps.
             
     - (* call *)
       unfold flattenCall in *. simp.
@@ -909,12 +911,13 @@ Section FlattenExpr1.
           match goal with
           | |- context [fst ?x] => destruct x as [fbody' ngs0] eqn: EF
           end.
-          eapply (IHexec eq_refl).
+          eapply FlatImp.exec.exec_ext.
+          1: eapply (IHexec eq_refl).
           -- eassumption.
           -- clear -locals_ok. maps.
           -- unfold map.undef_on, map.agree_on.
              intros. rewrite map.get_empty.
-             destr (map.get lf k0); [exfalso|reflexivity].
+             destr (map.get lf k); [exfalso|reflexivity].
              eapply freshNameGenState_spec. 2: eassumption.
              pose proof H2 as G.
              unfold map.of_list_zip in G.
@@ -922,6 +925,7 @@ Section FlattenExpr1.
              rewrite map.get_empty in G. destruct G as [G | G]; [|discriminate G]. simp.
              eauto using ListSet.In_list_union_l, ListSet.In_list_union_r, nth_error_In.
           -- eapply freshNameGenState_disjoint_fbody.
+          -- intros. rewrite <- app_assoc. reflexivity.
         * cbv beta. intros. simp.
           edestruct H4 as [resvals ?]. 1: eassumption. simp.
           pose proof (map.putmany_of_list_zip_extends_exists binds resvals) as R.
@@ -931,7 +935,7 @@ Section FlattenExpr1.
           -- eapply map.getmany_of_list_extends; eassumption.
              (* Automation: Why does "eauto using map.getmany_of_list_extends." not work? *)
           -- eassumption.
-          -- do 2 eexists. ssplit; try eassumption.
+          -- do 2 eexists. rewrite <- app_assoc. simpl. ssplit; try eassumption.
              ++ simple eapply map.only_differ_putmany; eassumption.
              ++ solve_MetricLog.
 
@@ -958,11 +962,11 @@ Section FlattenExpr1.
   Qed.
   Goal True. idtac "FlattenExpr: flattenStmt_correct_aux done". Abort.
 
-  Lemma flattenStmt_correct: forall eH eL sH sL lL k t m mc post,
+  Lemma flattenStmt_correct: forall eH eL sH sL lL pick_sp t m mc post,
       flatten_functions eH = Success eL ->
       ExprImp2FlatImp sH = sL ->
-      Semantics.exec eH sH k t m map.empty mc post ->
-      FlatImp.exec eL sL k t m lL mc (fun k' t' m' lL' mcL' => exists lH' mcH',
+      Semantics.otherexec eH pick_sp sH t m map.empty mc post ->
+      FlatImp.exec eL pick_sp sL t m lL mc (fun k' t' m' lL' mcL' => exists lH' mcH',
         post k' t' m' lH' mcH' /\
         map.extends lL' lH' /\
         (mcL' - mc <= mcH' - mc)%metricsH).

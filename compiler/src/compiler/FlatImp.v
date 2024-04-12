@@ -353,7 +353,8 @@ Module exec.
             exists retvs l',
               map.getmany_of_list st1 rets = Some retvs /\
               map.putmany_of_list_zip binds retvs l = Some l' /\
-              post k' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
+                post
+                  (k' ++ [leak_unit]) t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
         exec pick_sp (SCall binds fname args) t m l mc post
         (* TODO think about a non-fixed bound on the cost of function preamble and postamble *)
     | load: forall pick_sp t m l mc sz x a o v addr post,
@@ -445,13 +446,13 @@ Module exec.
         (forall k' t' m' l' mc',
             mid1 k' t' m' l' mc' ->
             eval_bcond l' cond = Some true ->
-            exec (fun k => pick_sp (k ++ leak_bool true :: k')) body2 t' m' l' mc' mid2) ->
-        (forall k'' t'' m'' l'' mc'',
-            mid2 k'' t'' m'' l'' mc'' ->
-            exec (fun k => pick_sp (k ++ k'')) (SLoop body1 cond body2) t'' m'' l''
+            exec (fun k => pick_sp (k ++ leak_bool true :: k')) body2 t' m' l' mc' (fun k'' => mid2 k' k'')) ->
+        (forall k' k'' t'' m'' l'' mc'',
+            mid2 k' k'' t'' m'' l'' mc'' ->
+            exec (fun k => pick_sp (k ++ k'' ++ leak_bool true :: k')) (SLoop body1 cond body2) t'' m'' l''
                  (addMetricLoads 2
                  (addMetricInstructions 2
-                 (addMetricJumps 1 mc''))) (fun k''' => post (k''' ++ k'' ++ [leak_bool true]))) ->
+                 (addMetricJumps 1 mc''))) (fun k''' => post (k''' ++ k'' ++ leak_bool true :: k'))) ->
         exec pick_sp (SLoop body1 cond body2) t m l mc post
     | seq: forall pick_sp t m l mc s1 s2 mid post,
         exec pick_sp s1 t m l mc mid ->
@@ -491,7 +492,7 @@ Module exec.
                 exists retvs l',
                   map.getmany_of_list st' rets = Some retvs /\
                     map.putmany_of_list_zip binds retvs l = Some l' /\
-                    post k' t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
+                    post (k' ++ [leak_unit]) t' m' l' (addMetricInstructions 100 (addMetricJumps 100 (addMetricLoads 100 (addMetricStores 100 mc'))))) ->
       exec pick_sp (SCall binds fname args) t m l mc post.
     Proof.
       intros. eapply call; try eassumption.
@@ -499,18 +500,19 @@ Module exec.
     Qed.
 
     Lemma loop_cps : forall body1 cond body2 pick_sp t m l mc post,
-      exec pick_sp body1 t m l mc (fun k t m l mc => exists b,
+      exec pick_sp body1 t m l mc (fun k1 t m l mc => exists b,
         eval_bcond l cond = Some b /\
-        (b = false -> post (leak_bool false :: k) t m l (addMetricLoads 1 (addMetricInstructions 1 (addMetricJumps 1 mc)))) /\
-        (b = true -> exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k)) body2 t m l mc (fun k t m l mc =>
-           exec (fun k0 => pick_sp (k0 ++ k)) (SLoop body1 cond body2) t m l
-                (addMetricLoads 2 (addMetricInstructions 2 (addMetricJumps 1 mc))) (fun k0 => post (k0 ++ k ++ [leak_bool true]))))) ->
+        (b = false -> post (leak_bool false :: k1) t m l (addMetricLoads 1 (addMetricInstructions 1 (addMetricJumps 1 mc)))) /\
+        (b = true -> exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k1)) body2 t m l mc (fun k2 t m l mc =>
+           exec (fun k0 => pick_sp (k0 ++ k2 ++ leak_bool true :: k1)) (SLoop body1 cond body2) t m l
+                (addMetricLoads 2 (addMetricInstructions 2 (addMetricJumps 1 mc))) (fun k0 => post (k0 ++ k2 ++ leak_bool true :: k1))))) ->
       exec pick_sp (SLoop body1 cond body2) t m l mc post.
     Proof.
       intros. eapply loop. 1: eapply H. all: cbv beta; intros; simp.
       - congruence.
       - replace b with false in * by congruence. clear b. eauto.
-      - replace b with true in * by congruence. clear b. eauto.
+      - replace b with true in * by congruence. clear b.
+        instantiate (1 := fun _ _ => _). simpl. eauto.
       - assumption.
     Qed.
 
@@ -856,7 +858,7 @@ Section FlatImp2.
     - eapply @exec.loop with
           (mid1 := fun k' t' m' l' mc' => mid1 k' t' m' l' mc' /\
                                    map.only_differ l (modVars body1) l')
-          (mid2 := fun k' t' m' l' mc' => mid2 k' t' m' l' mc' /\
+          (mid2 := fun k'0 k' t' m' l' mc' => mid2 k'0 k' t' m' l' mc' /\
                                    map.only_differ l (modVars (SLoop body1 cond body2)) l').
       + eapply exec.intersect; eassumption.
       + intros. simp. eauto.
