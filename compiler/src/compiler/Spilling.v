@@ -734,16 +734,16 @@ Section Spilling.
     unfold spill_tmp. eapply put_arg_reg; eassumption.
   Qed.
 
-  Lemma load_iarg_reg_correct {pick_sp: PickSp} (i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 fpval post frame maxvar v,
+  Lemma load_iarg_reg_correct (i: Z): forall r e2 pick_sp t1 t2 m1 m2 l1 l2 mc2 fpval post frame maxvar v,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
       map.get l1 r = Some v ->
       (forall mc2,
-          let k2' := rev (leak_load_iarg_reg fpval r) ++ k2 in
+          let k2' := rev (leak_load_iarg_reg fpval r) in
           related maxvar frame fpval t1 m1 l1 t2 m2 (map.put l2 (iarg_reg i r) v) ->
           post k2' t2 m2 (map.put l2 (iarg_reg i r) v) mc2) ->
-      exec e2 (load_iarg_reg i r) k2 t2 m2 l2 mc2 post.
+      exec pick_sp e2 (load_iarg_reg i r) t2 m2 l2 mc2 post.
   Proof.
     intros.
     unfold leak_load_iarg_reg, load_iarg_reg, stack_loc, iarg_reg, related in *. fwd.
@@ -781,13 +781,13 @@ Section Spilling.
              end.
   Qed.
 
-  Lemma load_iarg_reg_correct' {pick_sp: PickSp} (i: Z): forall r e2 k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 post frame maxvar v fpval,
+  Lemma load_iarg_reg_correct' (i: Z): forall r e2 pick_sp k1 t1 t2 m1 m2 l1 l2 mc1 mc2 post frame maxvar v fpval,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
       map.get l1 r = Some v ->
       post k1 t1 m1 l1 mc1 ->
-      exec e2 (load_iarg_reg i r) k2 t2 m2 l2 mc2
+      exec e2 pick_sp (load_iarg_reg i r) t2 m2 l2 mc2
         (fun k2' t2' m2' l2' mc2' => exists k1' t1' m1' l1' mc1',
              related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\ post k1' t1' m1' l1' mc1').
   Proof.
@@ -831,13 +831,13 @@ Section Spilling.
      when the new postcondition is used as a "mid1" in exec.loop, and body1 is a seq
      in which this lemma was used, t2, m2, l2, mc2 are introduced after the evar "?mid1"
      is created (i.e. after exec.loop is applied), so they are not in the scope of "?mid1". *)
-  Lemma load_iarg_reg_correct'' {pick_sp: PickSp} (i: Z): forall r e2 k2 t1 t2 m1 m2 l1 l2 mc2 frame maxvar v fpval,
+  Lemma load_iarg_reg_correct'' (i: Z): forall r e2 pick_sp t1 t2 m1 m2 l1 l2 mc2 frame maxvar v fpval,
       i = 1 \/ i = 2 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < r <= maxvar /\ (r < a0 \/ a7 < r) ->
       map.get l1 r = Some v ->
-      exec e2 (load_iarg_reg i r) k2 t2 m2 l2 mc2 (fun k2' t2' m2' l2' mc2' =>
-      k2' = rev (leak_load_iarg_reg fpval r) ++ k2
+      exec pick_sp e2 (load_iarg_reg i r) t2 m2 l2 mc2 (fun k2' t2' m2' l2' mc2' =>
+      k2' = rev (leak_load_iarg_reg fpval r)
       /\ m2' = m2 /\ l2' = map.put l2 (iarg_reg i r) v /\
         related maxvar frame fpval t1 m1 l1 t2' m2' l2').
   Proof.
@@ -880,11 +880,11 @@ Section Spilling.
      `related` does not hold: the result is already in l1 and lStack, but not yet in stackwords.
      So we request the `related` that held *before* SOp, i.e. the one where the result is not
      yet in l1 and l2. *)
-  Lemma save_ires_reg_correct {pick_sp: PickSp} : forall e k1 k2 t1 t2 m1 m2 l1 l2 mc1 mc2 x v maxvar frame post fpval,
+  Lemma save_ires_reg_correct : forall e k1 pick_sp t1 t2 m1 m2 l1 l2 mc1 mc2 x v maxvar frame post fpval,
       post k1 t1 m1 (map.put l1 x v) mc1 ->
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
-      exec e (save_ires_reg x) k2 t2 m2 (map.put l2 (ires_reg x) v) mc2
+      exec e pick_sp (save_ires_reg x) t2 m2 (map.put l2 (ires_reg x) v) mc2
         (fun k2' t2' m2' l2' mc2' => exists k1' t1' m1' l1' mc1',
                 related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\ post k1' t1' m1' l1' mc1').
   Proof.
@@ -978,14 +978,14 @@ Section Spilling.
      `related` does not hold: the result is already in l1 and lStack, but not yet in stackwords.
      So we request the `related` that held *before* SOp, i.e. the one where the result is not
      yet in l1 and l2. *)
-  Lemma save_ires_reg_correct'' {pick_sp: PickSp} : forall e k2 t1 t2 m1 m2 l1 l2 mc2 x v maxvar frame post fpval,
+  Lemma save_ires_reg_correct'' : forall e pick_sp t1 t2 m1 m2 l1 l2 mc2 x v maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       fp < x <= maxvar /\ (x < a0 \/ a7 < x) ->
       (forall t2' m2' l2' mc2',
-          let k2' := rev (leak_save_ires_reg fpval x) ++ k2 in
+          let k2' := rev (leak_save_ires_reg fpval x) in
           related maxvar frame fpval t1 m1 (map.put l1 x v) t2' m2' l2' ->
           post k2' t2' m2' l2' mc2') ->
-      exec e (save_ires_reg x) k2 t2 m2 (map.put l2 (ires_reg x) v) mc2 post.
+      exec e pick_sp (save_ires_reg x) t2 m2 (map.put l2 (ires_reg x) v) mc2 post.
   Proof.
     intros.
     unfold leak_save_ires_reg, save_ires_reg, stack_loc, ires_reg, related in *. fwd.
@@ -1118,8 +1118,8 @@ Section Spilling.
     intros. apply H. eapply hide_ll_arg_reg_ptsto_core; eassumption.
   Qed.
 
-  Lemma set_vars_to_reg_range_correct {pick_sp: PickSp} :
-    forall args start argvs e k2 t1 t2 m1 m2 l1 l1' l2 mc2 maxvar frame post fpval,
+  Lemma set_vars_to_reg_range_correct :
+    forall args start argvs e pick_sp t1 t2 m1 m2 l1 l1' l2 mc2 maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       map.putmany_of_list_zip args argvs l1 = Some l1' ->
       map.getmany_of_list l2 (List.unfoldn (Z.add 1) (List.length args) start) = Some argvs ->
@@ -1128,10 +1128,10 @@ Section Spilling.
       start + Z.of_nat (List.length args) <= a7 + 1 ->
       Forall (fun x => fp < x <= maxvar /\ (x < a0 \/ a7 < x)) args ->
       (forall t2' m2' l2' mc2',
-          let k2' := rev (leak_set_vars_to_reg_range fpval args) ++ k2 in
+          let k2' := rev (leak_set_vars_to_reg_range fpval args) in
           related maxvar frame fpval t1 m1 l1' t2' m2' l2' ->
           post k2' t2' m2' l2' mc2') ->
-      exec e (set_vars_to_reg_range args start) k2 t2 m2 l2 mc2 post.
+      exec e pick_sp (set_vars_to_reg_range args start) t2 m2 l2 mc2 post.
   Proof.
     induction args; intros.
     - simpl. eapply exec.skip. fwd. eauto.
@@ -1176,6 +1176,7 @@ Section Spilling.
           eapply map.getmany_of_list_put_diff. 2: eassumption.
           eapply List.not_In_Z_seq. blia.
         }
+        2: { intros. rewrite app_nil_r. subst k2'. eauto. }
         unfold related. eexists lStack, (map.put lRegs a v), _.
         ssplit.
         { reflexivity. }
@@ -1196,8 +1197,8 @@ Section Spilling.
         { assumption. }
   Qed.
 
-  Lemma set_reg_range_to_vars_correct {pick_sp: PickSp} :
-    forall args argvs start e k2 t1 t2 m1 m2 l1 l2 mc2 maxvar frame post fpval,
+  Lemma set_reg_range_to_vars_correct :
+    forall args argvs start e pick_sp t1 t2 m1 m2 l1 l2 mc2 maxvar frame post fpval,
       related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
       (List.length args <= 8)%nat ->
       a0 <= start ->
@@ -1205,11 +1206,11 @@ Section Spilling.
       Forall (fun x => fp < x <= maxvar /\ (x < a0 \/ a7 < x)) args ->
       map.getmany_of_list l1 args = Some argvs ->
       (forall t2' l2' mc2',
-          let k2' := rev (leak_set_reg_range_to_vars fpval args) ++ k2 in
+          let k2' := rev (leak_set_reg_range_to_vars fpval args) in
           related maxvar frame fpval t1 m1 l1 t2' m2 l2' ->
           map.getmany_of_list l2' (List.unfoldn (Z.add 1) (List.length args) start) = Some argvs ->
           post k2' t2' m2 l2' mc2') ->
-      exec e (set_reg_range_to_vars start args) k2 t2 m2 l2 mc2 post.
+      exec e pick_sp (set_reg_range_to_vars start args) t2 m2 l2 mc2 post.
   Proof.
     induction args; intros.
     - simpl. eapply exec.skip. eapply H5. 1: eassumption. simpl.
@@ -1237,8 +1238,7 @@ Section Spilling.
           eapply map.get_split_r. 1,3: eassumption.
           destr (map.get mp a); [exfalso|reflexivity].
           specialize H3p1 with (1 := E0). blia.
-        * rewrite rev_app_distr in H5. rewrite <- List.app_assoc in H5. cbn [rev List.app] in H5.
-          eapply H5.
+        * rewrite rev_app_distr in H5. eapply H5.
           -- unfold related.
              repeat match goal with
                     | |- exists _, _ => eexists
