@@ -418,14 +418,14 @@ Module exec.
         exec (fun k => pick_sp (k ++ [leak_bool true])) bThen t m l
              (addMetricLoads 2
              (addMetricInstructions 2
-             (addMetricJumps 1 mc))) post ->
+             (addMetricJumps 1 mc))) (fun k'' => post (k'' ++ [leak_bool true])) ->
         exec pick_sp (SIf cond bThen bElse) t m l mc post
     | if_false: forall pick_sp t m l mc cond bThen bElse post,
         eval_bcond l cond = Some false ->
         exec (fun k => pick_sp (k ++ [leak_bool false])) bElse t m l
              (addMetricLoads 2
              (addMetricInstructions 2
-             (addMetricJumps 1 mc))) post ->
+             (addMetricJumps 1 mc))) (fun k'' => post (k'' ++ [leak_bool false])) ->
         exec pick_sp (SIf cond bThen bElse) t m l mc post
     | loop: forall pick_sp t m l mc cond body1 body2 mid1 mid2 post,
         (* This case is carefully crafted in such a way that recursive uses of exec
@@ -451,12 +451,12 @@ Module exec.
             exec (fun k => pick_sp (k ++ k'')) (SLoop body1 cond body2) t'' m'' l''
                  (addMetricLoads 2
                  (addMetricInstructions 2
-                 (addMetricJumps 1 mc''))) post) ->
+                 (addMetricJumps 1 mc''))) (fun k''' => post (k''' ++ k'' ++ [leak_bool true]))) ->
         exec pick_sp (SLoop body1 cond body2) t m l mc post
     | seq: forall pick_sp t m l mc s1 s2 mid post,
         exec pick_sp s1 t m l mc mid ->
         (forall k' t' m' l' mc', mid k' t' m' l' mc' ->
-                                 exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' post) ->
+                                 exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' (fun k'' => post (k'' ++ k'))) ->
         exec pick_sp (SSeq s1 s2) t m l mc post
     | skip: forall pick_sp t m l mc post,
         post nil t m l mc ->
@@ -464,7 +464,7 @@ Module exec.
 
     Lemma det_step : forall pick_sp t0 m0 l0 mc0 k1 s1 s2 t1 m1 l1 mc1 post,
         exec pick_sp s1 t0 m0 l0 mc0 (fun k1' t1' m1' l1' mc1' => k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1') ->
-        exec (fun k => pick_sp (k ++ k1)) s2 t1 m1 l1 mc1 post ->
+        exec (fun k => pick_sp (k ++ k1)) s2 t1 m1 l1 mc1 (fun k'' => post (k'' ++ k1)) ->
         exec pick_sp (SSeq s1 s2) t0 m0 l0 mc0 post.
     Proof.
       intros.
@@ -474,8 +474,9 @@ Module exec.
     Qed.
 
     Lemma seq_cps : forall pick_sp s1 s2 t m (l: locals) mc post,
-        exec pick_sp s1 t m l mc (fun k' t' m' l' mc' =>
-                                    exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' post) ->
+        exec pick_sp s1 t m l mc
+          (fun k' t' m' l' mc' =>
+             exec (fun k => pick_sp (k ++ k')) s2 t' m' l' mc' (fun k'' => post (k'' ++ k'))) ->
         exec pick_sp (SSeq s1 s2) t m l mc post.
     Proof.
       intros. eapply seq. 1: eassumption. simpl. clear. auto.
@@ -503,7 +504,7 @@ Module exec.
         (b = false -> post (leak_bool false :: k) t m l (addMetricLoads 1 (addMetricInstructions 1 (addMetricJumps 1 mc)))) /\
         (b = true -> exec (fun k0 => pick_sp (k0 ++ leak_bool true :: k)) body2 t m l mc (fun k t m l mc =>
            exec (fun k0 => pick_sp (k0 ++ k)) (SLoop body1 cond body2) t m l
-                (addMetricLoads 2 (addMetricInstructions 2 (addMetricJumps 1 mc))) post))) ->
+                (addMetricLoads 2 (addMetricInstructions 2 (addMetricJumps 1 mc))) (fun k0 => post (k0 ++ k ++ [leak_bool true]))))) ->
       exec pick_sp (SLoop body1 cond body2) t m l mc post.
     Proof.
       intros. eapply loop. 1: eapply H. all: cbv beta; intros; simp.
@@ -536,6 +537,18 @@ Module exec.
         intros. simp. eauto 10.
     Qed.
 
+    Lemma exec_ext pick_sp1 s t m l mc post :
+      exec pick_sp1 s t m l mc post ->
+      forall pick_sp2,
+        (forall k, pick_sp1 k = pick_sp2 k) ->
+        exec pick_sp2 s t m l mc post.
+    Proof.
+      intros H1. induction H1; intros; try solve [econstructor; eauto].
+      econstructor; eauto. intros. replace (pick_sp nil) with (pick_sp2 nil) in *.
+      { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
+      symmetry. apply H2.
+    Qed.
+
     Lemma seq_assoc : forall pick_sp s1 s2 s3 t m l mc post,
         exec pick_sp (SSeq s1 (SSeq s2 s3)) t m l mc post ->
         exec pick_sp (SSeq (SSeq s1 s2) s3) t m l mc post.
@@ -547,14 +560,28 @@ Module exec.
       1: eassumption. intros.
       specialize H9 with (1 := H). simp.
       eapply weaken. 1: eassumption. intros.
-o      eapply H11.
-      eauto.
+      eapply exec_ext.
+      { eapply weaken. 1: eapply H11. 1: eassumption. simpl. intros.
+        rewrite <- app_assoc in *. assumption. }
+      simpl. intros. rewrite <- app_assoc. reflexivity.
     Qed.
 
-    Lemma seq_assoc_bw {pick_sp: PickSp} : forall s1 s2 s3 k t m l mc post,
-        exec (SSeq (SSeq s1 s2) s3) k t m l mc post ->
-        exec (SSeq s1 (SSeq s2 s3)) k t m l mc post.
-    Proof. intros. simp. eauto 10 using seq. Qed.
+    Lemma seq_assoc_bw : forall pick_sp s1 s2 s3 t m l mc post,
+        exec pick_sp (SSeq (SSeq s1 s2) s3) t m l mc post ->
+        exec pick_sp (SSeq s1 (SSeq s2 s3)) t m l mc post.
+    Proof.
+      intros. simp.
+      eapply seq_cps.
+      eapply weaken.
+      1: eassumption. intros.
+      eapply seq_cps.
+      specialize H10 with (1 := H).
+      eapply weaken. 1: eassumption. intros.
+      eapply exec_ext.
+      { simpl in H0. eapply weaken; eauto. simpl. intros.
+        rewrite <- app_assoc. assumption. }
+      simpl. intros. rewrite <- app_assoc. reflexivity.
+    Qed.
 
     Ltac equalities :=
       repeat match goal with
@@ -564,11 +591,11 @@ o      eapply H11.
              end;
       simp.
 
-    Lemma intersect {pick_sp: PickSp} : forall k t l m mc s post1,
-        exec s k t m l mc post1 ->
+    Lemma intersect : forall pick_sp t l m mc s post1,
+        exec pick_sp s t m l mc post1 ->
         forall post2,
-          exec s k t m l mc post2 ->
-          exec s k t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
+          exec pick_sp s t m l mc post2 ->
+          exec pick_sp s t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
     Proof.
       induction 1; intros;
         match goal with
@@ -633,7 +660,7 @@ o      eapply H11.
 
       - (* SSeq *)
         pose proof IHexec as IH1.
-        specialize IH1 with (1 := H5).
+        specialize IH1 with (1 := H6).
         eapply @seq; [exact IH1|].
         intros; simpl in *.
         destruct H2.
@@ -642,7 +669,7 @@ o      eapply H11.
 
     Check exec.
 
-    Lemma exec_extends_trace {pick_sp: PickSp} s k t m l mc post :
+    (*Lemma exec_extends_trace {pick_sp: PickSp} s k t m l mc post :
       exec s k t m l mc post ->
       exec s k t m l mc (fun k' t' m' l' mc' => post k' t' m' l' mc' /\ exists k'', k' = k'' ++ k).
     Proof.
@@ -701,7 +728,7 @@ o      eapply H11.
         repeat (rewrite app_assoc || rewrite (app_one_l _ (_ ++ k))). auto.
       - econstructor. 1: eapply exec_extends_trace; eauto. simpl. intros. fwd.
         eapply H0; eauto. intros. repeat rewrite app_assoc. apply H2.      
-    Qed.
+    Qed.*)
   
     Local Ltac solve_picksps_equal :=
       intros; cbv beta; f_equal;
@@ -712,7 +739,7 @@ o      eapply H11.
       repeat (rewrite rev_app_distr || cbn [rev app] || rewrite rev_involutive);
       repeat rewrite <- app_assoc; reflexivity.
 
-    Lemma exec_to_other_trace (pick_sp: PickSp) s k1 k2 t m l mc post :
+    (*Lemma exec_to_other_trace (pick_sp: PickSp) s k1 k2 t m l mc post :
       exec s k1 t m l mc post ->
       exec (pick_sp := fun k => pick_sp (rev (skipn (length k2) (rev k)) ++ k1))
         s k2 t m l mc (fun k2' t' m' l' mc' =>
@@ -769,7 +796,7 @@ o      eapply H11.
         simpl. intros. fwd. eexists. split; [trace_alignment|].
         rewrite app_nil_r. repeat rewrite <- app_assoc. auto.
       - econstructor. eexists. split; [trace_alignment|]. assumption.
-    Qed.
+    Qed.*)
   End FlatImpExec.
 End exec.
 Notation exec := exec.exec.
@@ -789,13 +816,13 @@ Section FlatImp2.
           {ext_spec_ok: ext_spec.ok ext_spec}.
 
   Definition SimState: Type := trace * io_trace * mem * locals * MetricLog.
-  Definition SimExec(e: env)(c: stmt varname): SimState -> (SimState -> Prop) -> Prop :=
-    fun '(k, t, m, l, mc) post =>
-      exec e c k t m l mc (fun k' t' m' l' mc' => post (k', t', m', l', mc')).
+  Definition SimExec(e: env)(pick_sp: PickSp)(c: stmt varname): SimState -> (SimState -> Prop) -> Prop :=
+    fun '(_, t, m, l, mc) post =>
+      exec e pick_sp c t m l mc (fun k' t' m' l' mc' => post (k', t', m', l', mc')).
 
-  Lemma modVarsSound: forall e s initialK initialT (initialSt: locals) initialM (initialMc: MetricLog) post,
-      exec e s initialK initialT initialM initialSt initialMc post ->
-      exec e s initialK initialT initialM initialSt initialMc
+  Lemma modVarsSound: forall e s initialT (initialSt: locals) initialM (initialMc: MetricLog) post,
+      exec e pick_sp s initialT initialM initialSt initialMc post ->
+      exec e pick_sp s initialT initialM initialSt initialMc
            (fun finalK finalT finalM finalSt _ => map.only_differ initialSt (modVars s) finalSt).
   Proof.
     induction 1;

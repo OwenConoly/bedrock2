@@ -16,6 +16,7 @@ Import Semantics.
 (*Local Set Ltac Profiling.*)
 
 Open Scope Z_scope.
+Notation exec := otherexec.
 
 Section ExprImp1.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
@@ -28,8 +29,8 @@ Section ExprImp1.
   Notation vars := (var -> Prop).
 
   Definition SimState: Type := trace * io_trace * mem * locals * bedrock2.MetricLogging.MetricLog.
-  Definition SimExec(e: env)(c: cmd): SimState -> (SimState -> Prop) -> Prop :=
-    fun '(k, t, m, l, mc) post => exec e c k t m l mc
+  Definition SimExec(e: env)(pick_sp: _)(c: cmd): SimState -> (SimState -> Prop) -> Prop :=
+    fun '(_, t, m, l, mc) post => exec e pick_sp c t m l mc
                                     (fun k' t' m' l' mc' => post (k', t', m', l', mc')).
 
   (*Hypothesis String.string_empty: String.string = Empty_set.*)
@@ -412,19 +413,19 @@ Section ExprImp2.
       try solve [state_calc | refine (map.only_differ_putmany _ _ _ _ _); eassumption].
   Qed.
 
-  Lemma weaken_exec: forall env s k t m l mc post1,
-      exec env s k t m l mc post1 ->
+  Lemma weaken_exec: forall env pick_sp s t m l mc post1,
+      exec env pick_sp s t m l mc post1 ->
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-        exec env s k t m l mc post2.
-  Proof. eapply exec.weaken. Qed.
+        exec env pick_sp s t m l mc post2.
+  Proof. eapply otherexec.weaken. Qed.
 
   Lemma intersect_exec: forall env k t l m mc s post1,
       exec env s k t m l mc post1 ->
       forall post2,
         exec env s k t m l mc post2 ->
         exec env s k t m l mc (fun k' t' m' l' mc' => post1 k' t' m' l' mc' /\ post2 k' t' m' l' mc').
-  Proof. intros. eapply exec.intersect; eassumption. Qed.
+  Proof. intros. eapply otherexec.intersect; eassumption. Qed.
 
   (* As we see, one can prove this lemma as is, but the proof is a bit cumbersome because
      the seq and while case have to instantiate mid with the intersection, and use
@@ -435,33 +436,33 @@ Section ExprImp2.
      in combination with intersect_exec.
      So it makes more sense to directly prove the conjunction version which follows after
      this proof. *)
-  Lemma modVarsSound_less_useful: forall e s k t m l mc post,
-      exec e s k t m l mc post ->
-      exec e s k t m l mc (fun k' t' m' l' mc' => map.only_differ l (modVars s) l').
+  Lemma modVarsSound_less_useful: forall e pick_sp s t m l mc post,
+      exec e pick_sp s t m l mc post ->
+      exec e pick_sp s t m l mc (fun k' t' m' l' mc' => map.only_differ l (modVars s) l').
   Proof.
     induction 1;
       try solve [ econstructor; [eassumption..|simpl; map_solver locals_ok] ].
-    - eapply exec.stackalloc. 1: assumption. intros.
+    - eapply otherexec.stackalloc. 1: assumption. intros.
       eapply weaken_exec.
       + eapply intersect_exec.
         * eapply H0; eassumption.
         * eapply H1; eassumption.
       + simpl. intros. simp.
         do 2 eexists. split; [eassumption|]. split; [eassumption|]. map_solver locals_ok.
-    - eapply exec.if_true; try eassumption.
+    - eapply otherexec.if_true; try eassumption.
       eapply weaken_exec; [eassumption|].
       simpl; intros. map_solver locals_ok.
-    - eapply exec.if_false; try eassumption.
+    - eapply otherexec.if_false; try eassumption.
       eapply weaken_exec; [eassumption|].
       simpl; intros. map_solver locals_ok.
-    - eapply @exec.seq with
+    - eapply @otherexec.seq with
           (mid := fun k' t' m' l' mc' => mid k' t' m' l' mc' /\ map.only_differ l (modVars c1) l').
       + eapply intersect_exec; eassumption.
       + simpl. intros *. intros [? ?].
         eapply weaken_exec; [eapply H1; eauto|].
         simpl; intros.
         map_solver locals_ok.
-    - eapply @exec.while_true with
+    - eapply @otherexec.while_true with
           (mid := fun k' t' m' l' mc' => mid k' t' m' l' mc' /\ map.only_differ l (modVars c) l');
         try eassumption.
       + eapply intersect_exec; eassumption.
@@ -469,13 +470,13 @@ Section ExprImp2.
         eapply weaken_exec.
         * eapply H3; eassumption.
         * simpl. intros. map_solver locals_ok.
-    - eapply exec.call. 4: exact H2. (* don't pick IHexec! *) all: try eassumption.
+    - eapply otherexec.call. 4: exact H2. (* don't pick IHexec! *) all: try eassumption.
       simpl. intros.
       edestruct H3 as (? & ? & ? & ? & ?); try eassumption.
       eexists; split; [eassumption|].
       eexists; split; [eassumption|].
       eapply map.only_differ_putmany. eassumption.
-    - eapply exec.interact; try eassumption.
+    - eapply otherexec.interact; try eassumption.
       intros.
       edestruct H2 as (? & ? & ?); try eassumption.
       eexists; split; [eassumption|].
@@ -483,39 +484,39 @@ Section ExprImp2.
       eapply map.only_differ_putmany. eassumption.
   Qed.
 
-  Lemma modVarsSound: forall e s k t m l mc post,
-      exec e s k t m l mc post ->
-      exec e s k t m l mc (fun k' t' m' l' mc' => map.only_differ l (modVars s) l' /\ post k' t' m' l' mc').
+  Lemma modVarsSound: forall e s pick_sp t m l mc post,
+      exec e pick_sp s t m l mc post ->
+      exec e pick_sp s t m l mc (fun k' t' m' l' mc' => map.only_differ l (modVars s) l' /\ post k' t' m' l' mc').
   Proof.
     induction 1;
       try solve [econstructor; repeat split; try eassumption; simpl; map_solver locals_ok].
-    - eapply exec.stackalloc. 1: assumption.
+    - eapply otherexec.stackalloc. 1: assumption.
       intros. eapply weaken_exec. 1: eapply H1; eassumption.
       simpl. intros. simp.
       eexists. eexists. split; [eassumption|]. split; [eassumption|].
       split; [|eassumption]. map_solver locals_ok.
-    - eapply exec.if_true; try eassumption.
+    - eapply otherexec.if_true; try eassumption.
       eapply weaken_exec; [eassumption|].
       simpl; intros. intuition idtac. map_solver locals_ok.
-    - eapply exec.if_false; try eassumption.
+    - eapply otherexec.if_false; try eassumption.
       eapply weaken_exec; [eassumption|].
       simpl; intros. intuition idtac. map_solver locals_ok.
-    - eapply exec.seq.
+    - eapply otherexec.seq.
       + eapply IHexec.
       + simpl; intros *. intros [? ?].
         eapply weaken_exec; [eapply H1; eauto|].
         simpl; intros. intuition idtac. map_solver locals_ok.
-    - eapply exec.while_true. 3: exact IHexec. all: try eassumption.
+    - eapply otherexec.while_true. 3: exact IHexec. all: try eassumption.
       intros *. intros [? ?]. simpl in *.
       eapply weaken_exec.
       + eapply H3; eassumption.
       + simpl. intros. intuition idtac. map_solver locals_ok.
-    - eapply exec.call. 4: exact H2. (* don't pick IHexec! *) all: try eassumption.
+    - eapply otherexec.call. 4: exact H2. (* don't pick IHexec! *) all: try eassumption.
       simpl. intros.
       edestruct H3 as (? & ? & ? & ? & ?); try eassumption.
       repeat (eexists || split || eassumption).
       eapply map.only_differ_putmany. eassumption.
-    - eapply exec.interact; try eassumption.
+    - eapply otherexec.interact; try eassumption.
       intros.
       edestruct H2 as (? & ? & ?); try eassumption.
       eexists; split; [eassumption|].
