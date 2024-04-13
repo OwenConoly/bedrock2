@@ -171,7 +171,7 @@ Section Spilling.
   Definition leak_spill_bcond : trace :=
     nil.
   
-  Definition bigtuple : Type := stmt * trace * trace * word * (trace -> trace -> trace * word).
+  Definition bigtuple : Type := stmt * trace * (trace -> word) * word * (trace -> trace -> trace * word).
   
   Definition project_tuple (tup : bigtuple) : nat * stmt :=
     let '(s, k, sk_so_far, fpval, f) := tup in (length k, s).
@@ -186,47 +186,46 @@ Section Spilling.
   Definition stransform_stmt_trace_body
     {env: map.map String.string (list Z * list Z * stmt)}
     (e: env)
-    (pick_sp : trace -> word)
-    (tup : stmt * trace * trace * word * (trace (*skip*) -> trace (*sk_so_far*) -> trace * word))
+    (tup : stmt * trace * (trace -> word) * word * (trace (*skip*) -> trace (*stuff exhausted...*) -> trace * word))
     (stransform_stmt_trace : forall othertup, lt_tuple othertup tup -> trace * word)
     : trace * word.
     refine (
         match tup as x return tup = x -> _ with
-        | (s, k, sk_so_far, fpval, f) =>
-            let fpval := pick_sp (rev sk_so_far) in
+        | (s, k, pick_sp, fpval, f) =>
+            let fpval := pick_sp nil in
             fun _ =>
               match s as x return s = x -> _ with
               | SLoad sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
-                        f [leak_word addr] (sk_so_far ++ leak_load_iarg_reg fpval y ++ [leak_word addr] ++ leak_save_ires_reg fpval x)
+                        f [leak_word addr] (Xfun k0 => pick_sp (leak_load_iarg_reg fpval y ++ [leak_word addr] ++ leak_save_ires_reg fpval x ++ k0))
                     | _ => (nil, word.of_Z 0)
                     end
               | SStore sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
-                        f [leak_word addr] (sk_so_far ++ leak_load_iarg_reg fpval x ++ leak_load_iarg_reg fpval y ++ [leak_word addr])
+                        f [leak_word addr] (fun k0 => pick_sp (leak_load_iarg_reg fpval x ++ leak_load_iarg_reg fpval y ++ [leak_word addr] ++ k0))
                     | _ => (nil, word.of_Z 0)
                     end
               | SInlinetable _ x _ i =>
                   fun _ =>
                     match k with
                     | leak_word i' :: k' =>
-                        f [leak_word i'] (sk_so_far ++ leak_load_iarg_reg fpval i ++ [leak_word i'] ++ leak_save_ires_reg fpval x)
+                        f [leak_word i'] (fun k0 => pick_sp (leak_load_iarg_reg fpval i ++ [leak_word i'] ++ leak_save_ires_reg fpval x ++ k0))
                     | _ => (nil, word.of_Z 0)
                     end
               | SStackalloc x z body =>
                   fun _ =>
                     match k as x with
                     | _ :: _ =>
-                        stransform_stmt_trace (body, k, sk_so_far ++ leak_save_ires_reg fpval x, fpval, f) _
-                    | nil => (nil, pick_sp (rev sk_so_far))
+                        stransform_stmt_trace (body, k, fun k0 => pick_sp (leak_save_ires_reg fpval x ++ k0), fpval, f) _
+                    | nil => (nil, pick_sp nil)
                     end
               | SLit x _ =>
                   fun _ =>
-                    f [] (sk_so_far ++ leak_save_ires_reg fpval x)
+                    f [] (fun k0 => pick_sp (leak_save_ires_reg fpval x ++ k0))
               | SOp x op y oz =>
                   fun _ =>
                     let newt_a' :=
@@ -250,19 +249,20 @@ Section Spilling.
                     match newt_a' with
                     | Some (newt, a') =>
                         f newt
-                          (sk_so_far ++
+                          (fun k0 => pick_sp (
                              leak_load_iarg_reg fpval y ++
                              match oz with 
                              | Var z => leak_load_iarg_reg fpval z
                              | Const _ => []
                              end
                              ++ newt
-                             ++ leak_save_ires_reg fpval x)
+                             ++ leak_save_ires_reg fpval x
+                             ++ k0))
                     | None => (nil, word.of_Z 0)
                     end
               | SSet x y =>
                   fun _ =>
-                    f [] (sk_so_far ++ leak_load_iarg_reg fpval y ++ leak_save_ires_reg fpval x)
+                    f [] (fun k0 => pick_sp (leak_load_iarg_reg fpval y ++ leak_save_ires_reg fpval x ++ k0))
               | SIf c thn els =>
                   fun _ =>
                     match k as x return k = x -> _ with
@@ -270,37 +270,37 @@ Section Spilling.
                         fun _ =>
                           stransform_stmt_trace (if b then thn else els,
                               k',
-                              sk_so_far ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool b],
+                              fun k0 => pick_sp (leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool b] ++ k0),
                               fpval,
                               (fun skip => f (leak_bool b :: skip))) _
                     | _ => fun _ => (nil, word.of_Z 0)
                     end eq_refl
               | SLoop s1 c s2 =>
                   fun _ =>
-                    stransform_stmt_trace (s1, k, sk_so_far, fpval,
-                        (fun skip sk_so_far' =>
+                    stransform_stmt_trace (s1, k, pick_sp, fpval,
+                        (fun skip pick_sp' =>
                            Let_In_pf_nd (List.skipn (length skip) k)
                              (fun k' _ =>
                                 match k' as x return k' = x -> _ with
                                 | leak_bool true :: k'' =>
                                     fun _ =>
-                                      stransform_stmt_trace (s2, k'', sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool true], fpval, 
-                                          (fun skip' sk_so_far'' =>
+                                      stransform_stmt_trace (s2, k'', fun k0 => pick_sp' (leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool true] ++ k0), fpval, 
+                                          (fun skip' pick_sp'' =>
                                              let k''' := List.skipn (length skip') k'' in
-                                             stransform_stmt_trace (s, k''', sk_so_far'', fpval,
+                                             stransform_stmt_trace (s, k''', pick_sp'', fpval,
                                                  (fun skip'' => f (skip ++ leak_bool true :: skip' ++ skip''))) _)) _
                                 | leak_bool false :: k'' =>
                                     fun _ =>
-                                      f (skip ++ [leak_bool false]) (sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool false])
+                                      f (skip ++ [leak_bool false]) (fun k0 => pick_sp' (leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool false] ++ k0))
                                 | _ => fun _ => (nil, word.of_Z 0)
                                 end eq_refl))) _
               | SSeq s1 s2 =>
                   fun _ =>
-                    stransform_stmt_trace (s1, k, sk_so_far, fpval,
-                        (fun skip sk_so_far' =>
+                    stransform_stmt_trace (s1, k, pick_sp, fpval,
+                        (fun skip pick_sp' =>
                            let k' := List.skipn (length skip) k in
-                           stransform_stmt_trace (s2, k', sk_so_far', fpval, (fun skip' => f (skip ++ skip'))) _)) _
-              | SSkip => fun _ => f [] sk_so_far
+                           stransform_stmt_trace (s2, k', pick_sp', fpval, (fun skip' => f (skip ++ skip'))) _)) _
+              | SSkip => fun _ => f [] pick_sp
               | SCall resvars fname argvars =>
                   fun _ =>
                     match k as x return k = x -> _ with
@@ -308,15 +308,15 @@ Section Spilling.
                         fun _ =>
                           match @map.get _ _ env e fname with
                           | Some (params, rets, fbody) =>
-                              let sk_before_salloc := sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_unit] in
+                              let sk_before_salloc := leak_set_reg_range_to_vars fpval argvars ++ [leak_unit] in
                               let fpval' := pick_sp (rev sk_before_salloc) in
                               stransform_stmt_trace (fbody,
                                   k',
-                                  sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params,
+                                  fun k0 => pick_sp (sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params ++ k0),
                                   fpval',
-                                  (fun skip sk_so_far' =>
+                                  (fun skip pick_sp' =>
                                      let k'' := List.skipn (length skip) k' in
-                                       f (leak_unit :: skip) (sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
+                                       f (leak_unit :: skip) (fun k0 => pick_sp' (leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars ++ k0)))) _
                           | None => (nil, word.of_Z 0)
                           end
                     | _ => fun _ => (nil, word.of_Z 0)
@@ -325,7 +325,7 @@ Section Spilling.
                   fun _ =>
                     match k with
                     | leak_list l :: k' =>
-                          f [leak_list l] (sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_list l] ++ leak_set_vars_to_reg_range fpval resvars)
+                          f [leak_list l] (fun k0 => pick_sp (leak_set_reg_range_to_vars fpval argvars ++ [leak_list l] ++ leak_set_vars_to_reg_range fpval resvars ++ k0))
                     | _ => (nil, word.of_Z 0)
                     end
               end eq_refl
@@ -352,26 +352,30 @@ Section Spilling.
   Defined.
 
   Definition stransform_stmt_trace
-    {env: map.map String.string (list Z * list Z * stmt)} e pick_sp
-    := my_Fix _ _ lt_tuple_wf _ (stransform_stmt_trace_body e pick_sp).
+    {env: map.map String.string (list Z * list Z * stmt)} e
+    := my_Fix _ _ lt_tuple_wf _ (stransform_stmt_trace_body e).
 
   Definition Equiv (x y : bigtuple) :=
-    let '(x1, x2, x3, x4, fx) := x in
-    let '(y1, y2, y3, y4, fy) := y in
-    (x1, x2, x3, x4) = (y1, y2, y3, y4) /\
-      forall k sk,
-        fx k sk = fy k sk.
+    let '(x1, x2, pspx, x4, fx) := x in
+    let '(y1, y2, pspy, y4, fy) := y in
+    (x1, x2, x4) = (y1, y2, y4) /\
+      (forall k', pspx k' = pspy k') /\
+      forall k pick_sp1 pick_sp2,
+        (forall k', pick_sp1 k' = pick_sp2 k') ->
+        fx k pick_sp1 = fy k pick_sp2.
 
-    Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e pick_sp tup :
-      stransform_stmt_trace e pick_sp tup = stransform_stmt_trace_body e pick_sp tup (fun y _ => stransform_stmt_trace e pick_sp y).
+    Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e tup :
+      stransform_stmt_trace e tup = stransform_stmt_trace_body e tup (fun y _ => stransform_stmt_trace e y).
     Proof.
       cbv [stransform_stmt_trace].
-      apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e pick_sp).
+      apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e).
       { intros. cbv [stransform_stmt_trace_body]. cbv beta.
-        destruct x1 as [ [ [ [s_1 k_1] sk_so_far_1] fpval_1] f_1].
-        destruct x2 as [ [ [ [s_2 k_2] sk_so_far_2] fpval_2] f_2].
+        destruct x1 as [ [ [ [s_1 k_1] pick_sp_1] fpval_1] f_1].
+        destruct x2 as [ [ [ [s_2 k_2] pick_sp_2] fpval_2] f_2].
         cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.
         repeat (Tactics.destruct_one_match; try reflexivity || apply H3 || intros || apply H0 || cbv [Equiv]; intuition).
+        all: try apply H1; intuition.
+        all: repeat rewrite H; try reflexivity.
         all: cbv [Equiv]; intuition.
         all: try apply Let_In_pf_nd_ext; intros.
         all: repeat (Tactics.destruct_one_match; try reflexivity).
@@ -1526,16 +1530,16 @@ Section Spilling.
    *)
   
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
-    forall (k1 : trace) (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
-           (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop) pick_sp1,
-      otherexec e1 pick_sp1 s1 k1 t1 m1 l1 mc1 post ->
+    forall pick_sp1 (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
+           (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop),
+      otherexec e1 pick_sp1 s1 t1 m1 l1 mc1 post ->
       forall (frame : mem -> Prop) (maxvar : Z),
         valid_vars_src maxvar s1 ->
-        forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
+        forall pick_sp2 (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (rev k1 ++ k1'') = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
-            exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
+            (forall k1'', pick_sp1 k1'' = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, f k1''))) ->
+            exec e2 pick_sp2 (spill_stmt s1) t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'' k2'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
