@@ -313,7 +313,7 @@ Section Spilling.
                                   fpval',
                                   (fun skip sk_so_far' =>
                                      let k'' := List.skipn (length skip) k' in
-                                       f (leak_unit :: skip) (sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
+                                       f (leak_unit :: skip) (sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params ++ sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
                           | None => (nil, word.of_Z 0)
                           end
                     | _ => fun _ => (nil, word.of_Z 0)
@@ -1765,7 +1765,7 @@ Section Spilling.
         valid_vars_src maxvar s1 ->
         forall pick_sp2 (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word) f,
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-            (forall k1'', pick_sp1 k1'' = snd (stransform_stmt_trace e1 (s1, k1'', pick_sp2, fpval, f k1''))) ->
+            (forall k1'', pick_sp1 (rev k1'') = snd (stransform_stmt_trace e1 (s1, k1'', pick_sp2, fpval, f k1''))) ->
             exec e2 (fun k => pick_sp2 (rev k)) (spill_stmt s1) t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1',
@@ -1948,30 +1948,29 @@ Section Spilling.
       intros tL4 mL4 lFL4 mcL4 kL4 R.
       eapply exec.seq_cps.
       eapply exec.weaken. {
-        (*huh why does IHexec have the wrong pick_sp*)
-        eapply IHexec.
-        2: exact R.
-        { unfold valid_vars_src.
-          eapply Forall_vars_stmt_impl.
-          2: eapply max_var_sound.
-          2: eapply forallb_vars_stmt_correct.
-          3: eassumption.
-          2: {
-            unfold is_valid_src_var.
-            intros *.
-            rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
-          }
-          cbv beta. subst maxvar'. blia. }
-        intros. move H6 at bottom.
-        subst a. specialize (H6 (leak_unit :: k1'')). rewrite stransform_stmt_trace_step in H6. simpl in H6.
-        rewrite H in H6.
-        simpl. rewrite <- app_assoc in *. simpl in *. rewrite H6. f_equal. f_equal. f_equal.
-        2: { instantiate (1 := fun kk _ _ => f kk _ _). simpl. reflexivity. }
-        subst k2' kL4.
+        eapply exec.exec_ext.
+        { eapply IHexec.
+          2: exact R.
+          { unfold valid_vars_src.
+            eapply Forall_vars_stmt_impl.
+            2: eapply max_var_sound.
+            2: eapply forallb_vars_stmt_correct.
+            3: eassumption.
+            2: {
+              unfold is_valid_src_var.
+              intros *.
+              rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
+            }
+            cbv beta. subst maxvar'. blia. }
+          intros. replace [leak_unit] with (rev [leak_unit]) by reflexivity.
+          rewrite <- rev_app_distr. rewrite H6. rewrite stransform_stmt_trace_step. simpl.
+          rewrite H. instantiate (1 := fun _ => _). simpl. f_equal. f_equal. f_equal.
+          { f_equal. subst a. subst k2'. f_equal. simpl. rewrite rev_involutive. reflexivity. }
+          reflexivity. }
+        simpl. intros. f_equal. subst kL4 k2' a.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
         repeat rewrite <- app_assoc. reflexivity. }
-      
-      cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & kH5' & tH5' & R5 & OC & CT).
+      cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & R5 & OC & CT).
       match goal with
       | H: context[outcome], A: context[outcome] |- _ =>
         specialize H with (1 := A); move H at bottom; rename H into Q
@@ -2054,24 +2053,16 @@ Section Spilling.
       { reflexivity. }
       { unfold a0, a7. blia. }
       { eassumption. }
-      { intros t22 m22 l22 mc22 k22 R22. do 6 eexists. split; [eassumption|].
+      { intros t22 m22 l22 mc22 k22 R22. do 5 eexists. split; [eassumption|].
         split; [eassumption|].
         (* begin ct stuff for call*)
-        split.
-        { subst k22. subst kL6. subst kH5. subst kL4. subst k2'.
-          rewrite app_one_cons. rewrite (app_one_cons leak_unit). repeat rewrite app_assoc.
-          reflexivity. }
         intros.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
         rewrite stransform_stmt_trace_step. simpl. rewrite H.
         subst k2' kL4 k22 kL6. subst.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-        specialize (CT (k10 ++ [leak_unit]) k1''').
-        repeat rewrite <- app_assoc in *.
-        subst a. move CT at bottom.
-        rewrite CT with (f_ := fun x _ _ => f_ x _ _).
-        { repeat rewrite <- app_assoc. reflexivity. }
-        intros. apply H3. }
+        subst a. rewrite rev_involutive in *.
+        rewrite CT. repeat rewrite <- app_assoc. reflexivity. }
 
     - (* exec.load *)
       eapply exec.seq_cps.
