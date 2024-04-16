@@ -1440,88 +1440,6 @@ Section Spilling.
       blia.
   Qed.
   
-  (* this IH looks difficult to state with pick_sp in the semantics - perhaps not too surprising.
-     often things that are intuitively wrong turn out to be painful in practice too.
-
-     we want to do some induction on (exec ... s1 ...).
-     So we have to fix some high-level pick_spH at the very beginning, before saying
-     'induction (H : exec ... s1 ...)'.
-     But in IH, pick_spH should depend on the following things, which we need to revert
-     before starting induction: k2, fpval, f.
-     
-     What is the main issue here?
-         We are trying to use (exec ... s1 ...) as a hypothesis, but also as a conclusion.
-     In what sense?
-         As a hypothesis: this is clear.  We induct on (exec ... s1 ...) to get (exec ... s2 ...).
-         As a conclusion: we want to say, if we have (exec pick_sp ... s2 ...), then we get 
-         (exec (g pick_sp) ... s1 ...).
-     How do we stop this bidirectional nonsense?  Why is it here in the first place?
-         It's here because we need to show that high-level pick_sp is a function of low-level pick_sp.
-         Let g be the function which takes low-level pick_sp to high-level pick_sp.
-         Too bad g isn't invertible.
-         Since it's not, we can do this:
-               Fix arbitrary pick_spH.  Induct on (exec pick_spH ... s1 ...) to get
-               (forall pick_spL, pick_spH = g pick_spL -> exec pick_spL ... s2 ...).
-         OK, this fixes part of the problem.
-     Remaining issue:
-         Now we can put f in after the inductive hypothesis.  Good.  But it still needs to come before pick_spL.
-         This is no good, since we want it to be in the postcondition.
-         Is it possible to take it out of the postcondition?  Probably.
-         But not easily... I tried taking f out of the postcondition on branch pick_sp (where Spilling.v compiles).
-         It broke the proof in the while case, the first place f is used nontrivially.
-         Wasn't clear how to fix.
-
-         We could fix that by moving the hypothesis about pick_spH = g pick_spL into the postcondition.
-         Then we could have f in the postcondition, as desired.
-         But no, this doesn't actually work, because we can't even prove (exec pick_spL ... s2 ... True) without
-         the pick_spH = g pick_spL hypothesis.  So again, it is unfortunate to have pick_sp in the semantics.
-         
-         Is that true?  Can we prove (exec pick_spL ... s2 ... True) without that hypothesis?
-         What's a counterexample, where s1 crashes with some pick_sps but not all?
-             s1 := stackalloc 1 as x; y = load1(pick_sp _)
-         There it is.
-         Incidentally, this exposes a difference between putting pick_sp in the semantics and not.
-         If we put it in the semantics, we can prove that the program above terminates/doesn't crash/whatever.
-         If we don't, then we can't.
-         Do we want to be able to prove things like that?  I don't think so.  That program is pretty dumb.
-         Yeah, it's really a flaw to be able to prove programs like that.
-         Of course, we can't really prove that programs like that terminate, if you consider a program to have 
-         only been proven when we have something of type (forall pick_sp, exec pick_sp ... s ...).
-
-     OK, never mind thinking about how to modify this proof to work with pick_sp in the semantics.
-     Start over.
-     What are the obstacles?
-     1. It's unclear how to represent the correctness of the continuation f.
-        With the old method, this was something like:
-             (forall k1''' f,
-                     predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                     predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'' ++ k1''')).
-        That is, if f handles everything coming after the trace exhausted by this statement, then we correctly handle the whole trace.
-        What is the analogous thing with this method?
-        Can't write correctness of f using a single exec statement, since the trace predicted by f may come from executing many fragments of different statements.
-        Do we really need correctness of f?  Instead, why not just state that when our trace overflows the statement, then the leftover trace is passed to f. (actually, might doing this make proofs easier with the other method?)
-    2. ...
-
-    It seems like a good way to prove this would be:
-       first prove (exec ... s1 ...) -> (exec ... s2 ...) to get correctness of first part of stransform_stmt_trace.
-       then, prove (exec pick_spL ... s2 ...) -> (exec (g pick_spL) ... s1 ...) to get correctness of second part.
-    Or something?  Some subtlety with the first part: want to show that lower thing holds for all pick_spL, so need
-    to show that all pick_spL's are possible refinements of some pick_spH.
-    Of course that's no good, don't want to prove that.
-
-   In simple terms, what is the issue?
-          Cannot write down inductive hypothesis.
-          High-level pick_sp depends on low-level state, so cannot even write down hypothesis to induct on without talking about low-level state.
-          This seems related to the fact that we really don't want to know 'high-level program executes to this post with this pick_sp' - we
-          don't care about that, we just want the nice nondeterministic thing.
-
-          With the nondeterministic thing, we get to specify how the low-level statement refines the behavior of the high-level statement.
-          Now, we have to first specify how the high-level behavior is refined, and then prove that the low-level statement refines it.
-          This is harder. I think it's harder?  Or I am just missing something.
-          This is the first compiler-correctness statement that has not seemed 'natural' in a sense.
-          Before, it has always at least been obvious where to start.
-   *)
-  
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
     forall pick_sp1 (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
            (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop),
@@ -2081,9 +1999,7 @@ Section Spilling.
       + eassumption.
       + blia.
       + (*begin ct stuff for load*)
-        intros. do 6 eexists. split; [|split]. 2: eassumption. 1: eassumption.
-        split.
-        { rewrite app_one_cons. reflexivity. }
+        intros. do 5 eexists. split; [|split]. 2: eassumption. 1: eassumption.
         intros.
         rewrite stransform_stmt_trace_step. simpl. f_equal. subst k2'0 k2'.
         repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
@@ -2105,7 +2021,7 @@ Section Spilling.
       { unfold Memory.store, Memory.store_Z, Memory.store_bytes.
         unfold Memory.load_bytes in *.
         erewrite map.getmany_of_tuple_in_disjoint_putmany; eauto. }
-      do 6 eexists. split; [|split]. 2: eassumption.
+      do 5 eexists. split; [|split]. 2: eassumption.
       { unfold related.
         repeat match goal with
                | |- exists _, _ => eexists
@@ -2114,8 +2030,6 @@ Section Spilling.
         all: try eassumption || reflexivity.
         spec store_bytes_sep_hi2lo as A. 1: eassumption.
         all: ecancel_assumption. }
-      split.
-      { rewrite app_one_cons. reflexivity. }
       intros.
       rewrite stransform_stmt_trace_step. simpl. f_equal. subst k2'0 k2'.
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
@@ -2132,9 +2046,8 @@ Section Spilling.
       eapply save_ires_reg_correct''.
       + eassumption.
       + blia.
-      + intros. do 6 eexists. split; [|split].
-        2: eassumption. 1: assumption. split.
-        { instantiate (1 := [_]). reflexivity. }
+      + intros. do 5 eexists. split; [|split].
+        2: eassumption. 1: assumption.
         intros.
         rewrite stransform_stmt_trace_step. simpl.
         subst k2'0 k2'.
@@ -2152,10 +2065,10 @@ Section Spilling.
       eapply exec.weaken. {
         assert (H4' := H4).
         specialize (H4 nil). simpl in H4. rewrite stransform_stmt_trace_step in H4.
-        simpl in H4. rewrite rev_involutive in H4.
-        eapply IH; try rewrite H4; try eassumption.
-        intros. rewrite H4'. rewrite stransform_stmt_trace_step. simpl.
-        rewrite stransform_stmt_trace_step in H4'.
+        simpl in H4. eapply exec.exec_ext.
+        { eapply IH; try rewrite H4; try eassumption.
+          intros. rewrite H4'. rewrite stransform_stmt_trace_step. simpl.
+          rewrite stransform_stmt_trace_step in H4'.
       }
       cbv beta. intros. fwd.
       edestruct shrink_related_mem as (mSmall2 & ? & ?). 1,2: eassumption.
