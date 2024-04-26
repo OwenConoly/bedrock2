@@ -115,7 +115,7 @@ Section WeakestPrecondition.
               let a := pick_sp k in
               anybytes a n mStack -> map.split mCombined m mStack ->
               dlet! l := map.put l x a in
-              rec c k t mCombined l (fun k' t' mCombined' l' =>
+              rec c (cons leak_unit k) t mCombined l (fun k' t' mCombined' l' =>
                                        exists m' mStack',
                                          anybytes a n mStack' /\ map.split mCombined' m' mStack' /\
                                            post k' t' m' l')
