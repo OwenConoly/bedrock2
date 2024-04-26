@@ -389,12 +389,12 @@ Module exec.
             let a := pick_sp nil in
             anybytes a n mStack ->
             map.split mCombined mSmall mStack ->
-            exec pick_sp body t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
+            exec (fun k => pick_sp (k ++ [leak_unit])) body t mCombined (map.put l x a) (addMetricLoads 1 (addMetricInstructions 1 mc))
               (fun k' t' mCombined' l' mc' =>
                  exists mSmall' mStack',
                    anybytes a n mStack' /\
                      map.split mCombined' mSmall' mStack' /\
-                     post k' t' mSmall' l' mc')) ->
+                     post (k' ++ [leak_unit]) t' mSmall' l' mc')) ->
         exec pick_sp (SStackalloc x n body) t mSmall l mc post
     | lit: forall pick_sp t m l mc x v post,
         post nil t m (map.put l x (word.of_Z v))

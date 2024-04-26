@@ -217,11 +217,11 @@ Section Spilling.
                     end
               | SStackalloc x z body =>
                   fun _ =>
-                    match k as x with
-                    | _ :: _ =>
-                        stransform_stmt_trace (body, k, fun k0 => pick_sp (leak_save_ires_reg fpval x ++ k0), fpval, f) _
-                    | nil => (nil, pick_sp nil)
-                    end
+                    match k as x return k = x -> _ with
+                    | _ :: k' => fun _ =>
+                        stransform_stmt_trace (body, k', fun k0 => pick_sp (leak_unit :: leak_save_ires_reg fpval x ++ k0), fpval, fun skip sk_so_far => f (leak_unit :: skip) (leak_unit :: sk_so_far)) _
+                    | nil => fun _ => (nil, pick_sp nil)
+                    end _
               | SLit x _ =>
                   fun _ =>
                     f [] (leak_save_ires_reg fpval x)
@@ -309,11 +309,11 @@ Section Spilling.
                               let fpval' := pick_sp sk_before_salloc in
                               stransform_stmt_trace (fbody,
                                   k',
-                                  fun k0 => pick_sp (sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params ++ k0),
+                                  fun k0 => pick_sp (sk_before_salloc ++ leak_unit :: leak_set_vars_to_reg_range fpval' params ++ k0),
                                   fpval',
                                   (fun skip sk_so_far' =>
                                      let k'' := List.skipn (length skip) k' in
-                                       f (leak_unit :: skip) (sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params ++ sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
+                                       f (leak_unit :: skip) (sk_before_salloc ++ leak_unit :: leak_set_vars_to_reg_range fpval' params ++ sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars))) _
                           | None => (nil, word.of_Z 0)
                           end
                     | _ => fun _ => (nil, word.of_Z 0)
@@ -338,6 +338,7 @@ Section Spilling.
                       assert (H := List.skipn_length n k); subst t end.
       all: try (right; constructor; constructor).
       all: try (left; constructor; constructor).
+    - reflexivity.
     - assert (H0 := skipn_length (length skip) k). left.
       rewrite H. assert (H1:= @f_equal _ _ (@length _) _ _ e4).
       simpl in H1. blia.
@@ -2067,9 +2068,11 @@ Section Spilling.
         specialize (H4 nil). simpl in H4. rewrite stransform_stmt_trace_step in H4.
         simpl in H4. eapply exec.exec_ext.
         { eapply IH; try rewrite H4; try eassumption.
-          intros. rewrite H4'. rewrite stransform_stmt_trace_step. simpl.
-          rewrite stransform_stmt_trace_step in H4'.
-      }
+          intros. replace (_ ++ _) with (rev (leak_unit :: k1'')) by reflexivity. rewrite H4'.
+          rewrite stransform_stmt_trace_step. reflexivity. }
+        intros. simpl. subst k2'.
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        reflexivity. }
       cbv beta. intros. fwd.
       edestruct shrink_related_mem as (mSmall2 & ? & ?). 1,2: eassumption.
       repeat match goal with
