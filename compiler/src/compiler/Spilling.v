@@ -296,7 +296,7 @@ Section Spilling.
                     stransform_stmt_trace (s1, k, pick_sp, fpval,
                         (fun skip sk_so_far' =>
                            let k' := List.skipn (length skip) k in
-                           stransform_stmt_trace (s2, k', fun k0 => pick_sp (sk_so_far' ++ k0), fpval, (fun skip' => f (skip ++ skip'))) _)) _
+                           stransform_stmt_trace (s2, k', fun k0 => pick_sp (sk_so_far' ++ k0), fpval, (fun skip' sk_so_far'' => f (skip ++ skip') (sk_so_far' ++ sk_so_far''))) _)) _
               | SSkip => fun _ => f [] []
               | SCall resvars fname argvars =>
                   fun _ =>
@@ -2374,38 +2374,27 @@ Section Spilling.
       cbn in *. fwd.
       rename H1 into IH2, IHexec into IH1.
       eapply exec.seq.
-      + eapply IH1. 1: eassumption. eauto 15.
+      + eapply IH1. 1: eassumption. 1: eauto 15.
+        intros. rewrite H4. rewrite stransform_stmt_trace_step. simpl. reflexivity.
       + cbn. intros. fwd. eapply exec.weaken.
-        -- eapply IH2; eauto.
-        -- cbv beta. intros. destruct H1 as [k1' [t1'1 [m1'1 [l1'1 [mc1'1 [t1''1 [k2''1 [R [Hpost [E1 [E2 CT]]]]]]]]]]]. subst.
-           do 7 eexists. split; [eassumption|]. split; [eassumption|]. split.
-           { rewrite app_assoc. reflexivity. } split.
-           { rewrite app_assoc. reflexivity. }
+        -- eapply exec.exec_ext.
+           { eapply IH2; eauto. intros.
+             replace (rev k1'' ++ k1') with (rev (rev (rev k1'' ++ k1'))) by apply rev_involutive.
+             rewrite H4.
+             repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+             rewrite stransform_stmt_trace_step. simpl. rewrite H1p2.
+             rewrite List.skipn_app_r by reflexivity. reflexivity. }
+           simpl. intros. rewrite rev_app_distr. reflexivity.
+        -- cbv beta. intros. destruct H1 as [k1'1 [t1'1 [m1'1 [l1'1 [mc1'1 [R [Hpost CT]]]]]]].
+           do 5 eexists. split; [eassumption|]. split; [eassumption|].
            intros.
            repeat (rewrite rev_involutive in * || rewrite rev_app_distr in * || rewrite <- app_assoc in * ).
-           repeat rewrite (app_assoc _ _ (rev k2''1 ++ _)) in H1. specialize CT with (1 := H1).
-           repeat rewrite <- app_assoc in H1.
-           repeat rewrite (app_assoc _ _ (rev k1'' ++ _)) in H1. specialize H1p4 with (1 := H1).
-           destruct H1p4 as [updown1 downup1]. destruct CT as [updown2 downup2]. clear H1.
-           split.
-           { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-             repeat rewrite <- app_assoc in *. rewrite updown1.
-             rewrite List.skipn_app_r by reflexivity. rewrite updown2. reflexivity. }
-           intros ? ? Hpredicts. eapply predicts_ext.
-           { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. reflexivity. }
-           repeat rewrite <- app_assoc in *. apply downup1. eapply predicts_ext.
-           { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-           apply downup2. eapply predicts_ext. 2: eapply Hpredicts.
-           intros. simpl. repeat rewrite <- app_assoc. reflexivity.
+           rewrite stransform_stmt_trace_step. simpl. rewrite H1p2.
+           rewrite List.skipn_app_r by reflexivity. rewrite CT. reflexivity.
            
     - (* exec.skip *)
-      eapply exec.skip. do 7 eexists. repeat (split; [eauto|]). 1: instantiate (1 := nil).
-      2: instantiate (1 := nil). all: eauto.
-      { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
-        rewrite app_nil_r. reflexivity. }
-      intros. eapply predicts_ext. 2: eapply H2. intros. simpl.
-      rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body]. rewrite app_nil_r.
-      reflexivity.
+      eapply exec.skip. do 5 eexists. repeat (split; [eauto|]).
+      intros. rewrite stransform_stmt_trace_step. simpl. reflexivity.
   Qed.
 
   Lemma spill_fun_correct: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
