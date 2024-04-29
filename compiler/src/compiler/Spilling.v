@@ -352,33 +352,61 @@ Section Spilling.
   Definition stransform_stmt_trace
     {env: map.map String.string (list Z * list Z * stmt)} e
     := my_Fix _ _ lt_tuple_wf _ (stransform_stmt_trace_body e).
-
+Print bigtuple.
   Definition Equiv (x y : bigtuple) :=
-    let '(x1, x2, x3, x4, fx) := x in
-    let '(y1, y2, y3, y4, fy) := y in
-    (x1, x2, x3, x4) = (y1, y2, y3, y4) /\
+    let '(x1, x2, fx1, x4, fx2) := x in
+    let '(y1, y2, fy1, y4, fy2) := y in
+    (x1, x2, x4) = (y1, y2, y4) /\
+      (forall k, fx1 k = fy1 k) /\
       forall k sk,
-        fx k sk = fy k sk.
+        fx2 k sk = fy2 k sk .
 
-    Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e tup :
-      stransform_stmt_trace e tup = stransform_stmt_trace_body e tup (fun y _ => stransform_stmt_trace e y).
-    Proof.
-      cbv [stransform_stmt_trace].
-      apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e).
-      { intros. cbv [stransform_stmt_trace_body]. cbv beta.
-        destruct x1 as [ [ [ [s_1 k_1] sk_so_far_1] fpval_1] f_1].
-        destruct x2 as [ [ [ [s_2 k_2] sk_so_far_2] fpval_2] f_2].
-        cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.
-        repeat (Tactics.destruct_one_match; try reflexivity || apply H3 || intros || apply H0 || cbv [Equiv]; intuition).
-        all: cbv [Equiv]; intuition.
-        all: try apply Let_In_pf_nd_ext; intros.
-        all: repeat (Tactics.destruct_one_match; try reflexivity).
-        all: try apply H0.
-        all: cbv [Equiv]; intuition.
-        all: try apply H0.
-        all: cbv [Equiv]; intuition. }
-      { cbv [Equiv]. destruct tup as [ [ [x1 x2] x3] fx]. intuition. }
-    Qed.
+  Lemma stransform_stmt_trace_body_ext {env: map.map String.string (list Z * list Z * stmt)} e :
+    forall (x1 x2 : bigtuple) (f1 : forall y : bigtuple, lt_tuple y x1 -> trace * word)
+    (f2 : forall y : bigtuple, lt_tuple y x2 -> trace * word),
+  Equiv x1 x2 ->
+  (forall (y1 y2 : bigtuple) (p1 : lt_tuple y1 x1) (p2 : lt_tuple y2 x2),
+   Equiv y1 y2 -> f1 y1 p1 = f2 y2 p2) ->
+  stransform_stmt_trace_body e x1 f1 = stransform_stmt_trace_body e x2 f2.
+  Proof.
+    intros. cbv [stransform_stmt_trace_body]. cbv beta.
+    destruct x1 as [ [ [ [s_1 k_1] pick_sp_1] fpval_1] f_1].
+    destruct x2 as [ [ [ [s_2 k_2] pick_sp_2] fpval_2] f_2].
+    cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.
+    repeat (Tactics.destruct_one_match; try reflexivity || apply H3 || intros || apply H0 || cbv [Equiv]; intuition).
+    all: f_equal.
+    all: try apply H.
+    all: cbv [Equiv]; intuition.
+    all: try apply Let_In_pf_nd_ext; intros.
+    all: repeat (Tactics.destruct_one_match; try reflexivity).
+    all: try apply H0.
+    all: cbv [Equiv]; intuition.
+    all: try apply H0.
+    all: cbv [Equiv]; intuition.
+    all: f_equal.
+    all: try apply H.
+    all: repeat f_equal.
+  Qed.
+
+  Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e tup :
+    stransform_stmt_trace e tup = stransform_stmt_trace_body e tup (fun y _ => stransform_stmt_trace e y).
+  Proof.
+    cbv [stransform_stmt_trace].
+    apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e).
+    { apply stransform_stmt_trace_body_ext. }
+    { cbv [Equiv]. destruct tup as [ [ [x1 x2] x3] fx]. intuition. }
+  Qed.
+
+  Lemma stransform_stmt_trace_ext {env: map.map String.string (list Z * list Z * stmt)} e tup1 tup2 :
+    Equiv tup1 tup2 ->
+    stransform_stmt_trace e tup1 = stransform_stmt_trace e tup2.
+  Proof.
+    revert tup2. induction (lt_tuple_wf tup1).
+    intros. do 2 rewrite stransform_stmt_trace_step.
+    apply stransform_stmt_trace_body_ext.
+    - assumption.
+    - auto.
+  Qed.
    
   Fixpoint spill_stmt(s: stmt): stmt :=
     match s with
@@ -551,9 +579,9 @@ Section Spilling.
     let fpval := pick_sp nil in
     stransform_stmt_trace e (body,
         k,
-        fun k0 => pick_sp (leak_set_vars_to_reg_range fpval argnames ++ k0),
+        fun k0 => pick_sp (leak_unit :: leak_set_vars_to_reg_range fpval argnames ++ k0),
         fpval,
-        (fun skip sk_so_far' => (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, word.of_Z 0))).
+        (fun skip sk_so_far' => (leak_unit :: leak_set_vars_to_reg_range fpval argnames ++ sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, word.of_Z 0))).
 
   Lemma firstn_min_absorb_length_r{A: Type}: forall (l: list A) n,
       List.firstn (Nat.min n (length l)) l = List.firstn n l.
@@ -1449,7 +1477,7 @@ Section Spilling.
         valid_vars_src maxvar s1 ->
         forall pick_sp2 (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word) f,
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
-            (forall k1'', pick_sp1 k1'' = snd (stransform_stmt_trace e1 (s1, k1'', pick_sp2, fpval, f k1''))) ->
+            (forall k1'', pick_sp1 (rev k1'') = snd (stransform_stmt_trace e1 (s1, k1'', pick_sp2, fpval, f k1''))) ->
             exec e2 (fun k => pick_sp2 (rev k)) (spill_stmt s1) t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1',
@@ -1497,7 +1525,7 @@ Section Spilling.
 
   Lemma app_one_cons {A} (x : A) (l : list A) :
     x :: l = [x] ++ l.
-  Proof. reflexivity. Qed. Check stransform_fun_trace.
+  Proof. reflexivity. Qed.
 
   Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
                       match l with
@@ -1506,20 +1534,18 @@ Section Spilling.
                       end) = @List.app event.
   Proof. reflexivity. Qed. Print stransform_fun_trace.
   
-  (*Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+  Lemma spill_fun_correct_aux: forall e1 e2 pick_sp2 argnames1 retnames1 body1 argnames2 retnames2 body2,
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       spilling_correct_for e1 e2 body1 ->
-      forall argvals t m (post: trace -> io_trace -> mem -> list word -> Prop),
-        call_spec e1 pick_sp1 (argnames1, retnames1, body1) k t m argvals post ->
-        forall pick_sp,
-        call_spec e2 (argnames2, retnames2, body2) k t m argvals
-          (fun k2' t' m' retvals =>
-             exists k1',
-               post k1' t' m' retvals /\
-                 (predicts pick_sp (rev k2'') ->
-                  fst (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) (rev k1'') []) = rev k2'')).
+      forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
+        call_spec e1 (argnames1, retnames1, body1) (fun k1'' => snd (stransform_fun_trace e1 (argnames1, retnames1, body1) (rev k1'') (fun k' => pick_sp2 (rev k')))) k t m argvals post ->
+          call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
+            (fun k2' t' m' retvals =>
+               exists k1',
+                 post k1' t' m' retvals /\
+                   fst (stransform_fun_trace e1 (argnames1, retnames1, body1) (rev k1') (fun k' => pick_sp2 (rev k'))) = rev k2').
   Proof.
-    unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex pick_sp lFL3 mc OL2.
+    unfold call_spec, spilling_correct_for. intros * Sp IHexec * k t m post Ex lFL3 mc OL2.
     unfold spill_fun in Sp. fwd.
     apply_in_hyps @map.getmany_of_list_length.
     apply_in_hyps @map.putmany_of_list_zip_sameLength.
@@ -1591,20 +1617,25 @@ Section Spilling.
     intros tL4 mL4 lFL4 mcL4 kL4 R.
     eapply exec.seq_cps.
     eapply exec.weaken. {
-      eapply IHexec. 1: apply Ex. Print related. 2: exact R.
-      unfold valid_vars_src.
-      eapply Forall_vars_stmt_impl.
-      2: eapply max_var_sound.
-      2: eapply forallb_vars_stmt_correct.
-      3: eassumption.
-      2: {
-        unfold is_valid_src_var.
-        intros *.
-        rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
-      }
-      cbv beta. subst maxvar'. blia.
-    }
-    cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & k1'' & k2'' & R5 & OC & Ek1'' & Ek2'' & CT).
+      eapply exec.exec_ext.
+      { eapply IHexec. 1: apply Ex. 2: exact R.
+        - unfold valid_vars_src.
+          eapply Forall_vars_stmt_impl.
+          2: eapply max_var_sound.
+          2: eapply forallb_vars_stmt_correct.
+          3: eassumption.
+          2: {
+            unfold is_valid_src_var.
+            intros *.
+            rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
+          }
+          cbv beta. subst maxvar'. blia.
+        - simpl. intros. rewrite rev_involutive. reflexivity. }
+      simpl. intros. subst kL4 a.
+      repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+      reflexivity. }
+    
+    cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & R5 & OC & CT).
     fwd.
     eapply set_reg_range_to_vars_correct.
     { eassumption. }
@@ -1654,21 +1685,16 @@ Section Spilling.
       }
       blia. }
     1: eassumption.
-    { subst kL6. subst kL4. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
-    { repeat (rewrite rev_app_distr || rewrite rev_involutive || cbn [rev List.app]).
-      intros H. rewrite app_one_cons in H. rewrite app_assoc in H.
-      specialize CT with (1 := H). destruct CT as [updown downup].
-      simpl in H. inversion H. subst. specialize (H4 I).
-      cbv [stransform_fun_trace]. rewrite H4. simpl.
-      specialize (updown []). specialize (downup []).
-      rewrite app_nil_r in updown, downup. split.
-      { rewrite updown. repeat rewrite <- app_assoc. reflexivity. }
-      apply downup. repeat rewrite <- app_assoc. constructor. }
-     Unshelve.
-    all: try assumption.
-  Qed.*)
+    simpl. specialize (CT nil). rewrite app_nil_r in CT. subst a.
+    (*rewrite CT. agh why does this not work *)
+    erewrite stransform_stmt_trace_ext. 1: erewrite CT.
+    { subst kL4 kL6. simpl.
+      repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+      repeat rewrite <- app_assoc. reflexivity. }
+    cbv [Equiv]; auto. (*very easy because they're literally the same thing*)
+    Unshelve. assumption.
+  Qed.
 
-  (*try this with rewriting semantics to use local pick_sp*) 
   Lemma spilling_correct : forall
       (e1 e2 : env)
       (Ev : spill_functions e1 = Success e2)
@@ -2397,24 +2423,24 @@ Section Spilling.
       intros. rewrite stransform_stmt_trace_step. simpl. reflexivity.
   Qed.
 
-  Lemma spill_fun_correct: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+
+  Check spill_fun_correct_aux.
+
+  Lemma spill_fun_correct: forall e1 e2 argnames1 retnames1 body1 pick_sp2 argnames2 retnames2 body2,
       spill_functions e1 = Success e2 ->
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
-        call_spec e1 (argnames1, retnames1, body1) k t m argvals post ->
-        forall pick_sp,
-        call_spec e2 (argnames2, retnames2, body2) k t m argvals
-          (fun k2' t' m' retvals =>
-             exists k1'' k2'',
-               post (k1'' ++ k) t' m' retvals /\
-                 k2' = k2'' ++ k /\
-                 (predicts pick_sp (rev k2'') ->
-                  fst (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) (rev k1'') []) = rev k2'' /\
-                    predicts (fun k => snd (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) k [])) (rev k1''))).
+        call_spec e1 (argnames1, retnames1, body1)
+         (fun k1'' : trace => snd (stransform_fun_trace e1 (argnames1, retnames1, body1) (rev k1'') (fun k' : trace => pick_sp2 (rev k')))) k t m argvals post ->
+       call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
+         (fun (k2' : trace) (t' : io_trace) (m' : mem) (retvals : list word) =>
+            exists k1' : trace,
+              post k1' t' m' retvals /\
+                fst (stransform_fun_trace e1 (argnames1, retnames1, body1) (rev k1') (fun k' : trace => pick_sp2 (rev k'))) = rev k2').
   Proof.
-    intros. eapply spill_fun_correct_aux; try eassumption.
-    unfold spilling_correct_for.
-    eapply spilling_correct.
+    intros. apply spill_fun_correct_aux; try eassumption.
+    unfold spilling_correct_for. intros ?.
+    apply spilling_correct.
     assumption.
   Qed.
 End Spilling.
