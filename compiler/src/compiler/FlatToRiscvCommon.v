@@ -300,8 +300,8 @@ Section WithParameters.
   Definition compiles_FlatToRiscv_correctly{BWM: bitwidth_iset width iset}
     (f: pos_map -> Z -> Z -> stmt -> list Instruction)
     (s: stmt): Prop :=
-    forall e_impl_full initialTrace initialIOTrace initialMH initialRegsH initialMetricsH postH,
-    exec e_impl_full s initialTrace initialIOTrace (initialMH: mem) initialRegsH initialMetricsH postH ->
+    forall pick_sp e_impl_full initialTrace initialIOTrace initialMH initialRegsH initialMetricsH postH,
+    exec e_impl_full pick_sp s initialTrace initialIOTrace (initialMH: mem) initialRegsH initialMetricsH postH ->
     forall g e_impl e_pos program_base insts xframe (initialL: MetricRiscvMachine) pos,
     map.extends e_impl_full e_impl ->
     good_e_impl e_impl e_pos ->
@@ -316,6 +316,7 @@ Section WithParameters.
                    program iset (word.add program_base (word.of_Z pos)) insts *
                    functions program_base e_pos e_impl)%sep ->
     goodMachine initialIOTrace initialMH initialRegsH g initialL ->
+    (forall k0, pick_sp (rev k0) = snd 
     runsTo initialL (fun finalL => exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
          postH finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
          finalL.(getPc) = word.add initialL.(getPc)
