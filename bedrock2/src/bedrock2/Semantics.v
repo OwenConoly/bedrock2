@@ -343,7 +343,7 @@ Module exec. Section WithEnv.
         let a := pick_sp k in
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body k t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
+        exec body (leak_unit :: k) t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
           (fun k' t' mCombined' l' mc' =>
              exists mSmall' mStack',
               anybytes a n mStack' /\
@@ -560,7 +560,7 @@ Module exec. Section WithEnv.
   Proof.
     intros H. induction H; try (econstructor; intuition eauto; subst_exprs; eexists; trace_alignment; fail).
     - econstructor; intuition eauto. intros. eapply weaken. 1: eapply H1; eauto.
-      simpl. intros. fwd. eexists. eexists. intuition eauto.
+      simpl. intros. fwd. eexists. eexists. intuition eauto. eexists. trace_alignment.
     - eapply if_true; intuition eauto. eapply weaken. 1: eapply IHexec.
       simpl. intros. fwd. intuition eauto. subst_exprs. eexists. trace_alignment.
     - eapply if_false; intuition eauto. eapply weaken. 1: eapply IHexec.
@@ -585,7 +585,10 @@ Module exec. Section WithEnv.
     Set Printing Implicit.
     intros H1 pick_sp2. induction H1; intros; try solve [econstructor; eauto].
     - econstructor; eauto. intros. replace (pick_sp1 k) with (pick_sp2 k) in *.
-      { subst a. eapply weaken. 1: eapply H1; eauto. simpl. eauto. }
+      { subst a. eapply weaken.
+        { eapply H1; eauto.
+          intros. eassert (H2' := H2 (_ ++ _ :: nil)). rewrite <- app_assoc in H2'. eapply H2'. }
+        eauto. }
       symmetry. apply H2 with (k' := nil).
     - eapply if_true; eauto. eapply IHexec. subst_exprs.
       intros. eassert (H2' := H2 (_ ++ _ :: _)). rewrite <- app_assoc in H2'. eapply H2'.
@@ -634,8 +637,10 @@ Module exec. Section WithEnv.
     - econstructor; intuition. intros.
       replace (rev k2) with (rev k2 ++ nil) in * by apply app_nil_r. Search (length (rev _)).
       rewrite List.skipn_app_r in * by (rewrite rev_length; reflexivity).
-      simpl in *. eapply weaken. 1: eapply H1; eauto.
-      simpl. intros. fwd. exists mSmall', mStack'. intuition. eauto.
+      simpl in *. eapply weaken.
+      { eapply exec_ext with (pick_sp1 := _). 1: eapply H1; eauto. solve_picksps_equal. }
+      simpl. intros. fwd. eexists _, _. intuition eauto. eexists (_ ++ _ :: nil).
+      rewrite <- app_assoc. simpl. rewrite <- (app_assoc _ _ k). simpl. eauto.
     - apply expr_to_other_trace in H. fwd. eapply if_true; intuition eauto.
       eapply weaken.
       { eapply exec_ext with (pick_sp1 := _). 1: eapply IHexec. solve_picksps_equal. }
