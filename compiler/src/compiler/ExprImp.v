@@ -21,7 +21,7 @@ Section ExprImp1.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
-  Context {ext_spec: ExtSpec}.
+  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
 
   Notation var := String.string (only parsing).
   Notation func := String.string (only parsing).
@@ -378,7 +378,7 @@ Section ExprImp2.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
-  Context {ext_spec: ExtSpec}.
+  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
 
   Notation var := String.string (only parsing).
   Notation func := String.string (only parsing).
@@ -417,7 +417,7 @@ Section ExprImp2.
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
         exec env s k t m l mc post2.
-  Proof. eapply exec.weaken. Qed.
+  Proof. intros. eapply exec.weaken; eauto. Qed.
 
   Lemma intersect_exec: forall env k t l m mc s post1,
       exec env s k t m l mc post1 ->

@@ -28,6 +28,7 @@ Section FlattenExpr1.
           {ExprImp_env: map.map string (list string * list string * cmd)}
           {FlatImp_env: map.map string (list string * list string * FlatImp.stmt string)}
           {ext_spec: ExtSpec}
+          {pick_sp: PickSp}
           {NGstate: Type}
           {NG: NameGen String.string NGstate}
           {locals_ok: map.ok locals}
@@ -746,7 +747,7 @@ Section FlattenExpr1.
       eapply @FlatImp.exec.stackalloc. 1: eassumption.
       intros. rename H2 into IHexec.
       eapply @FlatImp.exec.weaken.
-      { eapply IHexec; try reflexivity; try eassumption; maps. }
+      { subst a. eapply IHexec; try reflexivity; try eassumption; maps. }
       { intros. simpl in *. simp. do 2 eexists. ssplit; try eassumption.
         do 2 eexists. ssplit; try eassumption; try solve_MetricLog. maps. }
 

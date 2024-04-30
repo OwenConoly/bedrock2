@@ -218,11 +218,14 @@ Section Spilling.
                     end
               | SStackalloc x z body =>
                   fun _ =>
-                    match k as x with
-                    | _ :: _ =>
-                        stransform_stmt_trace (body, k, sk_so_far ++ leak_save_ires_reg fpval x, fpval, f) _
-                    | nil => (nil, pick_sp (rev sk_so_far))
-                    end
+                    match k as x return k = x -> _ with
+                    | _ :: k' =>
+                        fun _ =>
+                          stransform_stmt_trace (body, k', sk_so_far ++ leak_unit :: leak_save_ires_reg fpval x, fpval, fun skip => f (leak_unit :: skip)) _
+                    | nil =>
+                        fun _ =>
+                          (nil, pick_sp (rev sk_so_far))
+                    end eq_refl
               | SLit x _ =>
                   fun _ =>
                     f [] (sk_so_far ++ leak_save_ires_reg fpval x)
@@ -311,7 +314,7 @@ Section Spilling.
                               let fpval' := pick_sp (rev sk_before_salloc) in
                               stransform_stmt_trace (fbody,
                                   k',
-                                  sk_before_salloc ++ leak_set_vars_to_reg_range fpval' params,
+                                  sk_before_salloc ++ leak_unit :: leak_set_vars_to_reg_range fpval' params,
                                   fpval',
                                   (fun skip sk_so_far' =>
                                      let k'' := List.skipn (length skip) k' in
@@ -2178,20 +2181,32 @@ Section Spilling.
         specialize (H4 nil). simpl in H4. rewrite stransform_stmt_trace_step in H4.
         simpl in H4. rewrite rev_involutive in H4.
         eapply IH; try rewrite H4; try eassumption.
-        intros. rewrite H4'. rewrite stransform_stmt_trace_step. simpl.
-        rewrite stransform_stmt_trace_step in H4'.
-      }
+        intros.
+        replace (rev k1'' ++ leak_unit :: k) with (rev k1'' ++ [leak_unit] ++ k) by reflexivity.
+        rewrite app_assoc.
+        replace (rev k1'' ++ [leak_unit]) with (rev (leak_unit :: k1'')) by reflexivity.
+        rewrite H4'. rewrite stransform_stmt_trace_step. simpl. rewrite <- app_assoc.
+        simpl. subst k2'.
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        repeat rewrite <- app_assoc. simpl. instantiate (1 := fun x _ _ => f x _ _).
+        simpl. reflexivity. }
       cbv beta. intros. fwd.
       edestruct shrink_related_mem as (mSmall2 & ? & ?). 1,2: eassumption.
+      assert (H4' := H4 nil). simpl in H4'. rewrite H4' in H8p1p0.
+      rewrite stransform_stmt_trace_step in H8p1p0. simpl in H8p1p0.
+      rewrite rev_involutive in H8p1p0. subst a. simpl.
       repeat match goal with
              | |- exists _, _ => eexists
              | |- _ /\ _ => split
              end.
       1,2,3,4: eassumption.
       { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
-      { subst k2'. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
-      intros. rename H7p4 into CT. intros.
+      intros. rename H8p3 into CT. subst k2'.
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+      repeat rewrite <- app_assoc in *.
+      rewrite stransform_stmt_trace_step. simpl.
+      rewrite CT with (f_ := fun _ _ _ => _).
+      { reflexivity. }
       assert (H9' := predict_cons _ _ _ _ H9). specialize (H9' I).
       repeat rewrite <- app_assoc in H9. rewrite app_one_cons in H9.
       repeat rewrite (app_assoc _ _ (rev k2'' ++ _)) in H9.
