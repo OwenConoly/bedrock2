@@ -364,12 +364,17 @@ Section Spilling.
       forall k sk,
         fx k sk = fy k sk.
 
-    Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e pick_sp tup :
-      stransform_stmt_trace e pick_sp tup = stransform_stmt_trace_body e pick_sp tup (fun y _ => stransform_stmt_trace e pick_sp y).
-    Proof.
-      cbv [stransform_stmt_trace].
-      apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e pick_sp).
-      { intros. cbv [stransform_stmt_trace_body]. cbv beta.
+  Lemma stransform_stmt_trace_body_ext {env: map.map String.string (list Z * list Z * stmt)} e pick_sp :
+    forall (x1 x2 : bigtuple)
+           (f1 : forall y : bigtuple, lt_tuple y x1 -> trace * word)
+           (f2 : forall y : bigtuple, lt_tuple y x2 -> trace * word),
+      Equiv x1 x2 ->
+      (forall (y1 y2 : bigtuple) (p1 : lt_tuple y1 x1) (p2 : lt_tuple y2 x2),
+          Equiv y1 y2 -> f1 y1 p1 = f2 y2 p2) ->
+      stransform_stmt_trace_body e pick_sp x1 f1 =
+        stransform_stmt_trace_body e pick_sp x2 f2.
+  Proof.
+    intros. cbv [stransform_stmt_trace_body]. cbv beta.
         destruct x1 as [ [ [ [s_1 k_1] sk_so_far_1] fpval_1] f_1].
         destruct x2 as [ [ [ [s_2 k_2] sk_so_far_2] fpval_2] f_2].
         cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.
@@ -380,9 +385,27 @@ Section Spilling.
         all: try apply H0.
         all: cbv [Equiv]; intuition.
         all: try apply H0.
-        all: cbv [Equiv]; intuition. }
-      { cbv [Equiv]. destruct tup as [ [ [x1 x2] x3] fx]. intuition. }
-    Qed.
+        all: cbv [Equiv]; intuition.
+  Qed.
+
+  Lemma stransform_stmt_trace_step {env: map.map String.string (list Z * list Z * stmt)} e pick_sp tup :
+    stransform_stmt_trace e pick_sp tup = stransform_stmt_trace_body e pick_sp tup (fun y _ => stransform_stmt_trace e pick_sp y).
+  Proof.
+    cbv [stransform_stmt_trace].
+    apply my_Fix_eq with (E1:=Equiv) (x1:=tup) (x2:=tup) (F:=stransform_stmt_trace_body e pick_sp).
+    { apply stransform_stmt_trace_body_ext. }
+    { cbv [Equiv]. destruct tup as [ [ [x1 x2] x3] fx]. intuition. }
+  Qed.
+
+  Lemma stransform_stmt_trace_ext {env: map.map String.string (list Z * list Z * stmt)} e pick_sp x1 x2 :
+    Equiv x1 x2 ->
+    stransform_stmt_trace e pick_sp x1 = stransform_stmt_trace e pick_sp x2.
+  Proof.
+    revert x2. induction (lt_tuple_wf x1). intros. do 2 rewrite stransform_stmt_trace_step.
+    apply stransform_stmt_trace_body_ext.
+    - assumption.
+    - intros. apply H0; assumption.
+  Qed.
    
   Fixpoint spill_stmt(s: stmt): stmt :=
     match s with
@@ -1776,19 +1799,16 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (*problem: we don't want k1 below, we might want x ++ k1 after we accumulate some more trace...*)
             (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
-            (*following is a bad hypothesis; it's too strong, can't prove it.  One above is too weak.
-              (forall k1'' k1''0, pick_sp1 (rev k1'' ++ k1''0 ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''0 ++ k1'')))))*)
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
-                     forall k10 k1''' f_,
-                       (forall x1 x2 x3, f x1 x2 x3 = f_ x1 x2 x3) ->
-                       stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f_ (k10 ++ rev k1'' ++ k1''')) = f_ (k10 ++ rev k1'' ++ k1''') (rev k1'') (rev k2')).
+                     forall k10 k1''' (*f_*),
+                      (* (forall x1 x2 x3, f x1 x2 x3 = f_ x1 x2 x3) ->*)
+                       stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f (k10 ++ rev k1'' ++ k1''')) = f (k10 ++ rev k1'' ++ k1''') (rev k1'') (rev k2')).
   Proof. Search stransform_stmt_trace.
     intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post pick_sp1.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
@@ -2087,6 +2107,8 @@ Section Spilling.
         specialize (CT (k10 ++ [leak_unit]) k1''').
         repeat rewrite <- app_assoc in *.
         subst a. move CT at bottom.
+        
+        rewrite CT.
         rewrite CT with (f_ := fun x _ _ => f_ x _ _).
         { repeat rewrite <- app_assoc. reflexivity. }
         intros. apply H3. }
@@ -2204,9 +2226,9 @@ Section Spilling.
       intros. rename H8p3 into CT. subst k2'.
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
       repeat rewrite <- app_assoc in *.
-      rewrite stransform_stmt_trace_step. simpl.
-      rewrite CT with (f_ := fun _ _ _ => _).
-      { reflexivity. }
+      rewrite stransform_stmt_trace_step. simpl. (*do we need k10 for anything?*)
+      erewrite CT with (f_ := fun _ _ _ => _).
+      { intros. apply H10. reflexivity. }
       assert (H9' := predict_cons _ _ _ _ H9). specialize (H9' I).
       repeat rewrite <- app_assoc in H9. rewrite app_one_cons in H9.
       repeat rewrite (app_assoc _ _ (rev k2'' ++ _)) in H9.
