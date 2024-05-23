@@ -1535,21 +1535,22 @@ Section Spilling.
                       end) = @List.app event.
   Proof. reflexivity. Qed.
   Print spilling_correct_for.
+  Print stransform_fun_trace.
   
-  Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+  Lemma spill_fun_correct_aux: forall e1 e2 pick_sp2 argnames1 retnames1 body1 argnames2 retnames2 body2,
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       spilling_correct_for e1 e2 body1 ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
-        call_spec e1 (argnames1, retnames1, body1) k t m argvals post ->
-        forall pick_sp,
-        call_spec e2 (argnames2, retnames2, body2) k t m argvals
+        call_spec e1 (argnames1, retnames1, body1) (fun k1'' => snd (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k))) k t m argvals post ->
+        call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
           (fun k2' t' m' retvals =>
-             exists k1'' k2'',
-               post (k1'' ++ k) t' m' retvals /\
-                 k2' = k2'' ++ k /\
-                  fst (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) (rev k1'') []) = rev k2').
+             exists k1' k1'' k2'',
+               k1' = k1'' ++ k /\
+               k2' = k2'' ++ k /\
+               post k1' t' m' retvals /\
+                 fst (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k)) = rev k2'').
   Proof.
-    unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex pick_sp lFL3 mc OL2.
+    unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex lFL3 mc OL2.
     unfold spill_fun in Sp. fwd.
     apply_in_hyps @map.getmany_of_list_length.
     apply_in_hyps @map.putmany_of_list_zip_sameLength.
@@ -1560,7 +1561,7 @@ Section Spilling.
     }
     eapply map.sameLength_putmany_of_list in LA.
     destruct LA as (lFH4 & PA).
-    specialize Ex with (1 := PA). Check arg_regs_alt.
+    specialize Ex with (1 := PA).
     rewrite !arg_regs_alt by blia.
     assert (bytes_per_word = 4 \/ bytes_per_word = 8) as B48. {
       unfold bytes_per_word. destruct width_cases as [E' | E']; rewrite E'; cbv; auto.
@@ -1621,18 +1622,19 @@ Section Spilling.
     intros tL4 mL4 lFL4 mcL4 kL4 R.
     eapply exec.seq_cps.
     eapply exec.weaken. {
-      eapply IHexec. 1: apply Ex. Print related. 2: exact R.
-      unfold valid_vars_src.
-      eapply Forall_vars_stmt_impl.
-      2: eapply max_var_sound.
-      2: eapply forallb_vars_stmt_correct.
-      3: eassumption.
-      2: {
-        unfold is_valid_src_var.
-        intros *.
-        rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
-      }
-      cbv beta. subst maxvar'. blia.
+      eapply IHexec. 1: apply Ex. 2: exact R.
+      { unfold valid_vars_src.
+        eapply Forall_vars_stmt_impl.
+        2: eapply max_var_sound.
+        2: eapply forallb_vars_stmt_correct.
+        3: eassumption.
+        2: {
+          unfold is_valid_src_var.
+          intros *.
+          rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
+        }
+        cbv beta. subst maxvar'. blia. }
+      intros. simpl.
     }
     cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & k1'' & k2'' & R5 & OC & Ek1'' & Ek2'' & CT).
     fwd.
