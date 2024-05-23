@@ -1468,88 +1468,6 @@ Section Spilling.
       blia.
   Qed.
   
-  (* this IH looks difficult to state with pick_sp in the semantics - perhaps not too surprising.
-     often things that are intuitively wrong turn out to be painful in practice too.
-
-     we want to do some induction on (exec ... s1 ...).
-     So we have to fix some high-level pick_spH at the very beginning, before saying
-     'induction (H : exec ... s1 ...)'.
-     But in IH, pick_spH should depend on the following things, which we need to revert
-     before starting induction: k2, fpval, f.
-     
-     What is the main issue here?
-         We are trying to use (exec ... s1 ...) as a hypothesis, but also as a conclusion.
-     In what sense?
-         As a hypothesis: this is clear.  We induct on (exec ... s1 ...) to get (exec ... s2 ...).
-         As a conclusion: we want to say, if we have (exec pick_sp ... s2 ...), then we get 
-         (exec (g pick_sp) ... s1 ...).
-     How do we stop this bidirectional nonsense?  Why is it here in the first place?
-         It's here because we need to show that high-level pick_sp is a function of low-level pick_sp.
-         Let g be the function which takes low-level pick_sp to high-level pick_sp.
-         Too bad g isn't invertible.
-         Since it's not, we can do this:
-               Fix arbitrary pick_spH.  Induct on (exec pick_spH ... s1 ...) to get
-               (forall pick_spL, pick_spH = g pick_spL -> exec pick_spL ... s2 ...).
-         OK, this fixes part of the problem.
-     Remaining issue:
-         Now we can put f in after the inductive hypothesis.  Good.  But it still needs to come before pick_spL.
-         This is no good, since we want it to be in the postcondition.
-         Is it possible to take it out of the postcondition?  Probably.
-         But not easily... I tried taking f out of the postcondition on branch pick_sp (where Spilling.v compiles).
-         It broke the proof in the while case, the first place f is used nontrivially.
-         Wasn't clear how to fix.
-
-         We could fix that by moving the hypothesis about pick_spH = g pick_spL into the postcondition.
-         Then we could have f in the postcondition, as desired.
-         But no, this doesn't actually work, because we can't even prove (exec pick_spL ... s2 ... True) without
-         the pick_spH = g pick_spL hypothesis.  So again, it is unfortunate to have pick_sp in the semantics.
-         
-         Is that true?  Can we prove (exec pick_spL ... s2 ... True) without that hypothesis?
-         What's a counterexample, where s1 crashes with some pick_sps but not all?
-             s1 := stackalloc 1 as x; y = load1(pick_sp _)
-         There it is.
-         Incidentally, this exposes a difference between putting pick_sp in the semantics and not.
-         If we put it in the semantics, we can prove that the program above terminates/doesn't crash/whatever.
-         If we don't, then we can't.
-         Do we want to be able to prove things like that?  I don't think so.  That program is pretty dumb.
-         Yeah, it's really a flaw to be able to prove programs like that.
-         Of course, we can't really prove that programs like that terminate, if you consider a program to have 
-         only been proven when we have something of type (forall pick_sp, exec pick_sp ... s ...).
-
-     OK, never mind thinking about how to modify this proof to work with pick_sp in the semantics.
-     Start over.
-     What are the obstacles?
-     1. It's unclear how to represent the correctness of the continuation f.
-        With the old method, this was something like:
-             (forall k1''' f,
-                     predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                     predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'' ++ k1''')).
-        That is, if f handles everything coming after the trace exhausted by this statement, then we correctly handle the whole trace.
-        What is the analogous thing with this method?
-        Can't write correctness of f using a single exec statement, since the trace predicted by f may come from executing many fragments of different statements.
-        Do we really need correctness of f?  Instead, why not just state that when our trace overflows the statement, then the leftover trace is passed to f. (actually, might doing this make proofs easier with the other method?)
-    2. ...
-
-    It seems like a good way to prove this would be:
-       first prove (exec ... s1 ...) -> (exec ... s2 ...) to get correctness of first part of stransform_stmt_trace.
-       then, prove (exec pick_spL ... s2 ...) -> (exec (g pick_spL) ... s1 ...) to get correctness of second part.
-    Or something?  Some subtlety with the first part: want to show that lower thing holds for all pick_spL, so need
-    to show that all pick_spL's are possible refinements of some pick_spH.
-    Of course that's no good, don't want to prove that.
-
-   In simple terms, what is the issue?
-          Cannot write down inductive hypothesis.
-          High-level pick_sp depends on low-level state, so cannot even write down hypothesis to induct on without talking about low-level state.
-          This seems related to the fact that we really don't want to know 'high-level program executes to this post with this pick_sp' - we
-          don't care about that, we just want the nice nondeterministic thing.
-
-          With the nondeterministic thing, we get to specify how the low-level statement refines the behavior of the high-level statement.
-          Now, we have to first specify how the high-level behavior is refined, and then prove that the low-level statement refines it.
-          This is harder. I think it's harder?  Or I am just missing something.
-          This is the first compiler-correctness statement that has not seemed 'natural' in a sense.
-          Before, it has always at least been obvious where to start.
-   *)
-  
   Definition spilling_correct_for(e1 e2 : env)(s1 : stmt) : Prop :=
     forall (k1 : trace) (t1 : io_trace) (m1 : mem) (l1 : locals) (mc1 : MetricLog)
            (post : trace -> io_trace -> mem -> locals -> MetricLog -> Prop) pick_sp1,
@@ -1559,16 +1477,15 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (rev k1 ++ k1'') = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f (rev k1 ++ k1''))))) ->
+            (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, f k1''))) ->
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
-                 exists k1' t1' m1' l1' mc1' k1'' k2'',
+                 exists k1' t1' m1' l1' mc1' k1'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
-                     k2' = k2'' ++ k2 /\
                      forall k1''',
-                       stransform_stmt_trace e1 pick_sp1 (s1, rev k1'' ++ k1''', rev k2, fpval, f (rev k1'' ++ k1''')) = f (rev k1'' ++ k1''') (rev k1'') (rev k2')).
+                       stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f (rev k1'' ++ k1''')) = f (rev k1'' ++ k1''') (rev k1'') (rev k2')).
 
   Definition call_spec(e: env) '(argnames, retnames, fbody)
     (pick_sp: PickSp) (k: trace)(t: io_trace)(m: mem)(argvals: list word)
@@ -1609,16 +1526,17 @@ Section Spilling.
 
   Lemma app_one_cons {A} (x : A) (l : list A) :
     x :: l = [x] ++ l.
-  Proof. reflexivity. Qed. Check stransform_fun_trace.
+  Proof. reflexivity. Qed.
 
   Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
                       match l with
                       | [] => m0
                       | a1 :: l1 => a1 :: app l1 m0
                       end) = @List.app event.
-  Proof. reflexivity. Qed. Print stransform_fun_trace.
+  Proof. reflexivity. Qed.
+  Print spilling_correct_for.
   
-  (*Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+  Lemma spill_fun_correct_aux: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       spilling_correct_for e1 e2 body1 ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
@@ -1629,9 +1547,7 @@ Section Spilling.
              exists k1'' k2'',
                post (k1'' ++ k) t' m' retvals /\
                  k2' = k2'' ++ k /\
-                 (predicts pick_sp (rev k2'') ->
-                  fst (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) (rev k1'') []) = rev k2'' /\
-                    predicts (fun k => snd (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) k [])) (rev k1''))).
+                  fst (stransform_fun_trace e1 pick_sp (argnames1, retnames1, body1) (rev k1'') []) = rev k2').
   Proof.
     unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex pick_sp lFL3 mc OL2.
     unfold spill_fun in Sp. fwd.
@@ -1799,15 +1715,14 @@ Section Spilling.
         forall (k2 : trace) (t2 : io_trace) (m2 : mem) (l2 : locals) (mc2 : MetricLog) (fpval : word),
           related maxvar frame fpval t1 m1 l1 t2 m2 l2 ->
           forall pick_sp2 f,
-            (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, (f k1'')))) ->
+            (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (stransform_stmt_trace e1 pick_sp2 (s1, k1'', rev k2, fpval, f k1''))) ->
             exec (pick_sp := pick_sp2) e2 (spill_stmt s1) k2 t2 m2 l2 mc2
               (fun (k2' : trace) (t2' : io_trace) (m2' : mem) (l2' : locals) (mc2' : MetricLog) =>
                  exists k1' t1' m1' l1' mc1' k1'',
                    related maxvar frame fpval t1' m1' l1' t2' m2' l2' /\
                      post k1' t1' m1' l1' mc1' /\
                      k1' = k1'' ++ k1 /\
-                     forall k1''' (*f_*),
-                      (* (forall x1 x2 x3, f x1 x2 x3 = f_ x1 x2 x3) ->*)
+                     forall k1''',
                        stransform_stmt_trace e1 pick_sp2 (s1, rev k1'' ++ k1''', rev k2, fpval, f (rev k1'' ++ k1''')) = f (rev k1'' ++ k1''') (rev k1'') (rev k2')).
   Proof. Search stransform_stmt_trace.
     intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post pick_sp1.
