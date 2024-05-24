@@ -578,9 +578,9 @@ Section Spilling.
     let fpval := pick_sp (rev sk_so_far) in
     stransform_stmt_trace e pick_sp (body,
         k,
-        sk_so_far ++ leak_set_vars_to_reg_range fpval argnames,
+        sk_so_far ++ leak_unit :: leak_set_vars_to_reg_range fpval argnames,
         fpval,
-        (fun skip sk_so_far' => (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, word.of_Z 0))).
+        (fun skip sk_so_far' => (sk_so_far' ++ leak_unit :: leak_set_reg_range_to_vars fpval resnames, word.of_Z 0))).
 
   Lemma firstn_min_absorb_length_r{A: Type}: forall (l: list A) n,
       List.firstn (Nat.min n (length l)) l = List.firstn n l.
@@ -1541,14 +1541,13 @@ Section Spilling.
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       spilling_correct_for e1 e2 body1 ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
-        call_spec e1 (argnames1, retnames1, body1) (fun k1'' => snd (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k))) k t m argvals post ->
+        call_spec e1 (argnames1, retnames1, body1) (fun k1 => snd (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (skipn (length k) (rev k1)) (rev k))) k t m argvals post ->
         call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
           (fun k2' t' m' retvals =>
-             exists k1' k1'' k2'',
+             exists k1' k1'',
                k1' = k1'' ++ k /\
-               k2' = k2'' ++ k /\
                post k1' t' m' retvals /\
-                 fst (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k)) = rev k2'').
+                 fst (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k)) = rev k2').
   Proof.
     unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex lFL3 mc OL2.
     unfold spill_fun in Sp. fwd.
@@ -1634,9 +1633,13 @@ Section Spilling.
           rewrite ?Bool.andb_true_iff, ?Bool.orb_true_iff, ?Z.ltb_lt. reflexivity.
         }
         cbv beta. subst maxvar'. blia. }
-      intros. simpl.
+      intros. simpl. subst a kL4.
+      repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+      repeat rewrite <- app_assoc.
+      rewrite List.skipn_app_r by (symmetry; apply rev_length).
+      reflexivity.
     }
-    cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & k1'' & k2'' & R5 & OC & Ek1'' & Ek2'' & CT).
+    cbv beta. intros kL5 tL5 mL5 lFL5 mcL5 (kH5 & tH5 & mH5 & lFH5 & mcH5 & k1'' & R5 & OC & Ek1'' & CT).
     fwd.
     eapply set_reg_range_to_vars_correct.
     { eassumption. }
@@ -1670,7 +1673,7 @@ Section Spilling.
            | |- exists _, _ => eexists
            | |- _ /\ _ => split
            end.
-    4: { eassumption. }
+    5: eassumption.
     2: {
       unfold map.split. eauto.
     }
@@ -1686,7 +1689,36 @@ Section Spilling.
       }
       blia. }
     1: eassumption.
-    { subst kL6. subst kL4. rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
+    1: reflexivity.
+    { subst kL6 kL4 a. simpl.
+      repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+      repeat (rewrite <- app_assoc in * || simpl in * ).
+      specialize (CT nil). rewrite app_nil_r in CT. Fail rewrite CT. (*???*)
+      Set Printing Implicit.
+      Fail replace (rev kL5 ++ leak_set_reg_range_to_vars (pick_sp2 k) retnames1) with
+        (fst (rev kL5 ++ leak_unit :: leak_set_reg_range_to_vars (pick_sp2 k) retnames1, word.of_Z 0)).
+      replace (rev kL5 ++ leak_unit :: leak_set_reg_range_to_vars (pick_sp2 k) retnames1) with
+        (fst (rev kL5 ++ leak_unit :: leak_set_reg_range_to_vars (pick_sp2 k) retnames1, @word.of_Z width word 0)).
+      2: { simpl. reflexivity.
+      rewrite <- CT.
+      assert (stransform_stmt_trace e1 pick_sp2
+         (body1, rev k1'',
+          rev k ++ leak_unit :: leak_set_vars_to_reg_range (pick_sp2 k) argnames1, 
+          pick_sp2 k,
+          fun (_ : trace) (sk_so_far' : list event) =>
+          (sk_so_far' ++ leak_unit :: leak_set_reg_range_to_vars (pick_sp2 k) retnames1,
+           word.of_Z 0)) = stransform_stmt_trace e1 pick_sp2
+       (body1, rev k1'', rev k ++ leak_unit :: leak_set_vars_to_reg_range (pick_sp2 k) argnames1,
+        pick_sp2 k,
+        fun (_ : trace) (sk_so_far' : list event) =>
+        (sk_so_far' ++ leak_unit :: leak_set_reg_range_to_vars (pick_sp2 k) retnames1,
+         word.of_Z 0))). { exact eq_refl.
+      rewrite CT.
+      
+      cbv [stransform_fun_trace]. Search kL5. admit. }
+    cbv [stransform_fun_trace].
+
+    rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
     { repeat (rewrite rev_app_distr || rewrite rev_involutive || cbn [rev List.app]).
       intros H. rewrite app_one_cons in H. rewrite app_assoc in H.
       specialize CT with (1 := H). destruct CT as [updown downup].
