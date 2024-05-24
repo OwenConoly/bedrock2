@@ -1544,9 +1544,8 @@ Section Spilling.
         call_spec e1 (argnames1, retnames1, body1) (fun k1 => snd (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (skipn (length k) (rev k1)) (rev k))) k t m argvals post ->
         call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
           (fun k2' t' m' retvals =>
-             exists k1' k1'',
-               k1' = k1'' ++ k /\
-               post k1' t' m' retvals /\
+             exists k1'',
+               post (k1'' ++ k) t' m' retvals /\
                  fst (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k)) = rev k2').
   Proof.
     unfold call_spec, spilling_correct_for. intros * Sp IHexec * Ex lFL3 mc OL2.
@@ -1673,7 +1672,6 @@ Section Spilling.
            | |- exists _, _ => eexists
            | |- _ /\ _ => split
            end.
-    5: eassumption.
     2: {
       unfold map.split. eauto.
     }
@@ -1689,7 +1687,7 @@ Section Spilling.
       }
       blia. }
     1: eassumption.
-    1: reflexivity.
+    1: eassumption.
     { subst kL6 kL4 a. simpl.
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
       repeat (rewrite <- app_assoc in * || simpl in * ).
@@ -2446,16 +2444,15 @@ Section Spilling.
       intros. simpl. rewrite stransform_stmt_trace_step. simpl. reflexivity.
   Qed.
 
-  Lemma spill_fun_correct: forall e1 e2 argnames1 retnames1 body1 argnames2 retnames2 body2,
+  Lemma spill_fun_correct: forall e1 e2 pick_sp2 argnames1 retnames1 body1 argnames2 retnames2 body2,
       spill_functions e1 = Success e2 ->
       spill_fun (argnames1, retnames1, body1) = Success (argnames2, retnames2, body2) ->
       forall argvals k t m (post: trace -> io_trace -> mem -> list word -> Prop),
         call_spec e1 (argnames1, retnames1, body1) (fun k1 => snd (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (skipn (length k) (rev k1)) (rev k))) k t m argvals post ->
         call_spec e2 (argnames2, retnames2, body2) pick_sp2 k t m argvals
           (fun k2' t' m' retvals =>
-             exists k1' k1'',
-               k1' = k1'' ++ k /\
-                 post k1' t' m' retvals /\
+             exists k1'',
+               post (k1'' ++ k) t' m' retvals /\
                  fst (stransform_fun_trace e1 pick_sp2 (argnames1, retnames1, body1) (rev k1'') (rev k)) = rev k2').
   Proof.
     intros. eapply spill_fun_correct_aux; try eassumption.
