@@ -296,47 +296,47 @@ Section WithParameters.
      we enter a new function body, to make sure functions cannot call themselves, while
      [e_impl] and [e_pos] remain the same throughout because that's mandated by
      [FlatImp.exec] and [compile_stmt], respectively *)
-  Print rtransform_stmt_trace_body.
+  Print rtransform_stmt_trace_body. Check exec.
+  Check (exec _ _).
   Definition compiles_FlatToRiscv_correctly{BWM: bitwidth_iset width iset}
     (f: pos_map -> Z -> Z -> stmt -> list Instruction)
     (s: stmt): Prop :=
-    forall e_impl_full initialTrace initialIOTrace initialMH initialRegsH initialMetricsH postH,
-    exec e_impl_full s initialTrace initialIOTrace (initialMH: mem) initialRegsH initialMetricsH postH ->
+    forall e_impl_full pick_sp1 initialTrace initialIOTrace initialMH initialRegsH initialMetricsH postH,
+    exec (pick_sp := pick_sp1) e_impl_full s initialTrace initialIOTrace (initialMH: mem) initialRegsH initialMetricsH postH ->
     forall g e_impl e_pos program_base insts xframe (initialL: MetricRiscvMachine) pos,
-    map.extends e_impl_full e_impl ->
-    good_e_impl e_impl e_pos ->
-    fits_stack g.(rem_framewords) g.(rem_stackwords) e_impl s ->
-    f e_pos pos (bytes_per_word * g.(rem_framewords)) s = insts ->
-    uses_standard_arg_regs s ->
-    valid_FlatImp_vars s ->
-    pos mod 4 = 0 ->
-    word.unsigned program_base mod 4 = 0 ->
-    initialL.(getPc) = word.add program_base (word.of_Z pos) ->
-    iff1 g.(allx) (xframe *
-                   program iset (word.add program_base (word.of_Z pos)) insts *
-                   functions program_base e_pos e_impl)%sep ->
-    goodMachine initialIOTrace initialMH initialRegsH g initialL ->
-    runsTo initialL (fun finalL => exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
-         postH finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
-         finalL.(getPc) = word.add initialL.(getPc)
-                                   (word.of_Z (4 * Z.of_nat (List.length insts))) /\
-         map.only_differ initialL.(getRegs)
-                 (union (of_list (modVars_as_list Z.eqb s)) (singleton_set RegisterNames.ra))
-                 finalL.(getRegs) /\
-         (finalL.(getMetrics) - initialL.(getMetrics) <=
-          lowerMetrics (finalMetricsH - initialMetricsH))%metricsL /\
-         goodMachine finalIOTrace finalMH finalRegsH g finalL /\
-           exists k1'' k2'',
-             finalTrace = k1'' ++ initialTrace /\
-               getTrace finalL = k2'' ++ getTrace initialL /\
-               (forall k20 k1''' f,
-                   fst (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                          (s, rev k1'' ++ k1''', k20, pos, g.(p_sp), (bytes_per_word * rem_framewords g), f)) =
-                     fst (f (rev k1'') (k20 ++ rev k2''))) /\
-               (forall k20 (*note how, unlike in 'spilling_correct_for', we don't use k20 for anything... it's just in the way.  strongly suggests I should get rid of it. *)k1''' f,
-                   predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                   predicts (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                             (s, k, k20, pos, g.(p_sp), (bytes_per_word * rem_framewords g), (f k)))) (rev k1'' ++ k1'''))).
+    forall cont,
+      (forall k1'', pick_sp1 (rev k1'' ++ initialTrace) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                                 (s, k1'', getTrace initialL, pos, g.(p_sp), bytes_per_word * rem_framewords g, cont k1''))) ->
+      map.extends e_impl_full e_impl ->
+      good_e_impl e_impl e_pos ->
+      fits_stack g.(rem_framewords) g.(rem_stackwords) e_impl s ->
+      f e_pos pos (bytes_per_word * g.(rem_framewords)) s = insts ->
+      uses_standard_arg_regs s ->
+      valid_FlatImp_vars s ->
+      pos mod 4 = 0 ->
+      word.unsigned program_base mod 4 = 0 ->
+      initialL.(getPc) = word.add program_base (word.of_Z pos) ->
+      iff1 g.(allx) (xframe *
+                       program iset (word.add program_base (word.of_Z pos)) insts *
+                       functions program_base e_pos e_impl)%sep ->
+      goodMachine initialIOTrace initialMH initialRegsH g initialL ->
+      runsTo initialL (fun finalL => exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
+                           postH finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
+                             finalL.(getPc) = word.add initialL.(getPc)
+                                                                  (word.of_Z (4 * Z.of_nat (List.length insts))) /\
+                             map.only_differ initialL.(getRegs)
+                                                        (union (of_list (modVars_as_list Z.eqb s)) (singleton_set RegisterNames.ra))
+                                                        finalL.(getRegs) /\
+                             (finalL.(getMetrics) - initialL.(getMetrics) <=
+                                lowerMetrics (finalMetricsH - initialMetricsH))%metricsL /\
+                             goodMachine finalIOTrace finalMH finalRegsH g finalL /\
+                             exists k1'' k2'',
+                               finalTrace = k1'' ++ initialTrace /\
+                                 getTrace finalL = k2'' ++ getTrace initialL /\
+                                 forall k1''',
+                                   rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                          (s, rev k1'' ++ k1''', getTrace initialL, pos, g.(p_sp), (bytes_per_word * rem_framewords g), cont (rev k1'' ++ k1''')) =
+                                     cont (rev k1'' ++ k1''') (rev k1'') (rev k2'')).
 End WithParameters.
 
 Ltac simpl_g_get :=
