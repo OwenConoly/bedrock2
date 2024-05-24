@@ -514,7 +514,7 @@ Section FlatToRiscv1.
     Definition leak_Jal := ILeakage Jal_leakage.
     Definition leak_Jalr := ILeakage Jalr_leakage.
     
-    Definition bigtuple : Type := stmt Z * trace * list LeakageEvent * Z * word * Z * (trace -> list LeakageEvent -> list LeakageEvent * event).
+    Definition bigtuple : Type := stmt Z * trace * list LeakageEvent * Z * word * Z * (trace -> list LeakageEvent -> list LeakageEvent * word).
   
     Definition project_tuple (tup : bigtuple) : nat * stmt Z :=
       let '(s, k, rk_so_far, mypos, sp_val, stackoffset, f) := tup in
@@ -567,8 +567,8 @@ Section FlatToRiscv1.
     Print bigtuple.
     Definition rtransform_stmt_trace_body
       (tup : (*stmt Z * trace * trace * Z * word * Z * (trace -> trace -> list LeakageEvent * trace)*) bigtuple)
-      (rtransform_stmt_trace : forall othertup, lt_tuple othertup tup -> list LeakageEvent * event)
-      : list LeakageEvent * event.
+      (rtransform_stmt_trace : forall othertup, lt_tuple othertup tup -> list LeakageEvent * word)
+      : list LeakageEvent * word.
       refine (
           match tup as x return tup = x -> _ with
           | (s, k, rk_so_far, mypos, sp_val, stackoffset, f) =>
@@ -579,29 +579,29 @@ Section FlatToRiscv1.
                     match k with
                     | leak_word addr :: k' =>
                         f [leak_word addr] (rk_so_far ++ [leak_load sz addr])
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SStore sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
                         f [leak_word addr] (rk_so_far ++ [leak_store sz addr])
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SInlinetable sz x t i =>
                   fun _ =>
                     match k with
                     | leak_word i' :: k' =>
                         f [leak_word i'] (rk_so_far ++ [leak_Jal; leak_Add; leak_load sz (word.add (word.add (word.add program_base (word.of_Z mypos)) (word.of_Z 4)) i')])
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               | SStackalloc _ n body =>
                   fun _ =>
                     match k as x return k = x -> _ with
-                    | consume_word addr :: k' =>
+                    | leak_unit :: k' =>
                         fun _ =>
-                          rtransform_stmt_trace (body, k', rk_so_far ++ [ leak_Addi ], mypos + 4, sp_val, stackoffset - n, fun skip => f (consume_word addr :: skip)) _
-                    | _ => fun _ => (nil, consume_word (word.add sp_val (word.of_Z (stackoffset - n))))
+                          rtransform_stmt_trace (body, k', rk_so_far ++ [ leak_Addi ], mypos + 4, sp_val, stackoffset - n, fun skip => f (leak_unit :: skip)) _
+                    | _ => fun _ => (nil, word.add sp_val (word.of_Z (stackoffset - n)))
                     end eq_refl
               | SLit _ v =>
                   fun _ =>
@@ -631,9 +631,9 @@ Section FlatToRiscv1.
                         match leak_op op operand2 x1 x2 with
                         | Some l =>
                             f newt (rk_so_far ++ l)
-                        | None => (nil, leak_unit)
+                        | None => (nil, word.of_Z 0)
                         end
-                    | None => (nil, leak_unit)
+                    | None => (nil, word.of_Z 0)
                     end
               | SSet _ _ =>
                   fun _ =>
@@ -653,7 +653,7 @@ Section FlatToRiscv1.
                               fun skip rk_so_far' =>
                                 f (leak_bool b :: skip)
                                   (rk_so_far' ++ if b then [leak_Jal] else [])) _
-                    | _ => fun _ => (nil, leak_unit)
+                    | _ => fun _ => (nil, word.of_Z 0)
                     end eq_refl
               | SLoop body1 cond body2 =>
                   fun _ =>
@@ -679,7 +679,7 @@ Section FlatToRiscv1.
                              | leak_bool false :: k'' =>
                                  fun _ =>
                                    f (skip ++ [leak_bool false]) (rk_so_far' ++ [ leak_bcond_by_inverting cond (negb false) ])
-                             | _ => fun _ => (nil, leak_unit)
+                             | _ => fun _ => (nil, word.of_Z 0)
                              end eq_refl)) _
               | SSeq s1 s2 =>
                   fun _ =>
@@ -705,16 +705,16 @@ Section FlatToRiscv1.
                                   fun skip rk_so_far' =>
                                     let k'' := List.skipn (length skip) k' in
                                     f (leak_unit :: skip) (rk_so_far' ++ afterBody)) _
-                          | _, _ => (nil, leak_unit)
+                          | _, _ => (nil, word.of_Z 0)
                           end
-                    | _ => fun _ => (nil, leak_unit)
+                    | _ => fun _ => (nil, word.of_Z 0)
                     end eq_refl
               | SInteract _ _ _ =>
                   fun _ =>
                     match k with
                     | leak_list l :: k' =>
                         f [leak_list l] (rk_so_far ++ leak_ext_call e mypos stackoffset s l)
-                    | _ => (nil, leak_unit)
+                    | _ => (nil, word.of_Z 0)
                     end
               end eq_refl
           end eq_refl).
@@ -776,8 +776,8 @@ Section FlatToRiscv1.
       Proof. intros. subst. reflexivity. Qed.        
 
       Lemma rtransform_stmt_trace_body_ext :
-        forall (x1 x2 : bigtuple) (f1 : forall y : bigtuple, lt_tuple y x1 -> list LeakageEvent * event)
-               (f2 : forall y : bigtuple, lt_tuple y x2 -> list LeakageEvent * event),
+        forall (x1 x2 : bigtuple) (f1 : forall y : bigtuple, lt_tuple y x1 -> list LeakageEvent * word)
+               (f2 : forall y : bigtuple, lt_tuple y x2 -> list LeakageEvent * word),
           Equiv x1 x2 ->
           (forall (y1 y2 : bigtuple) (p1 : lt_tuple y1 x1) (p2 : lt_tuple y2 x2),
               Equiv y1 y2 -> f1 y1 p1 = f2 y2 p2) -> @rtransform_stmt_trace_body x1 f1 = @rtransform_stmt_trace_body x2 f2.
@@ -821,7 +821,7 @@ Section FlatToRiscv1.
       Definition rtransform_fun_trace 
         (k : trace) (rk_so_far : list LeakageEvent) (fpos : Z) (sp_val : word)
         (rets : list Z) fbody
-        (f : trace -> list LeakageEvent -> list LeakageEvent * event) :=
+        (f : trace -> list LeakageEvent -> list LeakageEvent * word) :=
         let '(beforeBody, afterBody, mypos', sp_val', stackoffset') := rtransform_fun_trace_helper fpos sp_val rets fbody in
         rtransform_stmt_trace (fbody, k, rk_so_far ++ beforeBody, mypos', sp_val', stackoffset',
             fun skip rk_so_far' => f skip (rk_so_far' ++ afterBody)).
