@@ -305,8 +305,6 @@ Section WithParameters.
     exec (pick_sp := pick_sp1) e_impl_full s initialTrace initialIOTrace (initialMH: mem) initialRegsH initialMetricsH postH ->
     forall g e_impl e_pos program_base insts xframe (initialL: MetricRiscvMachine) pos,
     forall cont,
-      (forall k1'', pick_sp1 (rev k1'' ++ initialTrace) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                                                 (s, k1'', getTrace initialL, pos, g.(p_sp), bytes_per_word * rem_framewords g, cont k1''))) ->
       map.extends e_impl_full e_impl ->
       good_e_impl e_impl e_pos ->
       fits_stack g.(rem_framewords) g.(rem_stackwords) e_impl s ->
@@ -320,6 +318,8 @@ Section WithParameters.
                        program iset (word.add program_base (word.of_Z pos)) insts *
                        functions program_base e_pos e_impl)%sep ->
       goodMachine initialIOTrace initialMH initialRegsH g initialL ->
+      (forall k1'', pick_sp1 (rev k1'' ++ initialTrace) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                                 (s, k1'', rev initialL.(getTrace), pos, g.(p_sp), bytes_per_word * rem_framewords g, cont k1''))) ->
       runsTo initialL (fun finalL => exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
                            postH finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
                              finalL.(getPc) = word.add initialL.(getPc)
@@ -334,7 +334,7 @@ Section WithParameters.
                                finalTrace = k1'' ++ initialTrace /\
                                  forall k1''',
                                    rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                          (s, rev k1'' ++ k1''', getTrace initialL, pos, g.(p_sp), (bytes_per_word * rem_framewords g), cont (rev k1'' ++ k1''')) =
+                                          (s, rev k1'' ++ k1''', rev initialL.(getTrace), pos, g.(p_sp), (bytes_per_word * rem_framewords g), cont (rev k1'' ++ k1''')) =
                                      cont (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))).
 End WithParameters.
 

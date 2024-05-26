@@ -441,8 +441,6 @@ Section Proofs.
     cont
     (IH: forall (g0 : GhostConsts) (insts0 : list Instruction) (xframe0 : mem -> Prop)
                 (initialL : RiscvMachineL) (pos0 : Z) cont0,
-        (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                                                          (body, k1'', getTrace initialL, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 k1''))) ->
         fits_stack (rem_framewords g0) (rem_stackwords g0) e_impl body ->
         compile_stmt iset compile_ext_call e_pos pos0 (bytes_per_word * rem_framewords g0) body =
         insts0 ->
@@ -452,6 +450,8 @@ Section Proofs.
              ((xframe0 * program iset (program_base + !pos0) insts0)%sep *
               FlatToRiscvCommon.functions compile_ext_call program_base e_pos e_impl) ->
         goodMachine t m st0 g0 initialL ->
+        (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                         (body, k1'', rev initialL.(getTrace), pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 k1''))) ->
         runsTo initialL (fun finalL =>
           exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
             outcome finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
@@ -465,7 +465,7 @@ Section Proofs.
                 finalTrace = k1'' ++ k1 /\
                   forall k1''',
                   rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                           (body, rev k1'' ++ k1''', getTrace initialL, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 (rev k1'' ++ k1''')) = cont0 (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))))
+                           (body, rev k1'' ++ k1''', rev initialL.(getTrace), pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 (rev k1'' ++ k1''')) = cont0 (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))))
     (HOutcome: forall (k' : Semantics.trace) (t' : Semantics.io_trace) (m' : mem) (mc' : MetricLog) (st1 : locals),
         outcome k' t' m' st1 mc' ->
         exists (retvs : list word) (l' : locals),
@@ -480,8 +480,6 @@ Section Proofs.
       Some argvs ->
       map.extends e_impl_full e_impl ->
       good_e_impl e_impl e_pos ->
-      (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                                       k1'' mach.(getTrace) pos g.(p_sp) retnames body (cont k1''))) -> 
       fits_stack (stackalloc_words iset body)
                  (rem_stackwords g - framelength (argnames, retnames, body)) e_impl body ->
       FlatToRiscvDef.compile_function iset compile_ext_call e_pos pos (argnames, retnames, body) =
@@ -496,6 +494,8 @@ Section Proofs.
            ((xframe * program iset (program_base + !pos) insts)%sep *
             FlatToRiscvCommon.functions compile_ext_call program_base e_pos e_impl) ->
       goodMachine t m l g mach ->
+      (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                       k1'' (rev mach.(getTrace)) pos g.(p_sp) retnames body (cont k1''))) -> 
       runsToNonDet.runsTo (mcomp_sat (Run.run1 iset)) mach (fun finalL =>
         exists finalTrace finalIOTrace finalMH finalRegsH finalMetricsH,
           post finalTrace finalIOTrace finalMH finalRegsH finalMetricsH /\
@@ -515,10 +515,10 @@ Section Proofs.
               finalTrace = k1'' ++ k1 /\
                 forall k1''',
                 rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                  (rev k1'' ++ k1''') mach.(getTrace) pos g.(p_sp) retnames body (cont (rev k1'' ++ k1''')) =
+                  (rev k1'' ++ k1''') (rev mach.(getTrace)) pos g.(p_sp) retnames body (cont (rev k1'' ++ k1''')) =
         cont (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))).
   Proof.
-    intros * IHexec OC BC OL Exb GetMany Ext GE PSP FS C V Mo Mo' Gra RaM GPC A GM.
+    intros * IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM PSP.
 
     assert (valid_register RegisterNames.ra) by (cbv; auto).
     assert (valid_register RegisterNames.sp) by (cbv; auto).
@@ -696,19 +696,6 @@ Section Proofs.
       ssplit;
       subst FL.
       all: try safe_sidecond.
-      { simpl. intros. rewrite PSP.
-        cbv [rtransform_fun_trace rtransform_fun_trace_helper].
-        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
-        rewrite BPW in *. repeat rewrite <- app_assoc. cbn [List.app].
-        instantiate (1 := fun _ => _). simpl.
-        f_equal. f_equal. f_equal. 2: reflexivity. f_equal.
-        remember (p_sp + _) as new_sp. eassert (Esp: new_sp = _).
-        2: { rewrite Esp. f_equal.
-             { intros. rewrite H2p10p2. repeat rewrite <- app_assoc. reflexivity. }
-             intros ? ? ? Hpredicts. apply H2p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts. }
-      subst. solve_word_eq word_ok.
-        cbv [rewrite rtransform_stmt_trace_
-      }
       { lazymatch goal with
         | H: fits_stack ?x ?y e_impl body |- fits_stack ?x' ?y' e_impl body =>
           replace y' with y; [exact H|]
@@ -769,6 +756,15 @@ Section Proofs.
         - blia.
         - wcancel_assumption.
       }
+      { simpl. intros. rewrite PSP.
+        cbv [rtransform_fun_trace rtransform_fun_trace_helper].
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        rewrite BPW in *. repeat rewrite <- app_assoc. cbn [List.app].
+        instantiate (1 := fun _ => _). simpl.
+        f_equal. f_equal. f_equal. 2: reflexivity. f_equal.
+        remember (p_sp + _) as new_sp. eassert (Esp: new_sp = _).
+        2: { rewrite Esp. reflexivity. }
+        subst. solve_word_eq word_ok. }
     } Check getTrace0.
 
     unfold goodMachine.
@@ -1371,22 +1367,16 @@ Section Proofs.
       wcancel_assumption.
     + reflexivity.
     + assumption.
-    + simpl. cbv [trivialBind trivialReturn]. eexists. eexists. split; [reflexivity|]. split.
-      { do 3 (instantiate (1 := _ :: _); simpl; f_equal).
-        do 3 (instantiate (1 := _ ++ _); rewrite <- (app_assoc _ _ getTrace0); f_equal).
-        do 1 (instantiate (1 := _ :: _); simpl; f_equal).
-        do 1 (instantiate (1 := _ :: _); simpl; f_equal).
-        instantiate (1 := nil). reflexivity. }
+    + simpl. cbv [trivialBind trivialReturn]. eexists. split; [reflexivity|].
       intros. simpl.
       cbv [rtransform_fun_trace rtransform_fun_trace_helper].
       repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
       rewrite BPW in *. repeat rewrite <- app_assoc. cbn [List.app].
-      f_equal. f_equal. f_equal.
-      remember (p_sp + _) as new_sp. eassert (Esp: new_sp = _).
-      2: { rewrite Esp. split.
-           { intros. rewrite H2p10p2. repeat rewrite <- app_assoc. reflexivity. }
-           intros ? ? ? Hpredicts. apply H2p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts. }
-      subst. solve_word_eq word_ok.
+      remember (p_sp - _) as new_sp. eassert (Esp: new_sp = _).
+      2: { rewrite Esp. rewrite <- H2p10p1. f_equal.
+           repeat rewrite <- app_assoc. f_equal. f_equal. f_equal.
+           subst. solve_word_eq word_ok. }
+      solve_word_eq word_ok. (*i think i should be able to get rid of all my uses of this; just write the thing consistently.*)
   Qed.
 
   Lemma compile_stmt_correct:
@@ -1401,7 +1391,7 @@ Section Proofs.
      using cancellation, bitvector reasoning, lia, and firstorder for the sideconditions. *)
     intros compile_ext_call_correct.
     unfold compiles_FlatToRiscv_correctly.
-    induction 1; intros; unfold goodMachine in *; destruct g.
+    induction 1; intros; unfold goodMachine in *; destruct g. Search getTrace.
       all: repeat match goal with
                   | m: _ |- _ => destruct_RiscvMachine m
                   end.
@@ -1420,17 +1410,14 @@ Section Proofs.
             (postH := post) (g := {| allx := allx |}) (pos := pos)
             (extcall := action) (argvars := argvars) (resvars := resvars) (initialMH := m);
           simpl;
-          clear compile_ext_call_correct; cycle -1.
+          clear compile_ext_call_correct; cycle -2.
         { unfold goodMachine, valid_FlatImp_var in *. simpl. ssplit; eauto. }
         all: eauto using exec.interact, fits_stack_interact.
       + simpl. intros finalL A. destruct_RiscvMachine finalL. unfold goodMachine in *. simpl in *.
         destruct_products. subst.
         do 5 eexists; ssplit; eauto.
-        do 2 eexists. split; [reflexivity|]. split; [reflexivity|]. split.
-        { intros. rewrite Arrrrrrrl. reflexivity. }
-        { intros. apply Arrrrrrrr. assumption. }
 
-    - idtac "Case compile_stmt_correct/SCall".
+    - idtac "Case compile_stmt_correct/SCall". Search getTrace.
       (* We have one "map.get e fname" from exec, one from fits_stack, make them match *)
       unfold good_e_impl, valid_FlatImp_fun in *.
       simpl in *.
@@ -1445,7 +1432,7 @@ Section Proofs.
                 specialize H3 with (1 := H2); clear H2;
                 etransitivity; [symmetry|]; eassumption);
         inversion F; subst; clear F
-      end.
+      end. Search getTrace.
       match goal with
       | H: map.get e_impl fname = Some _, G: _ |- _ =>
           pose proof G as e_impl_reduced_props;
@@ -1473,7 +1460,8 @@ Section Proofs.
       clear_old_sep_hyps.
       intro mid. set (mach := mid). intros. fwd. destruct_RiscvMachine mid. subst.
 
-      remember mach.(getLog) as log.
+      remember mach.(getLog) as log. Search getTrace. Search mach.
+      remember (RiscvMachine.getTrace mach) as trace.
       assert (GM: goodMachine log m l
                               {| p_sp := p_sp;
                                  rem_stackwords := #(List.length old_stackvals);
@@ -1487,7 +1475,7 @@ Section Proofs.
       }
       match type of GM with
       | goodMachine _ _ _ ?gh _ => remember gh as g
-      end.
+      end. simpl.
       match goal with
       | |- ?G => replace G with
             (runsToNonDet.runsTo (mcomp_sat (Run.run1 iset)) mach
@@ -1500,26 +1488,15 @@ Section Proofs.
          (getRegs finalL) /\
        (getMetrics finalL - initialL_metrics <= lowerMetrics (finalMetricsH - mc))%metricsL /\
          goodMachine finalIOTrace finalMH finalRegsH g finalL /\
-         (exists (k1'' : list event) (k2'' : list LeakageEvent),
+         (exists k1'' : list event,
           finalTrace = k1'' ++ k /\
-          RiscvMachine.getTrace finalL = k2'' ++ getTrace /\
-          (forall (k20 : list LeakageEvent) (k1''' : list event)
-             (f : trace -> list LeakageEvent -> list LeakageEvent * event),
-           fst
-             (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                (SCall binds fname args, rev k1'' ++ k1''', k20, pos, p_sp,
-                 (bytes_per_word * #(Datatypes.length unused_part_of_caller_frame))%Z, f)) =
-           fst (f (rev k1'') (k20 ++ rev k2''))) /\
-          (forall (k20 : list LeakageEvent) (k1''' : trace)
-             (f : list event -> list event -> list LeakageEvent -> list LeakageEvent * event),
-           predicts (fun k0 : trace => snd (f (rev k1'' ++ k0) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-           predicts
-             (fun k0 : trace =>
-              snd
-                (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                   (SCall binds fname args, k0, k20, pos, p_sp,
-                    (bytes_per_word * #(Datatypes.length unused_part_of_caller_frame))%Z, 
-                    f k0))) (rev k1'' ++ k1''')))))
+          (forall k1''' : list event,
+           rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base
+             e_impl_full
+             (SCall binds fname args, rev k1'' ++ k1''', rev getTrace, pos, p_sp,
+              (bytes_per_word * #(Datatypes.length unused_part_of_caller_frame))%Z,
+              cont (rev k1'' ++ k1''')) =
+           cont (rev k1'' ++ k1''') (rev k1'') (rev (RiscvMachine.getTrace finalL))))))
       end.
       2: { subst. reflexivity. }
 
@@ -1613,11 +1590,11 @@ Section Proofs.
         apply_in_hyps @map.getmany_of_list_length.
         congruence.
       }
-      subst args.
+      subst args. simpl in IHexec.
       let T := type of IHexec in let T' := open_constr:(
         (forall (g : GhostConsts) (e_impl : env) (e_pos : pos_map)
              (program_base : word) (insts : list Instruction) (xframe : mem -> Prop)
-             (initialL : RiscvMachineL) (pos : Z),
+             (initialL : RiscvMachineL) (pos : Z) cont,
            map.extends e_impl_full e_impl ->
            good_e_impl e_impl e_pos ->
            fits_stack (rem_framewords g) (rem_stackwords g) e_impl body ->
@@ -1632,6 +1609,13 @@ Section Proofs.
              ((xframe * program iset (program_base + !pos) insts)%sep *
               functions program_base e_pos e_impl) ->
            goodMachine log m st0 g initialL ->
+           (forall k1'' : list event,
+               pick_sp1 (rev k1'' ++ leak_unit :: k) =
+                  snd
+                    (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base
+                       e_impl_full
+                       (body, k1'', rev (RiscvMachine.getTrace initialL), pos, FlatToRiscvCommon.p_sp g,
+                         (bytes_per_word * rem_framewords g)%Z, cont k1''))) ->
            runsTo initialL
              (fun finalL : RiscvMachineL =>
               exists
@@ -1665,6 +1649,7 @@ Section Proofs.
       move IHexec before OL.
       rename H3 into OC.
       rename H0 into GetMany.
+      rename H15 into PSP.
       move GetMany after Exb.
       move OC before OL.
       remember (program_base + !pos_orig + !4) as ret_addr.
@@ -1685,10 +1670,37 @@ Section Proofs.
         repeat match goal with
                | x := _ |- _ => clearbody x
                end.
+        subst 
+        
         clear - word_ok RVM PRParams PR ext_spec word_riscv_ok locals_ok mem_ok pos_map_ok env_ok
-                  IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM.
+                  IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM PSP.
         revert IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM.
-        eapply compile_function_body_correct.
+        (* here we do a hacky thing to deal with the fact that unifying PSP with the corresponding
+           hypothesis of compile_function_body_correct is a bit of a pain.
+           We wouldn't have to do this if we would just apply the lemma without reverting things 
+           first... but idk why the reverting was done, so I will leave it alone. *)
+        eassert (PSP' : _).
+        2: { assert (cfbc := compile_function_body_correct).
+             specialize cfbc with (19 := PSP').
+             eapply cfbc. }
+        intros.
+        replace (rev k1'' ++ leak_unit :: k) with (rev (leak_unit :: k1'') ++ k).
+        2: { simpl. rewrite <- app_assoc. reflexivity. }
+        rewrite PSP. rewrite rtransform_stmt_trace_step. simpl. Search (map.get).
+        rewrite GetPos. Search map.get. rewrite H. cbv [rtransform_fun_trace]. simpl.
+        f_equal. subst. simpl.
+        f_equal. f_equal.
+        2: { instantiate (1 := fun a b c => cont (leak_unit :: a) (leak_unit :: b) c). simpl.
+             reflexivity. }
+        subst getTrace.
+        f_equal. f_equal. f_equal. f_equal. f_equal.
+        f_equal. f_equal. f_equal.
+        apply rtransform_stmt_trace_ext. cbv [Equiv]. intuition.
+        { f_equal. f_equal; subst. cn
+
+        f_equal. f_equal.
+        2: { instantiate . simpl.
+             f_equal. reflexivity. intros. remember (rk_so_far' ++ _). reflexivity. simpl. f_equal.
       }
       subst mach. simpl_MetricRiscvMachine_get_set.
       intros. fwd. eexists. eexists. eexists. eexists. eexists.
