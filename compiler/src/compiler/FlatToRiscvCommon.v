@@ -330,13 +330,12 @@ Section WithParameters.
                              (finalL.(getMetrics) - initialL.(getMetrics) <=
                                 lowerMetrics (finalMetricsH - initialMetricsH))%metricsL /\
                              goodMachine finalIOTrace finalMH finalRegsH g finalL /\
-                             exists k1'' k2'',
+                             exists k1'',
                                finalTrace = k1'' ++ initialTrace /\
-                                 getTrace finalL = k2'' ++ getTrace initialL /\
                                  forall k1''',
                                    rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
                                           (s, rev k1'' ++ k1''', getTrace initialL, pos, g.(p_sp), (bytes_per_word * rem_framewords g), cont (rev k1'' ++ k1''')) =
-                                     cont (rev k1'' ++ k1''') (rev k1'') (rev k2'')).
+                                     cont (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))).
 End WithParameters.
 
 Ltac simpl_g_get :=

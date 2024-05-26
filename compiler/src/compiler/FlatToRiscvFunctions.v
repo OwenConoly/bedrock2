@@ -430,16 +430,19 @@ Section Proofs.
                       | [] => m0
                       | a1 :: l1 => a1 :: app l1 m0
                       end) = @List.app A.
-  Proof. reflexivity. Qed.
+  Proof. reflexivity. Qed. 
 
   Lemma compile_function_body_correct: forall (e_impl_full : env) m l mc (argvs : list word)
     (st0 : locals) (post outcome : Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop)
     (argnames retnames : list Z) (body : stmt Z) (program_base : word)
     (pos : Z) (ret_addr : word) (mach : RiscvMachineL) (e_impl : env)
     (e_pos : pos_map) (binds_count : nat) (insts : list Instruction)
-    (xframe : mem -> Prop) (k1 : Semantics.trace) (t : Semantics.io_trace) (g : GhostConsts)
+    (xframe : mem -> Prop) pick_sp1 (k1 : Semantics.trace) (t : Semantics.io_trace) (g : GhostConsts)
+    cont
     (IH: forall (g0 : GhostConsts) (insts0 : list Instruction) (xframe0 : mem -> Prop)
-                (initialL : RiscvMachineL) (pos0 : Z),
+                (initialL : RiscvMachineL) (pos0 : Z) cont0,
+        (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                                          (body, k1'', getTrace initialL, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 k1''))) ->
         fits_stack (rem_framewords g0) (rem_stackwords g0) e_impl body ->
         compile_stmt iset compile_ext_call e_pos pos0 (bytes_per_word * rem_framewords g0) body =
         insts0 ->
@@ -458,17 +461,11 @@ Section Proofs.
                    (getRegs finalL) /\
             (getMetrics finalL - getMetrics initialL <= lowerMetrics (finalMetricsH - mc))%metricsL /\
               goodMachine finalIOTrace finalMH finalRegsH g0 finalL /\
-              exists k1'' k2'',
+              exists k1'',
                 finalTrace = k1'' ++ k1 /\
-                  getTrace finalL = k2'' ++ getTrace initialL /\
-                (forall k20 k1''' f,
-                    fst (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                           (body, rev k1'' ++ k1''', k20, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, f)) =
-                      fst (f (rev k1'') (k20 ++ rev k2''))) /\
-                  (forall k20 k1''' f,
-                      predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                      predicts (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                                (body, k, k20, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, (f k)))) (rev k1'' ++ k1'''))))
+                  forall k1''',
+                  rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                           (body, rev k1'' ++ k1''', getTrace initialL, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, cont0 (rev k1'' ++ k1''')) = cont0 (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))))
     (HOutcome: forall (k' : Semantics.trace) (t' : Semantics.io_trace) (m' : mem) (mc' : MetricLog) (st1 : locals),
         outcome k' t' m' st1 mc' ->
         exists (retvs : list word) (l' : locals),
@@ -478,11 +475,13 @@ Section Proofs.
           post k' t' m' l' mc'),
       (binds_count <= 8)%nat ->
       map.of_list_zip argnames argvs = Some st0 ->
-      exec e_impl_full body k1 t m st0 mc outcome ->
+      exec (pick_sp := pick_sp1) e_impl_full body k1 t m st0 mc outcome ->
       map.getmany_of_list l (List.firstn (List.length argnames) (reg_class.all reg_class.arg)) =
       Some argvs ->
       map.extends e_impl_full e_impl ->
       good_e_impl e_impl e_pos ->
+      (forall k1'', pick_sp1 (rev k1'' ++ k1) = snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                                                       k1'' mach.(getTrace) pos g.(p_sp) retnames body (cont k1''))) -> 
       fits_stack (stackalloc_words iset body)
                  (rem_stackwords g - framelength (argnames, retnames, body)) e_impl body ->
       FlatToRiscvDef.compile_function iset compile_ext_call e_pos pos (argnames, retnames, body) =
@@ -512,19 +511,14 @@ Section Proofs.
                                        (Platform.MetricLogging.addMetricStores 100 (getMetrics mach)))) <=
                lowerMetrics (finalMetricsH - mc))%metricsL /\
             goodMachine finalIOTrace finalMH finalRegsH g finalL /\
-            exists k1'' k2'',
+            exists k1'',
               finalTrace = k1'' ++ k1 /\
-                getTrace finalL = k2'' ++ getTrace mach /\
-                (forall k20 k1''' f,
-                    fst (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                           (rev k1'' ++ k1''') k20 pos g.(p_sp) retnames body f) =
-                      fst (f (rev k1'') (k20 ++ rev k2''))) /\
-                (forall k20 k1''' f,
-                    predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                    predicts (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
-                                              k k20 pos g.(p_sp) retnames body (f k))) (rev k1'' ++ k1'''))).
+                forall k1''',
+                rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                  (rev k1'' ++ k1''') mach.(getTrace) pos g.(p_sp) retnames body (cont (rev k1'' ++ k1''')) =
+        cont (rev k1'' ++ k1''') (rev k1'') (rev finalL.(getTrace))).
   Proof.
-    intros * IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM.
+    intros * IHexec OC BC OL Exb GetMany Ext GE PSP FS C V Mo Mo' Gra RaM GPC A GM.
 
     assert (valid_register RegisterNames.ra) by (cbv; auto).
     assert (valid_register RegisterNames.sp) by (cbv; auto).
@@ -702,6 +696,19 @@ Section Proofs.
       ssplit;
       subst FL.
       all: try safe_sidecond.
+      { simpl. intros. rewrite PSP.
+        cbv [rtransform_fun_trace rtransform_fun_trace_helper].
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        rewrite BPW in *. repeat rewrite <- app_assoc. cbn [List.app].
+        instantiate (1 := fun _ => _). simpl.
+        f_equal. f_equal. f_equal. 2: reflexivity. f_equal.
+        remember (p_sp + _) as new_sp. eassert (Esp: new_sp = _).
+        2: { rewrite Esp. f_equal.
+             { intros. rewrite H2p10p2. repeat rewrite <- app_assoc. reflexivity. }
+             intros ? ? ? Hpredicts. apply H2p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts. }
+      subst. solve_word_eq word_ok.
+        cbv [rewrite rtransform_stmt_trace_
+      }
       { lazymatch goal with
         | H: fits_stack ?x ?y e_impl body |- fits_stack ?x' ?y' e_impl body =>
           replace y' with y; [exact H|]
