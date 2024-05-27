@@ -1590,7 +1590,7 @@ Section Proofs.
         apply_in_hyps @map.getmany_of_list_length.
         congruence.
       }
-      subst args. simpl in IHexec.
+      subst args.
       let T := type of IHexec in let T' := open_constr:(
         (forall (g : GhostConsts) (e_impl : env) (e_pos : pos_map)
              (program_base : word) (insts : list Instruction) (xframe : mem -> Prop)
@@ -1667,12 +1667,14 @@ Section Proofs.
         | H: (binds_count <= 8)%nat |- _ => rename H into BC
         end.
         move BC after OC.
+        (*I need to remember the definition of mach, or at least that getTrace mach = _ :: getTrace...
+          why are we doing the clearbody thing?*)
+        eassert (Hmach : RiscvMachine.getTrace mach = _ :: getTrace).
+        { subst mach. simpl. reflexivity. }
         repeat match goal with
                | x := _ |- _ => clearbody x
                end.
-        subst 
-        
-        clear - word_ok RVM PRParams PR ext_spec word_riscv_ok locals_ok mem_ok pos_map_ok env_ok
+        clear - Hmach word_ok RVM PRParams PR ext_spec word_riscv_ok locals_ok mem_ok pos_map_ok env_ok
                   IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM PSP.
         revert IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM.
         (* here we do a hacky thing to deal with the fact that unifying PSP with the corresponding
@@ -1692,16 +1694,9 @@ Section Proofs.
         f_equal. f_equal.
         2: { instantiate (1 := fun a b c => cont (leak_unit :: a) (leak_unit :: b) c). simpl.
              reflexivity. }
-        subst getTrace.
-        f_equal. f_equal. f_equal. f_equal. f_equal.
-        f_equal. f_equal. f_equal.
-        apply rtransform_stmt_trace_ext. cbv [Equiv]. intuition.
-        { f_equal. f_equal; subst. cn
-
-        f_equal. f_equal.
-        2: { instantiate . simpl.
-             f_equal. reflexivity. intros. remember (rk_so_far' ++ _). reflexivity. simpl. f_equal.
-      }
+        subst.
+        f_equal. f_equal. f_equal. f_equal. rewrite Hmach. clear Hmach.
+        simpl. repeat rewrite <- app_assoc. reflexivity. }
       subst mach. simpl_MetricRiscvMachine_get_set.
       intros. fwd. eexists. eexists. eexists. eexists. eexists.
       split; [ eapply H0p0 | ].
@@ -1710,35 +1705,15 @@ Section Proofs.
       split; [MetricsToRiscv.solve_MetricLog|].
       split; eauto 8 with map_hints.
       
-      do 2 eexists. split.
-      { rewrite app_one_cons. rewrite app_assoc. reflexivity. } split.
-      { rewrite H0p5p1. simpl. rewrite app_one_cons. rewrite app_assoc. reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        repeat (rewrite rev_app_distr in * ). cbn [rev List.app].
-        rewrite H. rewrite GetPos.
-        cbv [rtransform_fun_trace] in H0p5p2. subst. cbn [FlatToRiscvCommon.p_sp] in H0p5p2.
-        destruct (rtransform_fun_trace_helper _ _ _ _ _) as
-        [ [ [ [beforeBody afterBody] mypos'] sp_val'] stackoffset'].
-        repeat rewrite <- app_assoc. rewrite (app_one_cons _ (rev k2'')).
-        specialize (H0p5p2 (k20 ++ [leak_Jal]) k1''' (fun skip => f (leak_unit :: skip))).
-        simpl in H0p5p2. rewrite <- app_assoc in H0p5p2. simpl in H0p5p2.
-        Fail rewrite H0p5p2. cbv [trace] in H0p5p2. rewrite H0p5p2. f_equal. f_equal.
-        rewrite <- app_assoc. reflexivity. }
-      intros ? ? ? Hpredicts. eapply predicts_ext.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
+      eexists. split.
+      { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
+      intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
       repeat (rewrite rev_app_distr in * ). cbn [rev List.app].
-      constructor.
-      { intros []. }
       rewrite H. rewrite GetPos.
-      cbv [rtransform_fun_trace] in H0p5p3. subst. cbn [FlatToRiscvCommon.p_sp] in H0p5p3.
+      cbv [rtransform_fun_trace] in H0p5p1. subst. cbn [FlatToRiscvCommon.p_sp] in H0p5p1.
       destruct (rtransform_fun_trace_helper _ _ _ _ _) as
         [ [ [ [beforeBody afterBody] mypos'] sp_val'] stackoffset'].
-      repeat rewrite <- app_assoc.
-      specialize (H0p5p3 (k20 ++ [leak_Jal]) k1''' (fun k skip => f (leak_unit :: k) (leak_unit :: skip))).
-      repeat (rewrite <- app_assoc in * ). apply H0p5p3.
-      apply Hpredicts.
+      rewrite <- H0p5p1. simpl. repeat rewrite <- app_assoc. reflexivity.
 
     - idtac "Case compile_stmt_correct/SLoad".
       progress unfold Memory.load, Memory.load_Z in *. fwd.
@@ -1751,18 +1726,9 @@ Section Proofs.
       run1det. clear H0. (* <-- TODO this should not be needed *) run1done.
 
       (*ct stuff*)
-      do 2 eexists. split.
-      { instantiate (1 := [_]). reflexivity. } split.
+      eexists. split.
       { instantiate (1 := [_]). reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
-      { intros []. }
-      eapply predicts_ext.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      apply Hpredicts.
+      intros. rewrite rtransform_stmt_trace_step. simpl. reflexivity.
       
     - idtac "Case compile_stmt_correct/SStore".
       inline_iff1.
@@ -1785,18 +1751,9 @@ Section Proofs.
       { eapply preserve_subset_of_xAddrs. 1: assumption.
         ecancel_assumption. }
       (*ct stuff, copied from load*)
-      do 2 eexists. split.
-      { instantiate (1 := [_]). reflexivity. } split.
+      eexists. split.
       { instantiate (1 := [_]). reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
-      { intros []. }
-      eapply predicts_ext.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      apply Hpredicts.
+      intros. rewrite rtransform_stmt_trace_step. simpl. reflexivity.
       
     - idtac "Case compile_stmt_correct/SInlinetable".
       inline_iff1.
@@ -1817,19 +1774,11 @@ Section Proofs.
         blia.
       }
       run1done.
-      (*ct stuff, copied from load*)
-      do 2 eexists. split.
-      { instantiate (1 := [_]). reflexivity. } split.
-      { instantiate (1 := [_; _; _]). reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
-      { intros []. }
-      eapply predicts_ext.
-      { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-        reflexivity. }
-      apply Hpredicts.
+      (*ct stuff*)
+      eexists. split.
+      { instantiate (1 := [_]). reflexivity. }
+      intros. rewrite rtransform_stmt_trace_step. simpl.
+      repeat rewrite <- app_assoc. reflexivity.
       
     - idtac "Case compile_stmt_correct/SStackalloc".
       rename H1 into IHexec.
@@ -1891,6 +1840,10 @@ Section Proofs.
         clear -A1 A2 A3 A4.
         Z.to_euclidean_division_equations. blia.
       }
+      assert (sp_val : pick_sp1 k = p_sp + !(bytes_per_word * #(Datatypes.length remaining_frame))).
+      { specialize (H13 nil). simpl in H13. rewrite H13.
+        rewrite rtransform_stmt_trace_step. simpl.
+        simpl_addrs. solve_word_eq word_ok. }
 
       eapply runsTo_trans; simpl_MetricRiscvMachine_get_set.
       + eapply IHexec with (g := {| p_sp := p_sp;
@@ -1898,7 +1851,6 @@ Section Proofs.
                            (program_base := program_base)
                            (e_impl := e_impl)
                            (pos := (pos + 4)%Z)
-                           (a := p_sp + !bytes_per_word * !#(Datatypes.length remaining_frame))
                            (mStack := mStack)
                            (mCombined := map.putmany mSmall mStack);
           simpl_MetricRiscvMachine_get_set;
@@ -1906,16 +1858,21 @@ Section Proofs.
           rewrite ?@length_save_regs, ?@length_load_regs in *;
           simpl_word_exprs word_ok;
           ssplit;
-          cycle -5.
+          cycle -6.
         { reflexivity. }
         { eassumption. }
         { exists stack_trash, remaining_frame. ssplit. 1,2: reflexivity.
           wcancel_assumption. }
         { reflexivity. }
         { assumption. }
+        { intros. replace (rev k1'' ++ leak_unit :: k) with (rev (leak_unit :: k1'') ++ k).
+          2: { simpl. rewrite <- app_assoc. reflexivity. }
+          rewrite H13. rewrite rtransform_stmt_trace_step. simpl.
+          cbv [trivialBind trivialReturn]. simpl_addrs. reflexivity. } 
         { match goal with
           | |- ?G => let t := type of Ab in replace G with t; [exact Ab|f_equal]
-          end.
+          end.          
+          { rewrite sp_val. solve_word_eq word_ok. }
           rewrite @length_flat_map with (n := Z.to_nat bytes_per_word).
           - simpl_addrs. rewrite !Z2Nat.id by blia. rewrite <- BPW. rewrite <- Z_div_exact_2; blia.
           - clear. intros. eapply LittleEndianList.length_le_split.
@@ -1938,7 +1895,7 @@ Section Proofs.
           | |- map.extends (map.put _ ?k ?v1) (map.put _ ?k ?v2) => replace v1 with v2
           end.
           - apply map.put_extends. assumption.
-          - simpl_addrs. solve_word_eq word_ok. }
+          - simpl_addrs. rewrite sp_val. reflexivity. }
         { eauto with map_hints. }
         { eauto with map_hints. }
         { eauto with map_hints. }
@@ -1976,28 +1933,19 @@ Section Proofs.
           edestruct (byte_list_to_word_list_array returned_bytes) as (returned_words & LL & QQ). {
             rewrite L. rewrite Z2Nat.id; assumption.
           }
-          eexists stack_trash0, (frame_trash ++ returned_words). ssplit. 3: {
-            seprewrite_in QQ Q.
-            wcancel_assumption.
+          eexists stack_trash0, (frame_trash ++ returned_words). ssplit.
+          3: { seprewrite_in QQ Q.
+               rewrite sp_val in Q.
+               wcancel_assumption.
           }
           1: congruence.
           simpl_addrs.
           reflexivity.
         * (*ct stuff*)
-          do 2 eexists. split.
-          { rewrite app_one_cons. rewrite app_assoc. reflexivity. } split.
-          { cbv [trivialBind trivialReturn Mtriv]. rewrite app_one_cons, app_assoc. reflexivity. }
-          split.
-          { intros. rewrite rtransform_stmt_trace_step.
-            repeat rewrite rev_app_distr. cbn [rev List.app rtransform_stmt_trace_body].
-            simpl_addrs. rewrite H7p7p2. repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-            reflexivity. }
-          simpl_addrs.
-          repeat rewrite rev_app_distr in *. simpl in *. constructor.
-          { intros _. simpl. f_equal. solve_word_eq word_ok. }
-          apply H7p7p3. repeat rewrite <- app_assoc in *. apply Hpredicts.
+          eexists. split.
+          { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
+          intros. rewrite rtransform_stmt_trace_step. repeat rewrite rev_app_distr. simpl.
+          simpl_addrs. rewrite H7p7p1. reflexivity.
 
     - idtac "Case compile_stmt_correct/SLit".
       inline_iff1.
@@ -2021,18 +1969,10 @@ Section Proofs.
             specialize Hlit with (1 := HeqfinalMetrics);
             MetricsToRiscv.solve_MetricLog. }
         (*ct things*)
-        do 2 eexists. split.
-        { instantiate (1 := []). reflexivity. } split.
-        { reflexivity. }
-        split.
-        { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-          rewrite rev_involutive. reflexivity. }
-        intros ? ? ? Hpredicts.
-        eapply predicts_ext.
-        { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-          reflexivity. }
-        rewrite rev_involutive in Hpredicts.
-        apply Hpredicts.
+        eexists. split.
+        { instantiate (1 := []). reflexivity. }
+        intros. rewrite rtransform_stmt_trace_step. simpl.
+        rewrite rev_app_distr. rewrite rev_involutive. reflexivity.
         
     - idtac "Case compile_stmt_correct/SOp".
       assert (x <> RegisterNames.sp). {
@@ -2073,21 +2013,14 @@ Section Proofs.
                  eauto 8 with map_hints
                | try fwd; try eauto 8 with map_hints ]
            end.
-      { do 2 eexists. split.
-        { instantiate (1 := []). reflexivity. } split.
-        { instantiate (1 := [_]). reflexivity. } split.
-        { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-          reflexivity. }
-        intros ? ? ? Hpredicts. eapply predicts_ext. 2: apply Hpredicts. intros. simpl.
-        rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body]. reflexivity. }
-      all: try (do 2 eexists; split; [|split; [|split] ]).
+      { eexists. split.
+        { instantiate (1 := []). reflexivity. }
+        intros. rewrite rtransform_stmt_trace_step. reflexivity. }
+      all: try (eexists; split).
       all: try (instantiate (1 := []); reflexivity).
       all: try (instantiate (1 := [_]); reflexivity).
       all: try (instantiate (1 := [_; _]); reflexivity).
-      all: try (intros; rewrite rtransform_stmt_trace_step; reflexivity).
-      all: intros.
-      all: repeat (constructor; [intros [] | ]).
-      all: try (intros; eapply predicts_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
+      all: try (intros; rewrite rtransform_stmt_trace_step; repeat rewrite <- app_assoc; reflexivity).
       
       all: match goal with
            | y: operand, H: context[Syntax.bopname.eq] |- _ => idtac
@@ -2095,15 +2028,12 @@ Section Proofs.
                   valid_InvalidInstruction (InvalidInstruction (-1))) by (eapply invert_ptsto_instr; ecancel_assumption)
            | |- _ => run1det; run1done
            end.
-      
-      all: try (do 2 eexists; split; [|split; [|split] ]).
+
+      all: try (eexists; split).
       all: try (instantiate (1 := []); reflexivity).
       all: try (instantiate (1 := [_]); reflexivity).
       all: try (instantiate (1 := [_; _]); reflexivity).
-      all: try (intros; rewrite rtransform_stmt_trace_step; reflexivity).
-      all: intros.
-      all: repeat (constructor; [intros [] | ]).
-      all: try (intros; eapply predicts_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
+      all: try (intros; rewrite rtransform_stmt_trace_step; repeat rewrite <- app_assoc; reflexivity).
       
       all:
         match goal with
@@ -2132,16 +2062,9 @@ Section Proofs.
       }
       inline_iff1.
       run1det. run1done.
-      do 2 eexists. split.
-      { instantiate (1 := []). reflexivity. } split.
-      { instantiate (1 := [_]). reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-      intros ? ? ? Hpredicts.
-      eapply predicts_ext.
-      { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-      cbn [rtransform_stmt_trace_body].
-      apply Hpredicts.
+      eexists. split.
+      { instantiate (1 := []). reflexivity. }
+      intros. rewrite rtransform_stmt_trace_step. reflexivity.
 
     - idtac "Case compile_stmt_correct/SIf/Then".
       (* execute branch instruction, which will not jump *)
