@@ -479,40 +479,36 @@ Section LowerPipeline.
 
   (*(fun '(p_funcs, f_rel_pos, stack_pastend) (fuel: nat) (kL : list LeakageEvent) => rnext_fun iset compile_ext_call leak_ext_call finfo p_funcs p1 fuel (next fuel) nil f_rel_pos stack_pastend argnames retnames fbody kL (fun _ _ => Some qendLE))*)
 
-  (*modelled after spill_fun_correct.*)
+  (*modelled after spill_fun_correct.*) Check FlatImp.exec. Print riscv_call.
   Lemma flat_to_riscv_correct: forall p1 p2,
     (*forall instrs finfo req_stack_size,
       p2 = (instrs, finfo, req_stack_size) ->*)
       map.forall_values FlatToRiscvDef.valid_FlatImp_fun p1 ->
       riscvPhase p1 = Success p2 ->
       forall fname kH (kL : list LeakageEvent) t m argvals post argnames retnames fbody l,
+      forall p_funcs stack_pastend,
+        let '(instrs, finfo, req_stack_size) := p2 in
+        let f_rel_pos :=
+          match map.get finfo fname with
+          | Some f_rel_pos => f_rel_pos
+          | None => 0
+          end in
         (map.get p1 fname = Some (argnames, retnames, fbody) /\
-          map.of_list_zip argnames argvals = Some l /\
-          forall mc, FlatImp.exec p1 fbody kH t m l mc
+           map.of_list_zip argnames argvals = Some l /\
+           forall mc, FlatImp.exec (pick_sp := fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
+                                                               (skipn (length kH) (rev k)) (rev kL) f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, word.of_Z 0)))) p1 fbody kH t m l mc
                        (fun kH' t' m' l' mc' =>
                           exists retvals, map.getmany_of_list l' retnames = Some retvals /\
                                             post kH' t' m' retvals)) ->
-        forall s2,
-          riscv_call p2 s2 fname kL t m argvals
-            (fun kL' t' m' retvals =>
-               let '(instrs, finfo, req_stack_size) := p2 in
-               let '(p_funcs, stack_pastend) := s2 in
-               let f_rel_pos :=
-                 match map.get finfo fname with
-                 | Some f_rel_pos => f_rel_pos
-                 | None => 0
-                 end in
-               exists kH'' kL'',
-                 kL' = kL'' ++ kL /\
+          riscv_call p2 (p_funcs, stack_pastend) fname kL t m argvals
+            (fun kL' t' m' retvals =>               
+               exists kH'',
                  post (kH'' ++ kH) t' m' retvals /\
                    fst (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
-                          (rev kH'') [] f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, Semantics.leak_unit))) = rev kL'' /\
-                   Semantics.predicts (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
-                                                       k [] f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, Semantics.leak_unit)))) (rev kH'')).
+                          (rev kH'') (rev kL) f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, word.of_Z 0))) = rev kL').
   Proof.
     unfold riscv_call.
     intros p1 p2. destruct p2 as ((finstrs & finfo) & req_stack_size). intros.
-    destruct s2 as (p_funcs & stack_pastend).
     match goal with
     | H: riscvPhase _ = _ |- _ => pose proof H as RP; unfold riscvPhase in H
     end.
@@ -568,6 +564,7 @@ Section LowerPipeline.
         { eapply shrink_good_e_impl.
           1: eapply build_fun_pos_env_good_e_impl; assumption.
           eapply extends_remove. eapply extends_refl. }
+        { eassumption. }
         { eassumption. }
         { eassumption. }
         { eassumption. }
@@ -692,6 +689,11 @@ Section LowerPipeline.
           apply Hlength_stack_trash_words. }
         { reflexivity. }
         { assumption. }
+      + intros. simpl. subst.
+        repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+        rewrite List.skipn_app_r.
+        2: { rewrite rev_length. reflexivity. }
+        instantiate (1 := fun _ => _). simpl. reflexivity.
     - cbv beta. unfold goodMachine. simpl_g_get. unfold machine_ok in *. intros. fwd.
       assert (0 < bytes_per_word). { (* TODO: deduplicate *)
         unfold bytes_per_word; simpl; destruct width_cases as [EE | EE]; rewrite EE; cbv; trivial.
@@ -709,11 +711,9 @@ Section LowerPipeline.
         symmetry.
         eapply map.getmany_of_list_length.
         exact GM.
-      + subst. eexists. eexists. split; [eassumption|]. split; [eassumption|]. split.
-        { replace (rev k1'') with (rev k1'' ++ nil) by apply List.app_nil_r.
-          rewrite H10p5p2. reflexivity. }
+      + subst. eexists. split; [eassumption|].
         replace (rev k1'') with (rev k1'' ++ nil) by apply List.app_nil_r.
-        apply H10p5p3. constructor.
+        rewrite H10p5p1. reflexivity.
       + eapply only_differ_subset. 1: eassumption.
         rewrite ListSet.of_list_list_union.
         rewrite ?singleton_set_eq_of_list.
