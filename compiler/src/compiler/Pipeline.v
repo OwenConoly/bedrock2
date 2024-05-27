@@ -64,16 +64,15 @@ Section WithWordAndMem.
       Valid: Program -> Prop;
       Settings: Type;
       SettingsInhabited: Settings;
-      Event: Type;
-      Predicts: (list Event -> Event) -> list Event -> Prop;
-      Call(p: Program)(s: Settings)(funcname: string)
-        (k: list Event)(t: io_trace)(m: mem)(argvals: list word)
-        (post: list Event -> io_trace -> mem -> list word -> Prop): Prop;
-      WeakenCall: forall p s funcname k t m argvals (post1: _ -> _ -> _ -> _ -> Prop),
-        Call p s funcname k t m argvals post1 ->
+      Trace: Type;
+      Call(pick_sp: Trace -> word)(p: Program)(s: Settings)(funcname: string)
+        (k: Trace)(t: io_trace)(m: mem)(argvals: list word)
+        (post: Trace -> io_trace -> mem -> list word -> Prop): Prop;
+      WeakenCall: forall pick_sp p s funcname k t m argvals (post1: _ -> _ -> _ -> _ -> Prop),
+        Call pick_sp p s funcname k t m argvals post1 ->
         forall post2 : _ -> _ -> _ -> _ -> Prop,
         (forall k' t' m' retvals, post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
-        Call p s funcname k t m argvals post2;
+        Call pick_sp p s funcname k t m argvals post2;
   }.
 
   Record phase_correct{L1 L2: Lang}
@@ -87,18 +86,14 @@ Section WithWordAndMem.
         L1.(Valid) p1 ->
         compile p1 = Success p2 ->
         forall s1 s2 fname,
-          exists f new_pick_sp,
-          forall k1 k2 t m argvals post,
-            L1.(Call) p1 s1 fname k1 t m argvals post ->
-            forall pick_sp,
-              L2.(Call) p2 s2 fname k2 t m argvals
-                   (fun k2' t' m' retvals =>
-                      exists k1'' k2'',
-                        post (k1'' ++ k1) t' m' retvals /\
-                          k2' = k2'' ++ k2 /\
-                          (L2.(Predicts) pick_sp (rev k2'') ->
-                           f pick_sp (rev k1'') = rev k2'' /\
-                           L1.(Predicts) (new_pick_sp pick_sp) (rev k1'')));
+        exists pick_spH kL,
+        forall pick_spL k1 k2 t m argvals post,
+          L1.(Call) (pick_spH pick_spL) p1 s1 fname k1 t m argvals post ->
+          L2.(Call) pick_spL p2 s2 fname k2 t m argvals
+               (fun k2' t' m' retvals =>
+                  exists k1',
+                    post k1' t' m' retvals /\
+                      k2' = kL k1');
   }.
 
   Arguments phase_correct : clear implicits.
@@ -124,20 +119,14 @@ Section WithWordAndMem.
     specialize (C23 a p2 V12 H0 L2.(SettingsInhabited) s2 fname).
     specialize (C12 p1 a H E s1 L2.(SettingsInhabited) fname).
     destruct C12 as [f12 [nps12 C12] ]. destruct C23 as [f23 [nps23 C23] ].
-    exists (fun pick_sp k => f23 pick_sp (f12 (nps23 pick_sp) k)).
-    exists (fun pick_sp => nps12 (nps23 pick_sp)).
+    exists (fun pick_sp3 => f12 (f23 pick_sp3)).
+    exists (fun k1 => nps23 (nps12 k1)).
     intros. eapply L3.(WeakenCall).
-    { apply C23. apply C12. apply H1. }
-    simpl. intros. destruct H2 as [k2'' [k3'' [H2 H3] ] ].
-    destruct H2 as [k1'' [k2''0 H2] ].
-    exists k1'', k3''. fwd.
-    apply app_inv_tail in H2p1. subst.
-    split; [assumption|]. split; [reflexivity|].
-    intros. specialize (H3p1 H2). fwd. specialize (H2p2 H3p1p1). fwd.
-    split.
-    { rewrite H2p2p0. rewrite H3p1p0. reflexivity. }
-    assumption.
-      Unshelve. exact nil.
+    { eapply C23. eapply C12. eapply H1. }
+    simpl. intros. destruct H2 as [k2'' [H2 H3] ].
+    destruct H2 as [k1'' [k2''0 H2] ]. subst.
+    exists k1''. auto.
+    Unshelve. (*why?*) exact (nps12 k1).
   Qed.
 
   Section WithMoreParams.
@@ -180,36 +169,37 @@ Section WithWordAndMem.
       andb (Z.leb (-2048) x) (Z.ltb x 2048).
 
     Definition locals_based_call_spec{Var Cmd: Type}{locals: map.map Var word}
-               (Exec: string_keyed_map (list Var * list Var * Cmd) ->
+               (Exec: string_keyed_map (list Var * list Var * Cmd) -> PickSp ->
                       Cmd -> trace -> io_trace -> mem -> locals -> MetricLog ->
                       (trace -> io_trace -> mem -> locals -> MetricLog -> Prop) -> Prop)
+               (pick_sp : PickSp)
                (e: string_keyed_map (list Var * list Var * Cmd))(s : unit)(f: string)
                (k: trace)(t: io_trace)(m: mem)(argvals: list word)
                (post: trace -> io_trace -> mem -> list word -> Prop): Prop :=
       exists argnames retnames fbody l,
         map.get e f = Some (argnames, retnames, fbody) /\
         map.of_list_zip argnames argvals = Some l /\
-        forall mc, Exec e fbody k t m l mc (fun k' t' m' l' mc' =>
+        forall mc, Exec e pick_sp fbody k t m l mc (fun k' t' m' l' mc' =>
                        exists retvals, map.getmany_of_list l' retnames = Some retvals /\
                                          post k' t' m' retvals).
     
     Lemma locals_based_call_spec_weaken{Var Cmd: Type}{locals: map.map Var word}
-               (Exec: string_keyed_map (list Var * list Var * Cmd) ->
+               (Exec: string_keyed_map (list Var * list Var * Cmd) -> PickSp ->
                       Cmd -> trace -> io_trace -> mem -> locals -> MetricLog ->
                       (trace -> io_trace -> mem -> locals -> MetricLog -> Prop) -> Prop) :
-      (forall e c k t m l mc (post1: _ -> _ -> _ -> _ -> _ -> Prop),
-          Exec e c k t m l mc post1 ->
+      (forall e pick_sp c k t m l mc (post1: _ -> _ -> _ -> _ -> _ -> Prop),
+          Exec e pick_sp c k t m l mc post1 ->
           forall (post2 : _ -> _ -> _ -> _ -> _ -> Prop),
           (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-          Exec e c k t m l mc post2) ->
+          Exec e pick_sp c k t m l mc post2) ->
       forall
-        (e: string_keyed_map (list Var * list Var * Cmd))(s : unit)(f: string)
+        (pick_sp : PickSp)(e: string_keyed_map (list Var * list Var * Cmd))(s : unit)(f: string)
         (k: trace)(t: io_trace)(m: mem)(argvals: list word)
         (post1: trace -> io_trace -> mem -> list word -> Prop),
-        locals_based_call_spec Exec e s f k t m argvals post1 ->
+        locals_based_call_spec Exec pick_sp e s f k t m argvals post1 ->
         forall (post2 : _ -> _ -> _ -> _ -> Prop),
         (forall k' t' m' retvals, post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
-        locals_based_call_spec Exec e s f k t m argvals post2.
+        locals_based_call_spec Exec pick_sp e s f k t m argvals post2.
     Proof.
       intros. cbv [locals_based_call_spec] in *.
       destruct H0 as (argnames & retnames & fbody & l & H2 & H3 & H4).
@@ -227,7 +217,6 @@ Section WithWordAndMem.
                                  Valid := map.forall_values ExprImp.valid_fun;
                                  Call := locals_based_call_spec Semantics.exec;
                                  SettingsInhabited := tt;
-                                 Predicts := predicts;
                                  WeakenCall := locals_based_call_spec_weaken _ Semantics.exec.weaken;
     |}.
     (* |                 *)
@@ -238,7 +227,6 @@ Section WithWordAndMem.
                                          Valid := map.forall_values ParamsNoDup;
                                          Call := locals_based_call_spec FlatImp.exec;
                                          SettingsInhabited := tt;
-                                         Predicts := predicts;
                                          WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
 
@@ -255,7 +243,6 @@ Section WithWordAndMem.
                                        Valid := map.forall_values ParamsNoDup;
                                        Call := locals_based_call_spec FlatImp.exec;
                                        SettingsInhabited := tt;
-                                       Predicts := predicts;
                                        WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
     (* |                 *)
@@ -266,24 +253,23 @@ Section WithWordAndMem.
       Valid := map.forall_values FlatToRiscvDef.valid_FlatImp_fun;
                                       Call := locals_based_call_spec FlatImp.exec;
                                       SettingsInhabited := tt;
-                                      Predicts := predicts;
                                       WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
     (* |                 *)
     (* | FlatToRiscv     *)
     (* V                 *)
     Lemma riscv_call_weaken :
-      forall (p : list Instruction * string_keyed_map Z * Z)
+      forall (pick_sp: list LeakageEvent -> word) (p : list Instruction * string_keyed_map Z * Z)
              (s : word * word) (funcname : string) (k : list LeakageEvent)
              (t : io_trace) (m : mem) (argvals : list word)
              (post1 : list LeakageEvent -> io_trace -> mem -> list word -> Prop),
-        riscv_call p s funcname k t m argvals post1 ->
+        (fun _ => riscv_call p s funcname k t m argvals post1) pick_sp ->
         forall
           post2 : list LeakageEvent -> io_trace -> mem -> list word -> Prop,
           (forall (k' : list LeakageEvent) (t' : io_trace) 
                   (m' : mem) (retvals : list word),
               post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
-          riscv_call p s funcname k t m argvals post2.
+          (fun _ => riscv_call p s funcname k t m argvals post2) pick_sp.
     Proof.
       intros. cbv [riscv_call] in *. destruct p. destruct p. destruct s.
       destruct H as [f_rel_pos H]. exists f_rel_pos. intuition eauto.
@@ -299,9 +285,8 @@ Section WithWordAndMem.
                                        Z;                      (* <- required stack space in XLEN-bit words   *)
                                    (* bounds in instructions are checked by `ptsto_instr` *)
                                    Valid '(insts, finfo, req_stack_size) := True;
-                                   Call := riscv_call;
+                                   Call := fun _ => riscv_call;
                                    SettingsInhabited := (word.of_Z 0, word.of_Z 0);
-                                   Predicts := fun _ _ => True;
                                    WeakenCall := riscv_call_weaken;
     |}.
 
@@ -329,7 +314,7 @@ Section WithWordAndMem.
         intros. specialize H0 with (1 := H2). simpl in H0. eapply H0.
       }
       unfold locals_based_call_spec. intros.
-      exists (fun _ k => k). exists (fun pick_sp => pick_sp). intros. fwd.
+      exists (fun k => k). exists (fun pick_sp => pick_sp). intros. fwd.
       pose proof H0 as GF.
       unfold flatten_functions in GF.
       eapply map.try_map_values_fw in GF. 2: eassumption.
