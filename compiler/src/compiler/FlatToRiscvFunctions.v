@@ -2081,6 +2081,10 @@ Section Proofs.
             after_IH.
           all: try safe_sidecond.
           all: try safe_sidecond.
+          intros. replace (rev k1'' ++ leak_bool true :: k) with (rev (leak_bool true :: k1'') ++ k).
+          2: { simpl. rewrite <- app_assoc. reflexivity. }
+          rewrite H12. simpl. rewrite rtransform_stmt_trace_step. simpl. subst.
+          simpl. f_equal. f_equal. f_equal. instantiate (1 := fun k1'' skip rk_so_far' => cont (leak_bool true :: k1'') (leak_bool true :: skip) (rk_so_far' ++ [leak_Jal])). reflexivity.
         * (* jump over else-branch *)
           simpl. intros. destruct_RiscvMachine middle.
           fwd. subst.
@@ -2089,20 +2093,11 @@ Section Proofs.
           simpl_MetricRiscvMachine_get_set.
           intros. destruct_RiscvMachine mid. fwd. run1done.
           
-          do 2 eexists. split.
-          { rewrite app_one_cons. rewrite app_assoc. reflexivity. } split.
-          { rewrite app_one_cons. rewrite (app_one_cons _ getTrace).
-            repeat rewrite app_assoc. reflexivity. }
-          split.
-          { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-            repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p2.
-            repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. repeat rewrite rev_app_distr in *. constructor.
-          { intros []. }
-          rewrite fold_app. eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. apply H4p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts.
-
+          eexists. split.
+          { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
+          intros. rewrite rtransform_stmt_trace_step.
+          repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p1. reflexivity.
+          
     - idtac "Case compile_stmt_correct/SIf/Else".
       (* execute branch instruction, which will jump over then-branch *)
       eapply runsToStep.
@@ -2124,23 +2119,19 @@ Section Proofs.
           all: after_IH.
           all: try safe_sidecond.
           all: try safe_sidecond.
+          intros. replace (rev k1'' ++ leak_bool false :: k) with (rev (leak_bool false :: k1'') ++ k).
+          2: { simpl. rewrite <- app_assoc. reflexivity. }
+          rewrite H12. simpl. rewrite rtransform_stmt_trace_step. simpl. subst.
+          simpl. f_equal. f_equal. f_equal. instantiate (1 := fun k1'' skip rk_so_far' => cont (leak_bool false :: k1'') (leak_bool false :: skip) (rk_so_far' ++ [])). reflexivity.
         * (* at end of else-branch, i.e. also at end of if-then-else, just prove that
              computed post satisfies required post *)
           simpl. intros. destruct_RiscvMachine middle. fwd. subst. run1done.
           
-          do 2 eexists. split.
-          { rewrite app_one_cons. rewrite app_assoc. reflexivity. } split.
+          eexists. split.
           { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
-          split.
-          { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
-            repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p2.
-            repeat rewrite <- app_assoc. rewrite app_nil_r. reflexivity. }
-          intros ? ? ? Hpredicts. repeat rewrite rev_app_distr in *. constructor.
-          { intros []. }
-          rewrite fold_app. eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. apply H4p10p3. repeat rewrite <- app_assoc in *. rewrite app_nil_r.
-          apply Hpredicts.
+          intros. rewrite rtransform_stmt_trace_step.
+          repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p1.
+          rewrite app_nil_r. reflexivity.
 
     - idtac "Case compile_stmt_correct/SLoop".
       match goal with
@@ -2165,6 +2156,7 @@ Section Proofs.
         all: after_IH.
         all: try safe_sidecond.
         all: try safe_sidecond.
+        intros. rewrite H17. rewrite rtransform_stmt_trace_step. reflexivity.
       + simpl in *. simpl. intros. destruct_RiscvMachine middle.
         match goal with
         | H: exists _ _ _ _ _, _ |- _ => destruct H as [ kH' [ tH' [ mH' [ lH' [ mcH' H ] ] ] ] ]
@@ -2196,7 +2188,14 @@ Section Proofs.
             all: after_IH.
             1: eassumption.
             all: try safe_sidecond.
-            all: try safe_sidecond. }
+            all: try safe_sidecond.
+            intros. replace (rev k1''0 ++ leak_bool true :: k1'' ++ k) with
+              (rev (rev k1'' ++ leak_bool true :: k1''0) ++ k).
+            2: { repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+                 repeat rewrite <- app_assoc. reflexivity. }
+            rewrite H17. rewrite rtransform_stmt_trace_step. simpl.
+            rewrite H3p5p1. rewrite List.skipn_app_r by reflexivity.
+            cbn [RecurseWithFun.Let_In_pf_nd]. reflexivity. }
           simpl in *. intros. destruct_RiscvMachine middle. fwd.
           (* jump back to beginning of loop: *)
           eapply runsToStep.
@@ -2210,40 +2209,27 @@ Section Proofs.
             all: after_IH.
             all: try safe_sidecond.
             all: try safe_sidecond.
-          }
+            intros. replace (rev k1''1 ++ k1''0 ++ leak_bool true :: k1'' ++ k) with
+              (rev (rev k1'' ++ leak_bool true :: rev k1''0 ++ k1''1) ++ k).
+            2: { repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+                 repeat rewrite <- app_assoc. reflexivity. }
+            rewrite H17. rewrite rtransform_stmt_trace_step. simpl.
+            rewrite H3p5p1. rewrite List.skipn_app_r by reflexivity.
+            cbn [RecurseWithFun.Let_In_pf_nd]. rewrite H3p8p1.
+            rewrite List.skipn_app_r by reflexivity. reflexivity. }
           (* at end of loop, just prove that computed post satisfies required post *)
           simpl. intros. destruct_RiscvMachine middle. fwd. run1done.
 
-          do 2 eexists. split.
-          { rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. } split.
-          { rewrite app_one_cons. rewrite (app_one_cons _ (k2'' ++ _)).
-            repeat rewrite app_assoc. reflexivity. }
-          rename H3p12p3 into downup3. rename H3p12p2 into updown3.
-          rename H3p8p3 into downup2. rename H3p8p2 into updown2.
-          rename H3p5p3 into downup1. rename H3p5p2 into updown1.
-          split.
-          { intros. rewrite rtransform_stmt_trace_step. simpl.
-            repeat (rewrite rev_app_distr in * || cbn [List.app rev] in * ).
-            repeat rewrite <- app_assoc in *. rewrite updown1.
-            rewrite List.skipn_app_r by reflexivity. cbn [List.app RecurseWithFun.Let_In_pf_nd].
-            repeat rewrite <- app_assoc in *. rewrite updown2.
-            rewrite List.skipn_app_r by reflexivity.
-            repeat rewrite <- app_assoc in *. rewrite updown3.
-            repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. repeat (rewrite rev_app_distr in * || cbn [List.app rev] in * ).
-          repeat rewrite <- app_assoc in *. apply downup1.
-          constructor.
-          { intros []. }
-          rewrite fold_app. eapply predicts_ext.
-          { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          cbn [RecurseWithFun.Let_In_pf_nd]. repeat rewrite <- app_assoc in *. apply downup2.
-          eapply predicts_ext.
-          { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          repeat rewrite <- app_assoc in *. apply downup3.
-          eapply predicts_ext. 2: eapply Hpredicts. intros. simpl.
-          repeat (rewrite <- app_assoc || simpl). reflexivity.
+          eexists. split.
+          { rewrite app_one_cons. repeat rewrite app_assoc. reflexivity. }
+          rename H3p12p1 into E3. rename H3p8p1 into E2. rename H3p5p1 into E1.
+          intros. rewrite rtransform_stmt_trace_step. simpl.
+          repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+          repeat rewrite <- app_assoc in *. rewrite E1.
+          rewrite List.skipn_app_r by reflexivity. cbn [List.app RecurseWithFun.Let_In_pf_nd].
+          simpl. repeat rewrite <- app_assoc in *. rewrite E2.
+          rewrite List.skipn_app_r by reflexivity.
+          rewrite E3. reflexivity.
           
         * (* false: done, jump over body2 *)
           eapply runsToStep. {
@@ -2254,24 +2240,13 @@ Section Proofs.
           simpl_MetricRiscvMachine_get_set.
           intros. destruct_RiscvMachine mid. fwd. run1done.
           
-          do 2 eexists. split.
-          { rewrite app_one_cons. rewrite app_assoc. reflexivity. } split.
+          eexists. split.
           { rewrite app_one_cons. rewrite app_assoc. reflexivity. }
-          split.
-          { intros. rewrite rtransform_stmt_trace_step. simpl.
-            repeat rewrite <- app_assoc in *. rewrite H3p5p2.
-            rewrite List.skipn_app_r by reflexivity.
-            cbn [List.app RecurseWithFun.Let_In_pf_nd].
-            repeat rewrite <- app_assoc. reflexivity. }
-          intros. repeat rewrite rev_app_distr in *. repeat rewrite <- app_assoc in *.
-          eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. apply H3p5p3. constructor.
-          { intros []. }
-          eapply predicts_ext.
-          { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          cbn [RecurseWithFun.Let_In_pf_nd]. eapply predicts_ext. 2: eapply H3.
-          intros. repeat rewrite <- app_assoc. reflexivity.
+          intros. rewrite rtransform_stmt_trace_step. simpl.
+          repeat rewrite <- app_assoc in *. rewrite H3p5p1.
+          rewrite List.skipn_app_r by reflexivity.
+          cbn [List.app RecurseWithFun.Let_In_pf_nd].
+          repeat rewrite <- app_assoc. reflexivity.
           
     - idtac "Case compile_stmt_correct/SSeq".
       on hyp[(FlatImpConstraints.uses_standard_arg_regs s1); runsTo]
@@ -2283,6 +2258,7 @@ Section Proofs.
         all: after_IH.
         all: try safe_sidecond.
         all: try safe_sidecond.
+        intros. rewrite H13. rewrite rtransform_stmt_trace_step. simpl. reflexivity.
       + simpl. intros. destruct_RiscvMachine middle. fwd.
         eapply runsTo_trans.
         * match goal with
@@ -2296,33 +2272,22 @@ Section Proofs.
           1: eassumption.
           all: try safe_sidecond.
           all: try safe_sidecond.
+          intros. replace (rev k1''0 ++ k1'' ++ k) with (rev (rev k1'' ++ k1''0) ++ k).
+          2: { repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ). repeat rewrite <- app_assoc. reflexivity. }
+          rewrite H13. rewrite rtransform_stmt_trace_step. simpl. rewrite H1p5p1.
+          rewrite List.skipn_app_r by reflexivity. reflexivity.
         * simpl. intros. destruct_RiscvMachine middle. fwd. run1done.
-          do 2 eexists. split.
-          { rewrite app_assoc. reflexivity. } split.
+          eexists. split.
           { rewrite app_assoc. reflexivity. }
-          split.
-          { intros. rewrite rtransform_stmt_trace_step. simpl.
-            repeat (rewrite rev_app_distr in * || rewrite <- app_assoc in * ).
-            rewrite H1p5p2. rewrite List.skipn_app_r by reflexivity.
-            rewrite H1p8p2. repeat rewrite <- app_assoc. reflexivity. }
-          intros. eapply predicts_ext.
-          { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. repeat (rewrite rev_app_distr in * || rewrite <- app_assoc in * ).
-          apply H1p5p3. eapply predicts_ext.
-          { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          apply H1p8p3. eapply predicts_ext. 2: eapply H1. intros. simpl.
-          repeat rewrite <- app_assoc. reflexivity.
+          intros. rewrite rtransform_stmt_trace_step. simpl.
+          repeat (rewrite rev_app_distr in * || rewrite rev_involutive in * || cbn [rev List.app] in * ).
+          repeat rewrite <- app_assoc in *. rewrite H1p5p1.
+          rewrite List.skipn_app_r by reflexivity. rewrite H1p8p1. reflexivity.
 
     - idtac "Case compile_stmt_correct/SSkip".
       run1done.
-      do 2 eexists. split.
-      { instantiate (1 := []). reflexivity. } split.
+      eexists. split.
       { instantiate (1 := []). reflexivity. }
-      split.
-      { intros. rewrite rtransform_stmt_trace_step. simpl.
-        rewrite app_nil_r. reflexivity. }
-      intros ? ? ? Hpredicts. eapply predicts_ext. 2: eapply Hpredicts.
-      intros. simpl. rewrite rtransform_stmt_trace_step. simpl.
-      rewrite app_nil_r. reflexivity.
+      intros. rewrite rtransform_stmt_trace_step. reflexivity.
   Qed. (* <-- takes a while *)
 End Proofs.
