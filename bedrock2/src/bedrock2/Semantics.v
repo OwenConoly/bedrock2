@@ -10,6 +10,12 @@ Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import bedrock2.MetricLogging.
 Require Export bedrock2.Memory.
 Require Import Coq.Logic.ClassicalFacts.
+Require Import Coq.Classes.Morphisms.
+
+  Require Import Coq.Wellfounded.Union.
+  Require Import Relation_Operators.
+  Require Import Relation_Definitions.
+  Require Import Transitive_Closure.
 
 Print Memory.store.
 
@@ -726,25 +732,23 @@ Module exec. Section WithEnv.
   Definition satisfies (f : nat -> _) post := exists i, state_satisfies (f i) post.
 
   Definition comes_right_after s1 s2 :=
-    state_step s2 s1.
-  Definition lifted_comes_right_after s1 s2 :=
-    comes_right_after (other_inclusion s1) (other_inclusion s2).
-  Print state.
+    state_step s2 s1. Check pointwise_relation. Search (relation _ -> relation _).
+  Definition lift {A B : Type} (R : relation B) (f : A -> B) : relation A :=
+    fun x y => R (f x) (f y).
+  Definition lifted_comes_right_after := lift comes_right_after other_inclusion.
   Inductive prefix : sstate -> sstate -> Prop :=
   | bprefix : forall s1 s2 k t m l mc,
       prefix (s1, k, t, m, l, mc) (sseq s1 s2, k, t, m, l, mc).
 
-  Definition comes_right_after_or_prefix s1 s2 :=
-    comes_right_after s1 s2 \/ prefix s1 s2.
-
-  Definition lifted_comes_right_after_or_prefix s1 s2 :=
-    comes_right_after_or_prefix (other_inclusion s1) (other_inclusion s2).
+  Definition comes_right_after_or_prefix := union _ prefix comes_right_after.
+  
+  Definition lifted_comes_right_after_or_prefix := lift comes_right_after_or_prefix other_inclusion.
 
   Definition comes_after := clos_trans _ comes_right_after.
   Definition lifted_comes_after s1 s2 := comes_after (other_inclusion s1) (other_inclusion s2).
 
-  Definition comes_after_or_prefix := clos_trans _ comes_right_after_or_prefix.
-  Definition lifted_comes_after_or_prefix s1 s2 := comes_after_or_prefix (other_inclusion s1) (other_inclusion s2).
+  Definition comes_after_or_repeated_prefix := clos_trans _ comes_right_after_or_prefix.
+  Definition lifted_comes_after_or_repeated_prefix s1 s2 := comes_after_or_repeated_prefix (other_inclusion s1) (other_inclusion s2).
 
   Definition first_part st : sstate :=
     match st with
@@ -1281,326 +1285,86 @@ Module exec. Section WithEnv.
       destruct H2 as [_ H2]. simpl. apply H2.
   Qed.
 
-  Definition comp {A : Type} (R1 R2 : A -> A -> Prop) (x z : A) : Prop :=
-    exists y, R1 x y /\ R2 y z.
+  Check Acc_union. Print inclusion.
 
-  Definition equiv {A : Type} (R1 R2 : A -> A -> Prop) : Prop :=
-    forall x y, R1 x y <-> R2 x y.
-
-  Definition commute {A : Type} (R1 R2 : A -> A -> Prop) : Prop :=
-    equiv (comp R1 R2) (comp R2 R1).
-
-  Lemma trans_closures_commute' {A : Type} (R1 R2 : A -> A -> Prop) :
-    subrelation (comp R1 R2) (comp R2 R1) ->
-    subrelation (comp (clos_trans _ R1) (clos_trans _ R2)) (comp (clos_trans _ R2) (clos_trans _ R1)).
-  Proof. Admitted.
-
-  Print Acc.
-
-  Lemma Acc_twice {A : Type} (R : A -> A -> Prop) (x : A) :
-    (forall y z : A, R z y -> R y x -> Acc R z) -> Acc R x.
-  Proof. intros. constructor. intros. constructor. intros. eapply H; eauto. Qed.
-  
-  Lemma trans_closures_commute {A : Type} (R1 R2 : A -> A -> Prop) :
-    commute R1 R2 -> commute (clos_trans _ R1) (clos_trans _ R2).
+  Lemma commuting_rels : commut _ prefix comes_right_after.
   Proof.
-    intros. assert (H' := @trans_closures_commute'). cbv [subrelation] in H'. split.
-    - apply H'. apply H.
-    - apply H'. apply H.
-  Qed. Print well_founded.
-  (*want: clos_trans (union R1 R2) is well-founded *)
-
-  Require Import Coq.Wellfounded.Union.
-  Require Import Relation_Operators.
-  Require Import Relation_Definitions.
-  Require Import Transitive_Closure.
-
-  Print commut.
-  Locate "exists2". Print ex2.
-
-  Lemma wf_comp {A : Type} (R1 R2 : A -> A -> Prop) :
-    well_founded (clos_trans _ R1) ->
-    commute (clos_trans _ R1) (clos_trans _ R2) ->(*or, subrelation (comp (clos_trans _ R1) (clos_trans _ R2)) (comp (clos_trans _ R2) (clos_trans _ R1)) *)
-    well_founded (comp (clos_trans _ R1) (clos_trans _ R2)).
-  Proof.
-    cbv [well_founded]. intros. Print Acc. induction (H a). apply Acc_twice.
-    intros. assert (exists y0, comp (clos_trans _ R1) (clos_trans _ R2) z y0 /\
-                                 clos_trans _ R1 y0 x).
-    { destruct H3 as [z' [H3p1 H3p2]].
-      apply H0 in H4. destruct H4 as [y0 [H4p1 H4p2]].
-      exists y0. split.
-      - exists z'. split.
-        + assumption.
-        + Print clos_trans. eapply t_trans; eassumption.
-      - assumption. }
-    fwd. apply H2 in H5p1. destruct H5p1. apply H5. apply H5p0.
-  Qed.
-  
-  Lemma comp_to_union {A : Type} (R1 R2 : A -> A -> Prop) :
-    well_founded R1 ->
-    well_founded R2 ->
-    well_founded (comp (clos_trans _ R1) (clos_trans _ R2)) ->
-    well_founded (union _ R1 R2).
-  Proof.
-    intros. cbv [well_founded]. intros. (*cbv [well_founded] in H1. induction (H1 a). clear H2.
-    induction (H0 x). clear H2. constructor. intros. destruct H2.
-    2: { apply H4; [assumption|]. intros. apply H3. destruct H5 as [y0' [H5p1 H5p2]].
-         exists y0'. split; [assumption|]. eapply t_trans; [eassumption|]. apply t_step.
-         assumption. }
-    clear H4. *)
-    cbv [well_founded] in H.
-    induction (H1 a). clear H2. constructor. intros. destruct H2.
-    { 
-
-      constructor. intros. destruct H2.
-    induction (H a). clear H2. constructor. intros. destruct H2.
-    { apply H3. apply H2. }
-    assert (H2' : clos_trans _ R2 y x).
-    { apply t_step. assumption. }
-    clear H2 H3. induction (H1 x). clear H2.
-    induction (H1 a). clear H2. induction (H x). intros. destruct H2.
-    
-    { apply H3. apply H2. }
-    clear H3. induction (H1 x). clear H3.
-    induction (H1 a). clear H2. constructor. intros. destruct H2.
-    induction (H a). constructor. intros. destruct H4.
-    { apply H3. apply H4. }
-    assert (H4' : clos_trans _ R2 y x).
-    { apply t_step. apply H4. }
-    clear H2 H3 H4. induction (H0 y). constructor. intros ? H5. destruct H5.
-    2: { apply H3.
-         - assumption.
-         - eapply t_trans; [|eassumption]. apply t_step. assumption. }
-    assert (H4'' : clos_trans _ (comp (clos_trans _ R1) (clos_trans _ R2)) y x).
-    { apply t_step. exists x0. split; try assumption. apply t_step. assumption. }
-    clear H2 H3 H4 H4' x0. specialize (H1 x). destruct H1. revert y H4''. induction (H1 x). clear H2. intros.
-    eapply H3. 2: eapply H4''.
-    induction (H1 x). clear H2. constructor. intros. destruct H2.
-    2: { apply H3; try assumption.
-    fwd.
-    - apply H4.
-    - 
-    constructor. intros. destruct H4.
-    - apply H3. apply H4.
-    - clear H2 H3. induction (H1 x).
-    constructor. intros.
-    destruct H2 as [H2|H2].
-    - induction (H a).
-  (*can I define g : sstate -> sstate -> bool such that
-    forall s1 s2, comes_right_after_or_prefix s1 s2 -> comes_right_after s1 s2 <-> g s1 s2 = true?*)
-
-  (*A tree of type A is defined as a relation (child : A -> A -> Prop) along with a root
-    (head : A)*)
-
-  Definition finite (A : Type) : Prop := exists l, forall (a : A), In a l.
-  Definition finitesig {A : Type} (P : A -> Prop) : Prop := exists l, forall a, P a -> In a l.
-
-  (*every infinite graph, where each node has finite nonzero outdegree, contains an infinite path*)
-  (*a cycle counts as an infinite path*)
-  Lemma Konig {V : Type} (child : V -> V -> Prop) (root : V) :
-    (forall v, finitesig (child v) /\ exists v', (child v v')) ->
-    (forall f, f O = root -> ~forall k, child (f k) (f (S k))) ->
-    finitesig (clos_trans _ child root).
-  Admitted.
-
-  Lemma Konigalt {V : Type} (child : V -> V -> Prop) (root : V) :
-    (forall v, finitesig (child v) /\ exists v', (child v v')) ->
-    ~ finitesig (clos_trans _ child root) ->
-    (exists f, f O = root /\ forall k, child (f k) (f (S k))).
-  Admitted.
-
-  Section wf_union.
-    (*https://www.cs.utexas.edu/users/misra/Notes.dir/ApplicationKoenigLemma.pdf*)
-    Context
-      {A : Type}
-        (R1 R2 : A -> A -> Prop)
-        (top1 : A)
-        (Htop1 : forall a, R1 top1 a)
-        (f : nat -> A)
-        (HfO : f O = top1)
-        (HfS : forall k, (union _ R1 R2) (f k) (f (S k))).
-
-    Definition transitive {A : Type} (R : A -> A -> Prop) := forall x y z, R x y -> R y z -> R x z.
-    Context (trans : transitive (union _ R1 R2)).
-
-    Lemma transitive' i j :
-      i < j ->
-      (union _ R1 R2) (f i) (f j).
-    Proof.
-      revert i. induction j.
-      - lia.
-      - intros. assert (Heqle : i = j \/ i < j) by lia. destruct Heqle as [Heq|Hle].
-        + subst. apply HfS.
-        + eapply trans.
-          -- eapply IHj; assumption.
-          -- apply HfS.
-    Qed.      
-
-    Check nats_have_mins.
-
-    Definition child (i j : nat) : Prop :=
-      R1 (f i) (f j) /\ i < j /\ forall k, i < k < j -> ~R1 (f k) (f j).
-
-    Lemma siblings_totally_ordered_by_R2 i j1 j2 :
-      j1 < j2 ->
-      child i j1 ->
-      child i j2 ->
-      R2 (f j1) (f j2).
-    Proof.
-      intros. assert (H' := transitive' j1 j2 ltac:(assumption)). destruct H' as [H'|H'].
-      - cbv [child] in *. fwd. specialize (H1p2 j1 ltac:(lia)). exfalso.
-        apply H1p2. apply H'.
-      - assumption.
-    Qed.
-
-    Lemma parent_exists : forall j, exists i, child i (S j).
-    Proof. 
-      intros. Check nats_have_mins. assert (H := nats_have_mins j (fun i' => child (j - i') j)).
-      exists O. cbv [child]. rewrite HfO. split; [auto|split; [lia|auto]].
-
-    Lemma children_finite : ...
-
-    Lemma false : False.
-    Proof.
-      
-
-  (*This should be true without choice and middle,
-    since all the relevant things have decidable equality.
-    But it doesn't seem nice to do it without them,
-    and I'm using them elsewhere anyway...*)
-  Lemma prefix_dec :
-    excluded_middle ->
-    FunctionalChoice_on (sstate*sstate) bool ->
-    exists dec_prefix, forall s1 s2,
-      prefix s1 s2 <-> dec_prefix s1 s2 = true.
-  Proof.
-    intros em choice. cbv [FunctionalChoice_on] in choice.
-    specialize (choice (fun s1_s2 y => let '(s1, s2) := s1_s2 in prefix s1 s2 <-> y = true)).
-    simpl in choice. destruct choice as [f f_correct].
-    - intros x. specialize (em (let '(s1, s2) := x in prefix s1 s2)). destruct em as [em|em].
-      + exists true. destruct x. split; auto.
-      + exists false. destruct x. split; auto. congruence.
-    - exists (fun s1 s2 => f (s1, s2)). intros. specialize (f_correct (s1, s2)). apply f_correct.
+    cbv [commut]. intros. inversion H. subst. clear H. destr_sstate z.
+    exists (sseq s s2, k0, t0, m0, l0, mc0).
+    - cbv [comes_right_after state_step]. Print step. apply seq_step. apply H0.
+    - constructor.
   Qed.
 
-  Fixpoint append_stack (s : scmd) stack :=
-    match stack with
-    | nil => s
-    | s' :: stack' => append_stack (sseq s s') stack'
-    end.
-
-  Fixpoint remove_cuts' dec_prefix (f : nat -> sstate) fOcmd stack k :=
-    match dec_prefix (f (S O)) (f O) with
-    | true =>
-        match fOcmd with
-        | sseq s1 s2 => remove_cuts' dec_prefix (fun j => f (S j)) s1 (s2 :: stack) k
-        | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
-        end
-    | false =>
-        let '(s, k, t, m, l, mc) := f (S k) in
-        (append_stack s stack, k, t, m, l, mc)
-    end.
-
-  (*I was struggling to find the right generalization of what's going on here.
-    This is it:
-    https://www.cs.utexas.edu/users/misra/Notes.dir/ApplicationKoenigLemma.pdf
-*)
-  Lemma remove_cuts'_correct dec_prefix f stack :
-    (forall s1 s2, prefix s1 s2 <-> dec_prefix s1 s2 = true) ->
-    
-
-  (*given f (infinite seq of comes_right_after_or_prefix),
-    returns g (infinite seq of comes_right_after_or_prefix) such that f O steps to g O.*)
-  Fixpoint next_seq dec_prefix (f : nat -> sstate) fOcmd k :=
-    match dec_prefix (f (S O)) (f O) with
-    | true =>
-        match fOcmd with
-        | sseq s1 s2 =>
-            let '(s, k, t, m, l, mc) := next_seq dec_prefix (fun j => f (S j)) s1 k in
-            (sseq s s2, k, t, m, l, mc)
-        | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
-        end
-    | false => f (S k)
-    end.
-
-  Lemma next_seq_correct dec_prefix f :
-    (forall s1 s2, prefix s1 s2 <-> dec_prefix s1 s2 = true) ->
-    (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
-    let g := next_seq dec_prefix f (get_scmd (f O)) in
-    (forall i, comes_right_after_or_prefix (g (S i)) (g i)) /\
-      comes_right_after (g O) (f O).
+  Lemma prefix_wf :
+    well_founded prefix.
   Proof.
-    intros Hdec. remember (get_scmd (f O)) as fOcmd eqn:E. revert E. revert f.
-    induction fOcmd; intros; simpl in g; subst g; destr_sstate (f O); simpl in E; subst.
-    (*this is terrible, should fix*)
-    all: try solve [replace (dec_prefix _ _) with false;
-              [split;
-               [intros; apply H|
-                 specialize (H O); rewrite Ef in H; destruct H as [H|H];
-                 [assumption|inversion H]]|
-                destruct (dec_prefix _ _) eqn:E; [|reflexivity];
-                rewrite <- Hdec in E; inversion E]].
-    (*just left with the seq case*)
-    destruct (dec_prefix _ _) eqn:E.
-    - destr_sstate (f (S O)). rewrite <- Hdec in E. inversion E. subst. clear E.
-      clear IHfOcmd2. specialize (IHfOcmd1 (fun j => f (S j))).
-      simpl in IHfOcmd1. rewrite Ef0 in IHfOcmd1. specialize (IHfOcmd1 eq_refl).
-      specialize (IHfOcmd1 (fun i => H (S i))). destruct IHfOcmd1 as [IH1 IH2].
-      remember (next_seq dec_prefix (fun j => f (S j))) as g eqn:Eg. clear Eg.
-      split.
-      + clear IH2. intros i. specialize (IH1 i). destr_sstate (g fOcmd1 (S i)).
-        destr_sstate (g fOcmd1 i). destruct IH1 as [IH1|IH1].
-        -- left. constructor. apply IH1.
-        -- right. inversion IH1. subst. Print prefix. constructor.
-        clear Eg. destr_sstate 
-        specialize (
-      cbv [next_seq] in g. subst g.
-    
-        
-
-  Lemma steps_with_cuts_to_steps f :
-    (forall i, comes_right_after_or_prefix (f (S i)) (f i)) ->
-    exists g,
-      g O = f O /\
-        (forall i, comes_right_after (g (S i)) (g i)).
-  Proof. Print comes_right_after_or_prefix. Print prefix.
-  (*just remove all the cuts.
-    there can only be finitely many in a row, since statements have finite size.*) Admitted.    
+    cbv [well_founded]. intros. destr_sstate a. subst. revert k t m l mc. induction s.
+    all: constructor; intros ? H; inversion H.
+    subst. auto.
+  Qed.
   
-  Lemma steps_wf s k t m l mc post :
+  Lemma steps_Acc' s k t m l mc post :
     excluded_middle ->
-    FunctionalChoice_on (cmd * trace * io_trace * mem * locals * metrics) (cmd * trace * io_trace * mem * locals * metrics) ->
-    (forall (f : nat -> _),
+    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
+    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
+        f O = (inclusion s, k, t, m, l, mc) ->
+        possible_execution f ->
+        satisfies f post) ->
+    Acc comes_right_after (inclusion s, k, t, m, l, mc).
+  Proof.
+    intros em choice. intros.
+    apply chains_finite_implies_Acc; [apply em|apply choice|].
+    clear em choice.
+    intros. intros H'. specialize (H f).
+    simpl in H. specialize (H H0).
+    assert (possible_execution f).
+    { cbv [possible_execution]. intros. left. apply H'. }
+    apply H in H1.
+    destruct H1 as [i H1]. specialize (H' i).
+    destruct (f i) as [ [ [ [ [si ki] ti] mi] li] mci].
+    destruct (f (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
+    simpl in H1. simpl in H'. destruct H1 as [H1 | H1].
+    - destruct H1 as [H1p1 H1p2]. subst. inversion H'.
+    - remember (si, ki, ti, mi, li, mci) as st eqn:Est.
+      assert (H'' : let '(s, k, t, m, l, mc) := st in
+                     exists s' k' t' m' l' mc',
+                       step s k t m l mc s' k' t' m' l' mc').
+      { subst. do 6 eexists. eassumption. }
+      clear H' Est. induction H1.
+      + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply H4. clear H4. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply IHnondet_stuck. clear IHnondet_stuck. fwd. inversion H''; subst.
+        -- do 6 eexists. eassumption.
+        -- inversion H1.
+  Qed.
+
+  Search Acc.
+
+  Lemma lifted_Acc {A B : Type} (f : A -> B) R x :
+    Acc R (f x) ->
+    Acc (lift R f) x.
+  Proof.
+    intros. remember (f x) eqn:E. revert x E. induction H. intros. subst.
+    constructor. intros. eapply H0.
+    - eapply H1.
+    - reflexivity.
+  Qed.
+
+  Lemma steps_Acc s k t m l mc post :
+    excluded_middle ->
+    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
+    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     Acc lifted_comes_right_after_or_prefix (s, k, t, m, l, mc).
   Proof.
-    intros em choice. intros. apply chains_finite_implies_Acc; [apply em|apply choice|].
-    clear em choice.
-    intros. intros H'. apply steps_with_cuts_to_steps in H'. destruct H' as [g [H'1 H'2] ].
-    specialize (H g).
-    simpl in H. rewrite H'1 in H. rewrite H0 in H. specialize (H eq_refl). clear H0.
-    clear H'1.
-    assert (possible_execution g).
-    { cbv [possible_execution]. intros. left. apply H'2. }
-    apply H in H0.
-    destruct H0 as [i H0]. specialize (H'2 i).
-    destruct (g i) as [ [ [ [ [si ki] ti] mi] li] mci].
-    destruct (g (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
-    simpl in H0. simpl in H'2. destruct H0 as [H0 | H0].
-    - destruct H0 as [H0p1 H0p2]. subst. inversion H'2.
-    - remember (si, ki, ti, mi, li, mci) as st eqn:Est.
-      assert (H'2' : let '(s, k, t, m, l, mc) := st in
-                     exists s' k' t' m' l' mc',
-                       step s k t m l mc s' k' t' m' l' mc').
-      { subst. do 6 eexists. eassumption. }
-      clear H'2 Est. induction H0.
-      + apply H1. clear H1. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply H3. clear H3. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply IHnondet_stuck. clear IHnondet_stuck. fwd. inversion H'2'; subst.
-        -- do 6 eexists. eassumption.
-        -- inversion H0.
+    intros.
+    (*apply Acc_union. (*this is magical.  how does it know?*) *)
+    apply lifted_Acc. apply Acc_union.
+    - apply commuting_rels.
+    - intros. apply prefix_wf.
+    - eapply steps_Acc'; eassumption.
   Qed.
 
   Lemma done_stable f i :
