@@ -1281,6 +1281,61 @@ Module exec. Section WithEnv.
       destruct H2 as [_ H2]. simpl. apply H2.
   Qed.
 
+  Definition comp {A : Type} (R1 R2 : A -> A -> Prop) (x z : A) : Prop :=
+    exists y, R1 x y /\ R2 y z.
+
+  Definition equiv {A : Type} (R1 R2 : A -> A -> Prop) : Prop :=
+    forall x y, R1 x y <-> R2 x y.
+
+  Definition commute {A : Type} (R1 R2 : A -> A -> Prop) : Prop :=
+    equiv (comp R1 R2) (comp R2 R1).
+
+  Lemma trans_closures_commute' {A : Type} (R1 R2 : A -> A -> Prop) :
+    subrelation (comp R1 R2) (comp R2 R1) ->
+    subrelation (comp (clos_trans _ R1) (clos_trans _ R2)) (comp (clos_trans _ R2) (clos_trans _ R1)).
+  Proof. Admitted.
+
+  Print Acc.
+
+  Lemma Acc_twice {A : Type} (R : A -> A -> Prop) (x : A) :
+    (forall y z : A, R z y -> R y x -> Acc R z) -> Acc R x.
+  Proof. intros. constructor. intros. constructor. intros. eapply H; eauto. Qed.
+  
+  Lemma trans_closures_commute {A : Type} (R1 R2 : A -> A -> Prop) :
+    commute R1 R2 -> commute (clos_trans _ R1) (clos_trans _ R2).
+  Proof.
+    intros. assert (H' := @trans_closures_commute'). cbv [subrelation] in H'. split.
+    - apply H'. apply H.
+    - apply H'. apply H.
+  Qed. Print well_founded.
+  (*want: clos_trans (union R1 R2) is well-founded *)
+
+  Lemma wf_comp {A : Type} (R1 R2 : A -> A -> Prop) :
+    well_founded (clos_trans _ R1) ->
+    commute (clos_trans _ R1) (clos_trans _ R2) ->(*or, subrelation (comp (clos_trans _ R1) (clos_trans _ R2)) (comp (clos_trans _ R2) (clos_trans _ R1)) *)
+    well_founded (comp (clos_trans _ R1) (clos_trans _ R2)).
+  Proof.
+    cbv [well_founded]. intros. Print Acc. induction (H a). apply Acc_twice.
+    intros. assert (exists y0, comp (clos_trans _ R1) (clos_trans _ R2) z y0 /\
+                                 clos_trans _ R1 y0 x).
+    { destruct H3 as [z' [H3p1 H3p2]].
+      apply H0 in H4. destruct H4 as [y0 [H4p1 H4p2]].
+      exists y0. split.
+      - exists z'. split.
+        + assumption.
+        + Print clos_trans. eapply t_trans; eassumption.
+      - assumption. }
+    fwd. apply H2 in H5p1. destruct H5p1. apply H5. apply H5p0.
+  Qed.
+  
+  Lemma comp_to_union {A : Type} (R1 R2 : A -> A -> Prop) :
+    well_founded R1 ->
+    well_founded R2 ->
+    well_founded (clos_trans _ (comp (clos_trans _ R1) (clos_trans _ R2))) ->
+    well_founded (clos_trans _ (union _ R1 R2)).
+  Proof.
+    intros. cbv [well_founded]. intros. constructor. intros.
+
   (*can I define g : sstate -> sstate -> bool such that
     forall s1 s2, comes_right_after_or_prefix s1 s2 -> comes_right_after s1 s2 <-> g s1 s2 = true?*)
 
