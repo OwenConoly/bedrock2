@@ -1340,6 +1340,10 @@ Module exec. Section WithEnv.
 
   Search Acc.
 
+  Lemma lift_iff {A B : Type} (f : A -> B) R x y :
+    R (f x) (f y) <-> lift R f x y.
+  Proof. cbv [lift]. reflexivity. Qed.
+
   Lemma lifted_Acc {A B : Type} (f : A -> B) R x :
     Acc R (f x) ->
     Acc (lift R f) x.
@@ -1407,6 +1411,27 @@ Module exec. Section WithEnv.
   Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f.
   Proof. Admitted.
+
+  Print inclusion.
+
+  (*I know there's some better way to do this...
+   something like ltac:(eval _ in _) ?*)
+  Lemma fold_inclusion :
+    (fix inclusion (s : cmd) : scmd :=
+       match s with
+       | cmd.skip => sskip
+       | cmd.set x1 x2 => sset x1 x2
+       | cmd.unset x1 => sunset x1
+       | cmd.store x1 x2 x3 => sstore x1 x2 x3
+       | cmd.stackalloc x1 x2 x3 => sstackalloc x1 x2 (inclusion x3)
+       | cmd.cond x1 x2 x3 => scond x1 (inclusion x2) (inclusion x3)
+       | cmd.seq x1 x2 => sseq (inclusion x1) (inclusion x2)
+       | cmd.while x1 x2 => swhile x1 (inclusion x2)
+       | cmd.call x1 x2 x3 => scall x1 x2 x3
+       | cmd.interact x1 x2 x3 => sinteract x1 x2 x3
+       end) = inclusion.
+    Proof. reflexivity. Qed.
+    
   
   Lemma step_to_exec s k t m l mc post :
     excluded_middle ->
@@ -1419,39 +1444,89 @@ Module exec. Section WithEnv.
   Proof.
     intros em choice H. assert (H' := steps_Acc).
     specialize H' with (1 := em) (2 := choice) (3 := H). apply Acc_clos_trans in H'.
+    fold lifted_comes_after_or_repeated_prefix in H'. (*why doesn't this work*)
     revert H. revert post.
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
     Unshelve. simpl. clear -word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
-    intros. destruct s.
-    - econstructor. eassert (H' := H (fun _ => _)). simpl in H'. specialize (H' eq_refl).
-      destruct H' as [i H'].
-      { cbv [possible_execution]. intros. right. cbv [stuck_state]. split; [|reflexivity].
-        intros [st H']. destr_sstate st. inversion H'. }
-      cbv [state_satisfies] in H'. destruct H' as [H'|H'].
-      + fwd. assumption.
-      + inversion H'.
-    - assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
-      destruct H' as [f [H'1 H'2] ].
-      specialize (H f H'1 H'2). assert (Hsuc := ps_suc _ _ H'2 H).
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite H'1 in HsucO. inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite H'1 in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst. assert (H' := done_stable f (S O) H'2). rewrite Ef in H'.
-      specialize (H' eq_refl). destruct H as [i H]. destruct H as [H|H].
-      2: { exfalso. destruct i.
-           - rewrite H'1 in H. inversion H.
-           - rewrite <- H' in H. inversion H. }
-      destruct i.
-      { rewrite H'1 in H. destruct H as [H _]. simpl in H. congruence. }
-      rewrite <- H' in H. destruct H as [_ H]. econstructor; eassumption.
-    - 
-    - intros post H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
-      fold comes_after in H'. revert H. revert post.
-      eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
-      Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
-      revert X. revert H. revert post.*)
-
+    intros post Hsat.
+    (* there is a possible execution *)
+    assert (Hposs := possible_execution_exists (inclusion s) k t m l mc).
+    destruct Hposs as [f [HfO Hposs] ].
+    (* it is successful and satisfies the postcondition *)
+    assert (Hsatf := Hsat f HfO Hposs). assert (Hsuc := ps_suc _ _ Hposs Hsatf).
     
+    destruct s.
+    - econstructor. assert (Hdone := done_stable f O Hposs). rewrite HfO in Hdone.
+      specialize (Hdone eq_refl). destruct Hsatf as [i Hsatf]. simpl in Hdone.
+      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      2: { inversion Hsatf. }
+      fwd. assumption.
+    - (* the 0th state is a step state *)
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. inversion HsucO. }
+      (* find out what the 1st state is *)
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst.
+      (* show that all states after the first state are the same as the first state *)
+      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
+      specialize (Hdone eq_refl).
+      (* show that the state satisfying the postcondition is not the zeroth state *)
+      destruct Hsatf as [i Hsatf]. destruct i as [|i].
+      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
+        - inversion Hsatf. }
+      (* show that the first state satisfies the postcondition *)
+      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      2: { inversion Hsatf. }
+      fwd. econstructor; eassumption.
+    - (*this is identical to the previous case...*)
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. inversion HsucO. }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst.
+      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
+      specialize (Hdone eq_refl).
+      destruct Hsatf as [i Hsatf]. destruct i as [|i].
+      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
+        - inversion Hsatf. }
+      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      2: { inversion Hsatf. }
+      fwd. econstructor; eassumption.
+    - (*this is identical to the previous case...*)
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. inversion HsucO. }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst.
+      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
+      specialize (Hdone eq_refl).
+      destruct Hsatf as [i Hsatf]. destruct i as [|i].
+      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
+        - inversion Hsatf. }
+      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      2: { inversion Hsatf. }
+      fwd. econstructor; eassumption.
+    - admit.
+    - admit.
+    - clear f HfO Hposs Hsatf Hsuc.
+      assert (Xs1 := X (s1, k, t, m, l, mc)). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
+      { apply t_step. cbv [lifted_comes_right_after_or_prefix lift]. simpl.
+        cbv [comes_right_after_or_prefix]. left. constructor. }
+      simpl in Xs1. assert (Hsatinv := invert_seq). specialize Hsatinv with (1 := Hsat).
+      fold inclusion in Hsatinv. specialize Xs1 with (1 := Hsatinv).
+      econstructor. 1: eapply Xs1. simpl. intros * [afters2 Hs2].
+      assert (comes_after_seq : forall s1 s1' s2, comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+                                comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc)).
+      { (* should be a separate lemma *) admit. }
+      specialize comes_after_seq with (1 := afters2).
+      assert (Xs2 := X (s2, k', t', m', l', mc')). eassert (lt: _). 2: specialize (Xs2 lt); clear lt.
+      { Check t_trans. apply (t_trans _ _ _ (cmd.seq s1 s2, k, t, m, l, mc)).
+        - cbv [lifted_comes_right_after_or_prefix lift comes_right_after_or_prefix].
+          Search (clos_trans _ union). apply afters2.
+        2: { 
+        - 
+      destruct 
 
 
   Lemma weaken: forall s k t m l mc post1,
