@@ -1310,6 +1310,14 @@ Module exec. Section WithEnv.
   Qed. Print well_founded.
   (*want: clos_trans (union R1 R2) is well-founded *)
 
+  Require Import Coq.Wellfounded.Union.
+  Require Import Relation_Operators.
+  Require Import Relation_Definitions.
+  Require Import Transitive_Closure.
+
+  Print commut.
+  Locate "exists2". Print ex2.
+
   Lemma wf_comp {A : Type} (R1 R2 : A -> A -> Prop) :
     well_founded (clos_trans _ R1) ->
     commute (clos_trans _ R1) (clos_trans _ R2) ->(*or, subrelation (comp (clos_trans _ R1) (clos_trans _ R2)) (comp (clos_trans _ R2) (clos_trans _ R1)) *)
@@ -1331,11 +1339,53 @@ Module exec. Section WithEnv.
   Lemma comp_to_union {A : Type} (R1 R2 : A -> A -> Prop) :
     well_founded R1 ->
     well_founded R2 ->
-    well_founded (clos_trans _ (comp (clos_trans _ R1) (clos_trans _ R2))) ->
-    well_founded (clos_trans _ (union _ R1 R2)).
+    well_founded (comp (clos_trans _ R1) (clos_trans _ R2)) ->
+    well_founded (union _ R1 R2).
   Proof.
-    intros. cbv [well_founded]. intros. constructor. intros.
+    intros. cbv [well_founded]. intros. (*cbv [well_founded] in H1. induction (H1 a). clear H2.
+    induction (H0 x). clear H2. constructor. intros. destruct H2.
+    2: { apply H4; [assumption|]. intros. apply H3. destruct H5 as [y0' [H5p1 H5p2]].
+         exists y0'. split; [assumption|]. eapply t_trans; [eassumption|]. apply t_step.
+         assumption. }
+    clear H4. *)
+    cbv [well_founded] in H.
+    induction (H1 a). clear H2. constructor. intros. destruct H2.
+    { 
 
+      constructor. intros. destruct H2.
+    induction (H a). clear H2. constructor. intros. destruct H2.
+    { apply H3. apply H2. }
+    assert (H2' : clos_trans _ R2 y x).
+    { apply t_step. assumption. }
+    clear H2 H3. induction (H1 x). clear H2.
+    induction (H1 a). clear H2. induction (H x). intros. destruct H2.
+    
+    { apply H3. apply H2. }
+    clear H3. induction (H1 x). clear H3.
+    induction (H1 a). clear H2. constructor. intros. destruct H2.
+    induction (H a). constructor. intros. destruct H4.
+    { apply H3. apply H4. }
+    assert (H4' : clos_trans _ R2 y x).
+    { apply t_step. apply H4. }
+    clear H2 H3 H4. induction (H0 y). constructor. intros ? H5. destruct H5.
+    2: { apply H3.
+         - assumption.
+         - eapply t_trans; [|eassumption]. apply t_step. assumption. }
+    assert (H4'' : clos_trans _ (comp (clos_trans _ R1) (clos_trans _ R2)) y x).
+    { apply t_step. exists x0. split; try assumption. apply t_step. assumption. }
+    clear H2 H3 H4 H4' x0. specialize (H1 x). destruct H1. revert y H4''. induction (H1 x). clear H2. intros.
+    eapply H3. 2: eapply H4''.
+    induction (H1 x). clear H2. constructor. intros. destruct H2.
+    2: { apply H3; try assumption.
+    fwd.
+    - apply H4.
+    - 
+    constructor. intros. destruct H4.
+    - apply H3. apply H4.
+    - clear H2 H3. induction (H1 x).
+    constructor. intros.
+    destruct H2 as [H2|H2].
+    - induction (H a).
   (*can I define g : sstate -> sstate -> bool such that
     forall s1 s2, comes_right_after_or_prefix s1 s2 -> comes_right_after s1 s2 <-> g s1 s2 = true?*)
 
