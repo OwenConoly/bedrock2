@@ -1371,7 +1371,7 @@ Module exec. Section WithEnv.
     possible_execution f ->
     get_scmd (f i) = sskip ->
     forall j,
-      f i = f (j + i).
+      f i = f (i + j).
   Proof.
     intros. induction j. (*easy*) Admitted.
 
@@ -1399,166 +1399,59 @@ Module exec. Section WithEnv.
           lifted_comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
           lifted_comes_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
+
+  Print possible_execution.
+  Definition successful_execution f :=
+    forall i, step_state f i \/ nondet_stuck (f i).
+  
+  Lemma ps_suc f post :
+    possible_execution f -> satisfies f post -> successful_execution f.
+  Proof. Admitted.
   
   Lemma step_to_exec s k t m l mc post :
+    excluded_middle ->
+    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> _),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
-        exists i,
-          let '(s', k', t', m', l', mc') := f i in
-          s' = sskip /\ post k' t' m' l' mc') ->
+        satisfies f post) ->
     exec s k t m l mc post.
   Proof.
-    (*revert post. induction s.
-    - intros. econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
-      destruct H as [i H].
-      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
-      + destruct H as [_ H]. assumption.
-    - intros. assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
-      destruct H' as [f [H'1 H'2] ]. specialize (H f H'1 H'2). destruct H as [i H].
-      assert (H'' := step_until_done f i). specialize (H'' H'2).
-      destruct (f i) as [ [ [ [ [s' k'] t'] m'] l'] mc'] eqn:Ei. fwd. specialize (H'' eq_refl).
-      specialize (H'' O). destruct H'' as [H'' | H''].
-      + cbv [done_state] in H''. rewrite H'1 in H''. simpl in H''. destruct H'' as [H'' _].
-        congruence.
-      + cbv [step_state state_step] in H''. rewrite H'1 in H''.
-        destruct (f 1%nat) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:E1. inversion H''. subst.
-        econstructor; try eassumption. Search i. destruct i.
-        -- rewrite Ei in H'1. simpl in H'1. congruence.
-        -- assert (H' := done_stable f 1 H'2). rewrite E1 in H'. specialize (H' eq_refl).
-           specialize (H' i). replace (i + 1) with (S i) in * by lia. rewrite Ei in H'.
-           inversion H'. subst. assumption.
-    - admit.
-    - admit.
-    - admit.
-    - admit.
+    intros em choice H. assert (H' := steps_Acc).
+    specialize H' with (1 := em) (2 := choice) (3 := H). apply Acc_clos_trans in H'.
+    revert H. revert post.
+    eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
+    Unshelve. simpl. clear -word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
+    intros. destruct s.
+    - econstructor. eassert (H' := H (fun _ => _)). simpl in H'. specialize (H' eq_refl).
+      destruct H' as [i H'].
+      { cbv [possible_execution]. intros. right. cbv [stuck_state]. split; [|reflexivity].
+        intros [st H']. destr_sstate st. inversion H'. }
+      cbv [state_satisfies] in H'. destruct H' as [H'|H'].
+      + fwd. assumption.
+      + inversion H'.
+    - assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
+      destruct H' as [f [H'1 H'2] ].
+      specialize (H f H'1 H'2). assert (Hsuc := ps_suc _ _ H'2 H).
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite H'1 in HsucO. inversion HsucO. }
+      cbv [step_state state_step] in HsucO. rewrite H'1 in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst. assert (H' := done_stable f (S O) H'2). rewrite Ef in H'.
+      specialize (H' eq_refl). destruct H as [i H]. destruct H as [H|H].
+      2: { exfalso. destruct i.
+           - rewrite H'1 in H. inversion H.
+           - rewrite <- H' in H. inversion H. }
+      destruct i.
+      { rewrite H'1 in H. destruct H as [H _]. simpl in H. congruence. }
+      rewrite <- H' in H. destruct H as [_ H]. econstructor; eassumption.
+    - 
     - intros post H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
       fold comes_after in H'. revert H. revert post.
       eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
       Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
       revert X. revert H. revert post.*)
 
-    (*here's how it goes when we try execution order, then command structure.*)
-    intros H. assert (H' := H). apply steps_wf in H'. apply Acc_clos_trans in H'.
-    fold lifted_comes_after_or_prefix in H'. (*fix this.*)
-    revert H. revert post.
-    eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
-    Unshelve. simpl. clear. intros. destruct x as [ [ [ [ [s k] t] m] l] mc]. intros.
-    revert X. revert H. revert post.
-    destruct s.
-    - econstructor. specialize (H (fun n => (inclusion cmd.skip, k, t, m, l, mc)) eq_refl).
-      destruct H as [i H].
-      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
-      + destruct H as [_ H]. assumption.
-    - intros. assert (H' := possible_execution_exists (inclusion (cmd.set lhs rhs)) k t m l mc).
-      destruct H' as [f [H'1 H'2] ]. specialize (H f H'1 H'2). destruct H as [i H].
-      assert (H'' := step_until_done f i). specialize (H'' H'2).
-      destruct (f i) as [ [ [ [ [s' k'] t'] m'] l'] mc'] eqn:Ei. fwd. specialize (H'' eq_refl).
-      specialize (H'' O). destruct H'' as [H'' | H''].
-      + cbv [done_state] in H''. rewrite H'1 in H''. simpl in H''. destruct H'' as [H'' _].
-        congruence.
-      + cbv [step_state state_step] in H''. rewrite H'1 in H''.
-        destruct (f 1%nat) as [ [ [ [ [s2 k2] t2] m2] l2] mc2] eqn:E1. inversion H''. subst.
-        econstructor; try eassumption. Search i. destruct i.
-        -- rewrite Ei in H'1. simpl in H'1. congruence.
-        -- assert (H' := done_stable f 1 H'2). rewrite E1 in H'. specialize (H' eq_refl).
-           specialize (H' i). replace (i + 1) with (S i) in * by lia. rewrite Ei in H'.
-           inversion H'. subst. assumption.
-    - admit.
-    - admit.
-    - admit.
-    - admit.
-    - intros. Check invert_seq. assert (H' := invert_seq _ _ _ _ _ _ _ _ H). fold inclusion in *.
-      econstructor.
-      + eapply (X (s1, k, t, m, l, mc)).
-        -- cbv [comes_after_or_prefix]. Print clos_trans. apply t_step.
-           cbv [comes_right_after_or_prefix]. right. constructor.
-        -- apply H'.
-      + simpl. intros. destruct H0 as [H1 H2]. eapply (X (s2, k', t', m', l', mc')).
-        -- (*easy, use H1*) admit.
-        -- apply H2.
-    - 
-          
-      assert (Hs1 := X (s1, k, t, m, l, mc)).
-      assert (H0 : comes_after_or_prefix (s1, k, t, m, l, mc) (cmd.seq s1 s2, k, t, m, l, mc)).
-      {  }
-      specialize (Hs1 H0). clear H0. simpl in Hs1.
-      
-      edestruct Hs1. specialize Hs1 with (1 := ltac:(dconstructor)). econstructor.
-      + apply IHs1. intros. destruct y as [ [ [ [ [ s1' k' ] t' ] m' ] l' ] mc' ].
-        eapply comes_after_seq in H0. apply X in H0. intros post'.
-        intros H''.
-        specialize (H0 post').
-
-        
-      
-
-      
-        exists i,
-          let '(s', k', t', m', l', mc') := f i in
-          s' = s2 /\ forall
-      econstructor.
-           simpl in H'.
-           eapply done_stable in H'2. rewriet H'2 in E. cbv [possible_execution] in H'2.
-      
-      + instantiate (1 := fun n => match n with | O => _ | _ => _ end). reflexivity.
-      + cbv [possible_execution]. intros i. destruct i as [| i].
-        * simpl. left. cbv [step_state state_step]. instantiate (1 := (_, _, _, _, _, _)).
-          simpl. econstructor.
-      specialize (H (fun n =>
-                       match n with
-                       | O => _
-                       | _ => _ end) eq_refl).
-      destruct H as [i H].
-      + simpl. cbv [possible_execution]. intros i. right. left. cbv [done_state]. auto.
-      + destruct H as [_ H]. assumption.
-      
-      with (3 := H').
-    2: eapply 
-
-
-
-
-
-
-      assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
-      + exists (S O). cbv [step_state state_step] in HSO.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite HO in HSO.
-        inversion HSO. subst.
-        
-        reflexivity.
-      + exists O. cbv [done_state] in HSO. destruct HSO as [HSO _]. assumption.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
-        econstructor; eassumption.
-    - intros. assert (H3 := H2 O). destruct H3 as [H3 | [H3 | H3] ].
-      + exists (S O). cbv [step_state state_step] in H3.
-        destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2]. rewrite H1 in H3.
-        inversion H3. subst. reflexivity.
-      + exists O. cbv [done_state] in H3. destruct H3 as [H3 _]. assumption.
-      + exfalso. apply H3. eexists (_, _, _, _, _, _). rewrite H1. cbv [state_step].
-        constructor. eassumption.
-        simpl in H3.
-        destruct ( cbv [step_state state_step] in H3.
-      rewrite H1 in H3. destruct H3 as [ H3 | H3 | H3 ].
-      + exists (S O). simpl in H3. 
-        inversion H3. subst. reflexivity.
-      + simpl in H3. destruct H3 as [H3p1 H3p2]. simpl in H3p1. congruence.
-    - intros. assert (H2 := H1 O). rewrite H0 in H2. destruct H2 as [H2 | H2].
-      + exists (S O). simpl in H2. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
-        inversion H2. subst. reflexivity.
-      + simpl in H2. destruct H2 as [H2p1 H2p2]. simpl in H2p1. congruence.
-    - intros. assert (H5 := H4 O). rewrite H3 in H5. destruct H5 as [H5 | H5].
-      + exists (S O). simpl in H5. destruct (f (S O)) as [ [ [ [ [s2 k2] t2] m2] l2] mc2].
-        inversion H5. subst. reflexivity.
-      + simpl in H5. destruct H5 as [H5p1 H5p2]. simpl in H5p1. congruence.
-        
-        cbv [state_done] in H3. simpl in H3.
-        
-      destruct H
-
-      assert (H2 := H1 O). rewrite H0 in H2. destruct H2 as [H2 | H2].
-      + 
-      eexists.
+    
 
 
   Lemma weaken: forall s k t m l mc post1,
