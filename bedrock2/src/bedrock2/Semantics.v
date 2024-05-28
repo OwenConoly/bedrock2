@@ -1283,7 +1283,81 @@ Module exec. Section WithEnv.
 
   (*can I define g : sstate -> sstate -> bool such that
     forall s1 s2, comes_right_after_or_prefix s1 s2 -> comes_right_after s1 s2 <-> g s1 s2 = true?*)
-  Print prefix.
+
+  (*A tree of type A is defined as a relation (child : A -> A -> Prop) along with a root
+    (head : A)*)
+
+  Definition finite (A : Type) : Prop := exists l, forall (a : A), In a l.
+  Definition finitesig {A : Type} (P : A -> Prop) : Prop := exists l, forall a, P a -> In a l.
+
+  (*every infinite graph, where each node has finite nonzero outdegree, contains an infinite path*)
+  (*a cycle counts as an infinite path*)
+  Lemma Konig {V : Type} (child : V -> V -> Prop) (root : V) :
+    (forall v, finitesig (child v) /\ exists v', (child v v')) ->
+    (forall f, f O = root -> ~forall k, child (f k) (f (S k))) ->
+    finitesig (clos_trans _ child root).
+  Admitted.
+
+  Lemma Konigalt {V : Type} (child : V -> V -> Prop) (root : V) :
+    (forall v, finitesig (child v) /\ exists v', (child v v')) ->
+    ~ finitesig (clos_trans _ child root) ->
+    (exists f, f O = root /\ forall k, child (f k) (f (S k))).
+  Admitted.
+
+  Section wf_union.
+    (*https://www.cs.utexas.edu/users/misra/Notes.dir/ApplicationKoenigLemma.pdf*)
+    Context
+      {A : Type}
+        (R1 R2 : A -> A -> Prop)
+        (top1 : A)
+        (Htop1 : forall a, R1 top1 a)
+        (f : nat -> A)
+        (HfO : f O = top1)
+        (HfS : forall k, (union _ R1 R2) (f k) (f (S k))).
+
+    Definition transitive {A : Type} (R : A -> A -> Prop) := forall x y z, R x y -> R y z -> R x z.
+    Context (trans : transitive (union _ R1 R2)).
+
+    Lemma transitive' i j :
+      i < j ->
+      (union _ R1 R2) (f i) (f j).
+    Proof.
+      revert i. induction j.
+      - lia.
+      - intros. assert (Heqle : i = j \/ i < j) by lia. destruct Heqle as [Heq|Hle].
+        + subst. apply HfS.
+        + eapply trans.
+          -- eapply IHj; assumption.
+          -- apply HfS.
+    Qed.      
+
+    Check nats_have_mins.
+
+    Definition child (i j : nat) : Prop :=
+      R1 (f i) (f j) /\ i < j /\ forall k, i < k < j -> ~R1 (f k) (f j).
+
+    Lemma siblings_totally_ordered_by_R2 i j1 j2 :
+      j1 < j2 ->
+      child i j1 ->
+      child i j2 ->
+      R2 (f j1) (f j2).
+    Proof.
+      intros. assert (H' := transitive' j1 j2 ltac:(assumption)). destruct H' as [H'|H'].
+      - cbv [child] in *. fwd. specialize (H1p2 j1 ltac:(lia)). exfalso.
+        apply H1p2. apply H'.
+      - assumption.
+    Qed.
+
+    Lemma parent_exists : forall j, exists i, child i (S j).
+    Proof. 
+      intros. Check nats_have_mins. assert (H := nats_have_mins j (fun i' => child (j - i') j)).
+      exists O. cbv [child]. rewrite HfO. split; [auto|split; [lia|auto]].
+
+    Lemma children_finite : ...
+
+    Lemma false : False.
+    Proof.
+      
 
   (*This should be true without choice and middle,
     since all the relevant things have decidable equality.
@@ -1292,8 +1366,8 @@ Module exec. Section WithEnv.
   Lemma prefix_dec :
     excluded_middle ->
     FunctionalChoice_on (sstate*sstate) bool ->
-    exists g, forall s1 s2,
-      prefix s1 s2 <-> g s1 s2 = true.
+    exists dec_prefix, forall s1 s2,
+      prefix s1 s2 <-> dec_prefix s1 s2 = true.
   Proof.
     intros em choice. cbv [FunctionalChoice_on] in choice.
     specialize (choice (fun s1_s2 y => let '(s1, s2) := s1_s2 in prefix s1 s2 <-> y = true)).
@@ -1304,19 +1378,44 @@ Module exec. Section WithEnv.
     - exists (fun s1 s2 => f (s1, s2)). intros. specialize (f_correct (s1, s2)). apply f_correct.
   Qed.
 
+  Fixpoint append_stack (s : scmd) stack :=
+    match stack with
+    | nil => s
+    | s' :: stack' => append_stack (sseq s s') stack'
+    end.
+
+  Fixpoint remove_cuts' dec_prefix (f : nat -> sstate) fOcmd stack k :=
+    match dec_prefix (f (S O)) (f O) with
+    | true =>
+        match fOcmd with
+        | sseq s1 s2 => remove_cuts' dec_prefix (fun j => f (S j)) s1 (s2 :: stack) k
+        | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
+        end
+    | false =>
+        let '(s, k, t, m, l, mc) := f (S k) in
+        (append_stack s stack, k, t, m, l, mc)
+    end.
+
+  (*I was struggling to find the right generalization of what's going on here.
+    This is it:
+    https://www.cs.utexas.edu/users/misra/Notes.dir/ApplicationKoenigLemma.pdf
+*)
+  Lemma remove_cuts'_correct dec_prefix f stack :
+    (forall s1 s2, prefix s1 s2 <-> dec_prefix s1 s2 = true) ->
+    
+
   (*given f (infinite seq of comes_right_after_or_prefix),
     returns g (infinite seq of comes_right_after_or_prefix) such that f O steps to g O.*)
-  Fixpoint next_seq dec_prefix (f : nat -> sstate) fOcmd :=
+  Fixpoint next_seq dec_prefix (f : nat -> sstate) fOcmd k :=
     match dec_prefix (f (S O)) (f O) with
     | true =>
         match fOcmd with
         | sseq s1 s2 =>
-            (fun i =>
-               let '(s, k, t, m, l, mc) := next_seq dec_prefix (fun j => f (S j)) s1 i in
-               (sseq s s2, k, t, m, l, mc))
-        | _ => (fun _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog))
+            let '(s, k, t, m, l, mc) := next_seq dec_prefix (fun j => f (S j)) s1 k in
+            (sseq s s2, k, t, m, l, mc)
+        | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
         end
-    | false => (fun k => f (S k))
+    | false => f (S k)
     end.
 
   Lemma next_seq_correct dec_prefix f :
