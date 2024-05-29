@@ -423,11 +423,15 @@ Module exec. Section WithEnv.
 
   Definition dumb_ext_spec : ExtSpec :=
     fun t m a args post =>
-      exists n, forall mReceive resvals klist, length t >= n -> post mReceive resvals klist.
+      exists n, forall mReceive resvals klist,
+        length resvals >= n -> post mReceive (cons word.of_Z 0) klist.
+  (*something like that, idk*)
+  (*note that this satisfies the finite intersection property, but not the infinite one...*)
   x = 0
   while (x = 0) {
     stackalloc 1 as x;
-    do some io thing that contributes to the io trace
+    x = input;
+    
   }
   (*this is almost a counterexample, except everything is finite agh...*)
   
