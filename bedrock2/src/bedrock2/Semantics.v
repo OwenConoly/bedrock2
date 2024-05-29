@@ -421,6 +421,18 @@ Module exec. Section WithEnv.
   Context {ext_spec: ExtSpec}.
   Context (e: env).
 
+  Definition dumb_ext_spec : ExtSpec :=
+    fun t m a args post =>
+      exists n, forall mReceive resvals klist, length t >= n -> post mReceive resvals klist.
+  x = 0
+  while (x = 0) {
+    stackalloc 1 as x;
+    do some io thing that contributes to the io trace
+  }
+  (*this is almost a counterexample, except everything is finite agh...*)
+  
+  
+
   Local Notation metrics := MetricLog.
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
@@ -1468,7 +1480,7 @@ Module exec. Section WithEnv.
     specialize H' with (1 := em) (2 := choice) (3 := H).
     revert H. revert post.
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
-    Unshelve. simpl. clear -word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
+    Unshelve. simpl. clear -em word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
     intros post Hsat.
     (* there is a possible execution *)
     assert (Hposs := possible_execution_exists (inclusion s) k t m l mc).
@@ -1680,7 +1692,28 @@ Module exec. Section WithEnv.
       rewrite <- Hdone in Hsatg. destruct Hsatg as [Hsatg|Hsatg].
       2: { inversion Hsatg. }
       fwd. eauto.
-    - 
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. inversion HsucO. subst.
+           assert (step_or_not := em (forall mReceive resvals klist,
+                                      exists mid, ext_spec t mGive action args0 mid /\
+                                                    ~ mid mReceive resvals klist)).
+           destruct step_or_not as [step|not].
+           - econstructor; eauto.
+             + instantiate (1 := fun mReceive resvals klist => forall mid, ext_spec t mGive action args0 mid -> mid mReceive resvals klist). simpl.
+           econstructor. Check ext_spec_ok. try eassumption.
+           - exfalso.
+      }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst.
+      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
+      specialize (Hdone eq_refl).
+      destruct Hsatf as [i Hsatf]. destruct i as [|i].
+      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
+        - inversion Hsatf. }
+      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      2: { inversion Hsatf. }
+      fwd. econstructor; eassumption.
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
