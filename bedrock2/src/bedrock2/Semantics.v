@@ -740,15 +740,16 @@ Module exec. Section WithEnv.
   | bprefix : forall s1 s2 k t m l mc,
       prefix (s1, k, t, m, l, mc) (sseq s1 s2, k, t, m, l, mc).
 
-  Definition comes_right_after_or_prefix := union _ prefix comes_right_after.
+  (*Definition comes_right_after_or_prefix := union _ prefix comes_right_after.*)
   
-  Definition lifted_comes_right_after_or_prefix := lift comes_right_after_or_prefix other_inclusion.
+  (*Definition lifted_comes_right_after_or_prefix := lift comes_right_after_or_prefix other_inclusion.*)
 
+  Definition repeated_prefix := clos_trans _ prefix.
   Definition comes_after := clos_trans _ comes_right_after.
-  Definition lifted_comes_after s1 s2 := comes_after (other_inclusion s1) (other_inclusion s2).
+  Definition lifted_comes_after := lift comes_after other_inclusion.
 
-  Definition comes_after_or_repeated_prefix := clos_trans _ comes_right_after_or_prefix.
-  Definition lifted_comes_after_or_repeated_prefix s1 s2 := comes_after_or_repeated_prefix (other_inclusion s1) (other_inclusion s2).
+  Definition comes_after_or_repeated_prefix := clos_trans _ (union _ repeated_prefix comes_after).
+  Definition lifted_comes_after_or_repeated_prefix := lift comes_after_or_repeated_prefix other_inclusion.
 
   Definition first_part st : sstate :=
     match st with
@@ -1287,13 +1288,45 @@ Module exec. Section WithEnv.
 
   Check Acc_union. Print inclusion.
 
-  Lemma commuting_rels : commut _ prefix comes_right_after.
+  Lemma they_commute : commut _ prefix comes_right_after.
   Proof.
     cbv [commut]. intros. inversion H. subst. clear H. destr_sstate z.
     exists (sseq s s2, k0, t0, m0, l0, mc0).
     - cbv [comes_right_after state_step]. Print step. apply seq_step. apply H0.
     - constructor.
   Qed.
+
+  Lemma clos_trans_l_commut {A : Type} (R1 R2 : relation A) :
+    commut _ R1 R2 -> commut _ (clos_trans _ R1) R2.
+  Proof.
+    intros H. intros x y H1. induction H1.
+    - intros z Hzx.
+      specialize (H _ _ ltac:(eassumption) _ ltac:(eassumption)).
+      destruct H as [x' H1' H2']. clear H0 Hzx x. exists x'.
+      + assumption.
+      + apply t_step. assumption.
+    - Search x. intros z' H2. specialize IHclos_trans1 with (1 := H2).
+      destruct IHclos_trans1. specialize IHclos_trans2 with (1 := H0).
+      destruct IHclos_trans2. eexists; [eassumption|]. eapply t_trans; eassumption.
+  Qed.
+
+  Lemma clos_trans_r_commut {A : Type} (R1 R2 : relation A) :
+    commut _ R1 R2 -> commut _ R1 (clos_trans _ R2).
+  Proof.
+    intros H. intros x y H1 z H2. revert x H1. induction H2.
+    - intros z Hyz.
+      specialize (H _ _ ltac:(eassumption) _ ltac:(eassumption)).
+      destruct H as [y' H1' H2']. clear H0 Hyz y. exists y'.
+      + apply t_step. assumption.
+      + assumption.
+    - intros z' H2. specialize IHclos_trans2 with (1 := H2).
+      destruct IHclos_trans2. specialize IHclos_trans1 with (1 := H1).
+      destruct IHclos_trans1. eexists; [|eassumption]. eapply t_trans; eassumption.
+  Qed.
+
+  Lemma clos_trans_commut {A : Type} (R1 R2 : relation A) :
+    commut _ R1 R2 -> commut _ (clos_trans _ R1) (clos_trans _ R2).
+  Proof. intros. apply clos_trans_l_commut. apply clos_trans_r_commut. assumption. Qed.         
 
   Lemma prefix_wf :
     well_founded prefix.
@@ -1303,7 +1336,7 @@ Module exec. Section WithEnv.
     subst. auto.
   Qed.
   
-  Lemma steps_Acc' s k t m l mc post :
+  Lemma steps_Acc'' s k t m l mc post :
     excluded_middle ->
     FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
@@ -1354,6 +1387,21 @@ Module exec. Section WithEnv.
     - reflexivity.
   Qed.
 
+  Lemma steps_Acc' s k t m l mc post :
+    excluded_middle ->
+    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
+    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
+        f O = (inclusion s, k, t, m, l, mc) ->
+        possible_execution f ->
+        satisfies f post) ->
+    Acc comes_after_or_repeated_prefix (inclusion s, k, t, m, l, mc).
+  Proof.
+    intros. apply Acc_clos_trans. apply Acc_union.
+    - apply clos_trans_commut. apply they_commute.
+    - intros. apply Acc_clos_trans. apply prefix_wf.
+    - apply Acc_clos_trans. eapply steps_Acc''; eassumption.
+  Qed.
+
   Lemma steps_Acc s k t m l mc post :
     excluded_middle ->
     FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
@@ -1361,14 +1409,9 @@ Module exec. Section WithEnv.
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
-    Acc lifted_comes_right_after_or_prefix (s, k, t, m, l, mc).
+    Acc lifted_comes_after_or_repeated_prefix (s, k, t, m, l, mc).
   Proof.
-    intros.
-    (*apply Acc_union. (*this is magical.  how does it know?*) *)
-    apply lifted_Acc. apply Acc_union.
-    - apply commuting_rels.
-    - intros. apply prefix_wf.
-    - eapply steps_Acc'; eassumption.
+    intros. apply lifted_Acc. eapply steps_Acc'; eassumption.
   Qed.
 
   Lemma done_stable f i :
@@ -1411,27 +1454,6 @@ Module exec. Section WithEnv.
   Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f.
   Proof. Admitted.
-
-  Print inclusion.
-
-  (*I know there's some better way to do this...
-   something like ltac:(eval _ in _) ?*)
-  Lemma fold_inclusion :
-    (fix inclusion (s : cmd) : scmd :=
-       match s with
-       | cmd.skip => sskip
-       | cmd.set x1 x2 => sset x1 x2
-       | cmd.unset x1 => sunset x1
-       | cmd.store x1 x2 x3 => sstore x1 x2 x3
-       | cmd.stackalloc x1 x2 x3 => sstackalloc x1 x2 (inclusion x3)
-       | cmd.cond x1 x2 x3 => scond x1 (inclusion x2) (inclusion x3)
-       | cmd.seq x1 x2 => sseq (inclusion x1) (inclusion x2)
-       | cmd.while x1 x2 => swhile x1 (inclusion x2)
-       | cmd.call x1 x2 x3 => scall x1 x2 x3
-       | cmd.interact x1 x2 x3 => sinteract x1 x2 x3
-       end) = inclusion.
-    Proof. reflexivity. Qed.
-    
   
   Lemma step_to_exec s k t m l mc post :
     excluded_middle ->
@@ -1443,8 +1465,7 @@ Module exec. Section WithEnv.
     exec s k t m l mc post.
   Proof.
     intros em choice H. assert (H' := steps_Acc).
-    specialize H' with (1 := em) (2 := choice) (3 := H). apply Acc_clos_trans in H'.
-    fold lifted_comes_after_or_repeated_prefix in H'. (*why doesn't this work*)
+    specialize H' with (1 := em) (2 := choice) (3 := H).
     revert H. revert post.
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
     Unshelve. simpl. clear -word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
@@ -1511,8 +1532,8 @@ Module exec. Section WithEnv.
     - admit.
     - clear f HfO Hposs Hsatf Hsuc.
       assert (Xs1 := X (s1, k, t, m, l, mc)). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
-      { apply t_step. cbv [lifted_comes_right_after_or_prefix lift]. simpl.
-        cbv [comes_right_after_or_prefix]. left. constructor. }
+      { apply t_step. (* <- this is magic, and I do not understand it *)
+        left. apply t_step. constructor. }
       simpl in Xs1. assert (Hsatinv := invert_seq). specialize Hsatinv with (1 := Hsat).
       fold inclusion in Hsatinv. specialize Xs1 with (1 := Hsatinv).
       econstructor. 1: eapply Xs1. simpl. intros * [afters2 Hs2].
@@ -1520,13 +1541,13 @@ Module exec. Section WithEnv.
                                 comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc)).
       { (* should be a separate lemma *) admit. }
       specialize comes_after_seq with (1 := afters2).
+      fold sstate in *.
       assert (Xs2 := X (s2, k', t', m', l', mc')). eassert (lt: _). 2: specialize (Xs2 lt); clear lt.
-      { Check t_trans. apply (t_trans _ _ _ (cmd.seq s1 s2, k, t, m, l, mc)).
-        - cbv [lifted_comes_right_after_or_prefix lift comes_right_after_or_prefix].
-          Search (clos_trans _ union). apply afters2.
-        2: { 
-        - 
-      destruct 
+      { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
+        2: { apply t_step. right. eapply comes_after_seq. }
+        apply t_step. right. apply t_step. constructor. }
+      simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
+    - 
 
 
   Lemma weaken: forall s k t m l mc post1,
