@@ -1547,8 +1547,22 @@ Module exec. Section WithEnv.
         2: { apply t_step. right. eapply comes_after_seq. }
         apply t_step. right. apply t_step. constructor. }
       simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
-    - 
-
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. inversion HsucO. }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO; subst.
+      + assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
+        specialize (Hdone eq_refl).
+        destruct Hsatf as [i Hsatf]. destruct i as [|i].
+        { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+          - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
+          - inversion Hsatf. }
+        rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        2: { inversion Hsatf. }
+        fwd. eapply while_false; eassumption.
+      + (*I have two options here--I can add in jump_back (and so on) to the original language,
+          or I can basically redo the whole seq case here (and elsewhere)...
+          I choose to modify the original language. *) assert (X1 := X (f (S O))).
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
