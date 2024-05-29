@@ -1587,11 +1587,42 @@ Module exec. Section WithEnv.
           apply t_step. left. apply t_step. constructor. }
         simpl in Xs. specialize Xs with (1 := H'). clear H'.
         eapply while_true; try eassumption. simpl. intros * [Hlt Hind]. clear Xs.
-        
-          - simpl.
-        specialize (H'eapply invert_seq in H.
-          inversion Hsat.
-        Search possible_execution.
+        assert (Xw := X (cmd.while test s, k'', t', m', l', ami 2 (aml 2 (amj 1 mc'')))).
+        eassert (lt' : _). 2: specialize (Xw lt'); clear lt'.
+        { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
+          apply t_step. right. eapply t_trans.
+          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). apply HsucO. }
+          eapply t_trans.
+          2: { eapply comes_after_seq. eassumption. (*Hlt*) }
+          eapply t_trans.
+          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). eapply seq_done_step. }
+          eapply t_trans.
+          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). eapply seq_step. econstructor. }
+          eapply t_step. apply seq_done_step. }
+        simpl in Xw. apply Xw.
+        intros h HhO Hpossh. eset (h' := fun n => match n with
+                                                  | O => _
+                                                  | S O => _
+                                                  | S (S n') => h n'
+                                                  end).
+        specialize (Hind h' eq_refl). assert (Hpossh' : possible_execution h').
+        { intros n. destruct n as [|n].
+          - left. cbv [step_state state_step]. simpl. instantiate (1 := (_, _, _, _, _, _)).
+            simpl. eapply seq_step. econstructor.
+          - destruct n as [|n].
+            + left. cbv [step_state state_step]. simpl. rewrite HhO. constructor.
+            + apply Hpossh. }
+        specialize (Hind Hpossh'). clear Hpossh'. destruct Hind as [n Hind].
+        destruct n as [|n].
+        { cbv [state_satisfies] in Hind. simpl in Hind. destruct Hind as [Hind|Hind].
+          - destruct Hind as [Hind _]. congruence.
+          - inversion Hind. subst. inversion H0. }
+        destruct n as [|n].
+        { cbv [state_satisfies] in Hind. simpl in Hind. destruct Hind as [Hind|Hind].
+          - destruct Hind as [Hind _]. congruence.
+          - inversion Hind. subst. inversion H0. }
+        cbv [satisfies]. exists n. apply Hind.
+    - 
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
