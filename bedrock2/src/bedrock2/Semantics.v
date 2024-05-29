@@ -1442,9 +1442,9 @@ Module exec. Section WithEnv.
           lifted_comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
 
-  Lemma comes_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
-          lifted_comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-          lifted_comes_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
+  Lemma comes_after_seq k t m l mc k' t' m' l' mc' : forall s1 s1' s2,
+      comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+      comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
 
   Print possible_execution.
@@ -1537,14 +1537,11 @@ Module exec. Section WithEnv.
       simpl in Xs1. assert (Hsatinv := invert_seq). specialize Hsatinv with (1 := Hsat).
       fold inclusion in Hsatinv. specialize Xs1 with (1 := Hsatinv).
       econstructor. 1: eapply Xs1. simpl. intros * [afters2 Hs2].
-      assert (comes_after_seq : forall s1 s1' s2, comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-                                comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc)).
-      { (* should be a separate lemma *) admit. }
-      specialize comes_after_seq with (1 := afters2).
+      specialize comes_after_seq with (1 := afters2). intros comes_after_thing.
       fold sstate in *.
       assert (Xs2 := X (s2, k', t', m', l', mc')). eassert (lt: _). 2: specialize (Xs2 lt); clear lt.
       { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
-        2: { apply t_step. right. eapply comes_after_seq. }
+        2: { apply t_step. right. eapply comes_after_thing. }
         apply t_step. right. apply t_step. constructor. }
       simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
     - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
@@ -1560,9 +1557,41 @@ Module exec. Section WithEnv.
         rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
         2: { inversion Hsatf. }
         fwd. eapply while_false; eassumption.
-      + (*I have two options here--I can add in jump_back (and so on) to the original language,
-          or I can basically redo the whole seq case here (and elsewhere)...
-          I choose to modify the original language. *) assert (X1 := X (f (S O))).
+      + (*I'm kind of inlining the whole proof for the seq case here, plus some more stuff...
+          I wouldn't have to do this if jump_back would just be a valid thing in the
+          big-step language.  Arguably I should have some intermediate big-step language.
+          Oh well. *)
+        Check invert_seq.
+        assert (forall g, g O = f (S O) -> possible_execution g -> satisfies g post).
+        { intros. specialize (Hsat (fun n => match n with
+                                             | O => f O
+                                             | S n' => g n'
+                                             end)).
+          simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
+          eassert (Hposs' : _). 2: specialize (Hsat Hposs'); clear Hposs'.
+          { intros n. destruct n.
+            - left. cbv [step_state state_step]. rewrite H. rewrite Ef. apply HsucO.
+            - apply H0. (*apply continues to impress me*) }
+          destruct Hsat as [n Hsat]. destruct n as [|n].
+          { cbv [state_satisfies] in Hsat. destruct Hsat as [Hsat|Hsat].
+            - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
+            - inversion Hsat. }
+          exists n. apply Hsat. }
+        rewrite Ef in H. assert (H' := invert_seq). specialize H' with (1 := H).
+        clear H.
+        assert (Xs := X (s, leak_bool true :: k', t0, m0, l0, mc0)).
+        eassert (lt : _). 2: specialize (Xs lt); clear lt.
+        { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
+          2: { apply t_step. right. apply t_step. cbv [comes_right_after state_step step_state].
+               instantiate (1 := (_, _, _, _, _, _)). simpl. eassumption. }
+          apply t_step. left. apply t_step. constructor. }
+        simpl in Xs. specialize Xs with (1 := H'). clear H'.
+        eapply while_true; try eassumption. simpl. intros * [Hlt Hind]. clear Xs.
+        
+          - simpl.
+        specialize (H'eapply invert_seq in H.
+          inversion Hsat.
+        Search possible_execution.
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
