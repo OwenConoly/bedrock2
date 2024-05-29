@@ -279,6 +279,7 @@ Section semantics.
           Some (v :: args, mc'', tr'')
       | _ => Some (nil, mc, tr)
     end.
+    
 
     
 
@@ -414,6 +415,8 @@ Ltac subst_exprs :=
         apply evaluate_call_args_log_extends_trace in H; destruct H as [? [? ?] ]; subst
     end.
 
+Require Import Lia.
+
 Module exec. Section WithEnv.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
@@ -421,20 +424,37 @@ Module exec. Section WithEnv.
   Context {ext_spec: ExtSpec}.
   Context (e: env).
 
-  Definition dumb_ext_spec : ExtSpec :=
+  (*for any fixed n, we want to allow returning a 0 when the trace has length at most n.
+    however, there must be some n such that we always return a 1 when the trace has length >= n.*)
+
+  (*bad because it's (when word is infinite...) not closed under infinite intersections*)
+  Definition bad_ext_spec : ExtSpec :=
     fun t m a args post =>
-      exists n, forall mReceive resvals klist,
-        length resvals >= n -> post mReceive (cons word.of_Z 0) klist.
-  (*something like that, idk*)
-  (*note that this satisfies the finite intersection property, but not the infinite one...*)
-  x = 0
-  while (x = 0) {
-    stackalloc 1 as x;
-    x = input;
-    
-  }
-  (*this is almost a counterexample, except everything is finite agh...*)
-  
+      m = map.empty /\
+      exists n, forall retval, (Z.to_nat (word.unsigned retval)) >= n ->
+                                 post map.empty (cons retval nil) nil.
+
+  Lemma bad_ext_spec_ok : ext_spec.ok bad_ext_spec.
+  Proof.
+    cbv [bad_ext_spec]. constructor.
+    - intros. fwd. Search map.same_domain. apply map.same_domain_refl.
+    - cbv [Proper respectful pointwise_relation Basics.impl].
+      simpl. intros. fwd. intuition. eexists. intros. eauto.
+    - intros. fwd. intuition. exists (Nat.max n n0). intros. split.
+      + apply Hp1. lia.
+      + apply H0p1. lia.
+  Qed.
+
+  (* stackalloc 1 as x;
+     y = input();
+     if (x < y) { crash; } *)
+  (*^This program illustrates a discrepancy between the pick_sp and non-pick_sp
+     versions of exec.  The discrepancy only shows up when we allow the word type to be infinite
+     (this possibility is excluded by the word.ok hypothesis).
+
+     We can eliminate the discrepancy by changing the intersection hypothesis of ext_spec.ok 
+     to claim that infinite intersections work out properly.
+     *)
   
 
   Local Notation metrics := MetricLog.
