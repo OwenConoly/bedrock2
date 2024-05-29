@@ -156,12 +156,10 @@ Module ext_spec.
                    (Morphisms.pointwise_relation (list word) Basics.impl))) Basics.impl)
           (ext_spec t mGive act args);
 
-    intersect: forall t mGive a args
-                      (post1 post2: mem -> list word -> list word -> Prop),
-        ext_spec t mGive a args post1 ->
-        ext_spec t mGive a args post2 ->
-        ext_spec t mGive a args (fun mReceive resvals klist =>
-                                   post1 mReceive resvals klist /\ post2 mReceive resvals klist);
+    intersect: forall t mGive a args,
+      ext_spec t mGive a args (fun mReceive resvals klist =>
+                                 forall mid, ext_spec t mGive a args mid ->
+                                             mid mReceive resvals klist);
   }.
 End ext_spec.
 Arguments ext_spec.ok {_ _ _ _} _.
@@ -423,40 +421,6 @@ Module exec. Section WithEnv.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
   Context {ext_spec: ExtSpec}.
   Context (e: env).
-
-  (*for any fixed n, we want to allow returning a 0 when the trace has length at most n.
-    however, there must be some n such that we always return a 1 when the trace has length >= n.*)
-
-  (*bad because it's (when word is infinite...) not closed under infinite intersections*)
-  Definition bad_ext_spec : ExtSpec :=
-    fun t m a args post =>
-      m = map.empty /\
-      exists n, forall retval, (Z.to_nat (word.unsigned retval)) >= n ->
-                                 post map.empty (cons retval nil) nil.
-
-  Lemma bad_ext_spec_ok : ext_spec.ok bad_ext_spec.
-  Proof.
-    cbv [bad_ext_spec]. constructor.
-    - intros. fwd. Search map.same_domain. apply map.same_domain_refl.
-    - cbv [Proper respectful pointwise_relation Basics.impl].
-      simpl. intros. fwd. intuition. eexists. intros. eauto.
-    - intros. fwd. intuition. exists (Nat.max n n0). intros. split.
-      + apply Hp1. lia.
-      + apply H0p1. lia.
-  Qed.
-
-  (* stackalloc 1 as x;
-     y = input();
-     if (x < y) { crash; } *)
-  (*^This program illustrates a discrepancy between the pick_sp and non-pick_sp
-     versions of exec.  The discrepancy only shows up when we allow the word type to be infinite
-     (this possibility is excluded by the word.ok hypothesis).
-
-     We can eliminate the discrepancy by changing the intersection hypothesis of ext_spec.ok 
-     to claim that infinite intersections work out properly.
-     *)
-  
-
   Local Notation metrics := MetricLog.
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
@@ -1718,12 +1682,23 @@ Module exec. Section WithEnv.
       fwd. eauto.
     - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
       2: { rewrite HfO in HsucO. inversion HsucO. subst.
+           (*probably could just do em with H10 here...*)
            assert (step_or_not := em (forall mReceive resvals klist,
                                       exists mid, ext_spec t mGive action args0 mid /\
                                                     ~ mid mReceive resvals klist)).
-           destruct step_or_not as [step|not].
+           destruct step_or_not as [not|step].
            - econstructor; eauto.
-             + instantiate (1 := fun mReceive resvals klist => forall mid, ext_spec t mGive action args0 mid -> mid mReceive resvals klist). simpl.
+             + destruct ext_spec_ok. apply intersect.
+             + simpl. intros * H. exfalso. specialize (not mReceive resvals klist).
+               fwd. apply notp1. apply H. apply notp0.
+           - exfalso. apply step. intros. eexists. split.
+             + destruct ext_spec_ok. eapply intersect.
+             + simpl. intros H'. apply H10. eexists (_, _, _, _, _, _).
+               cbv [state_step step_state]. econstructor.
+               eassumption.
+               instantiateeconstructor. Check naen. exists (Check enna.
+               simpl. apply H in notp0.
+               instantiate (1 := fun mReceive resvals klist => forall mid, ext_spec t mGive action args0 mid -> mid mReceive resvals klist). simpl.
            econstructor. Check ext_spec_ok. try eassumption.
            - exfalso.
       }
