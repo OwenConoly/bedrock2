@@ -687,10 +687,15 @@ Module exec. Section WithEnv.
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
+      (*^having this as a precondition here is no good.  if some possible mReceive resvals klist
+         satisfy this l' condition (but not all), then the ones that do satisfy it are the only
+         ones that possible executions will talk about, so all possible executions will be good.
+         this is not what we want.  thus we need to move this l' thing to the finish_interact step*)
     : step (sinteract binds action arges) k t m l mc
         (add_mem mReceive) (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) mKeep l' (ami 1 (ams 1 (aml 2 mc')))
-  | add_mem_step othermem
+  | end_interact_step mReceive resvals klist
       k t m l mc
+      l' (_ : 
       m' (_ : map.split m' m othermem)
     : step (add_mem othermem) k t m l mc
         sskip k t m' l mc.
@@ -1732,15 +1737,26 @@ Module exec. Section WithEnv.
       inversion HsucO. subst. econstructor. 3: eapply intersect. all: try eassumption.
       rewrite HfO in stuck_enough. simpl.
       clear f HfO Hposs Hsatf Hsuc Ef mReceive resvals klist HsucO H17 H16.
-      simpl. intros * H. Print interact_step. eset (f := fun n => match n with
-                                             | O => _
-                                             | S O => (add_mem mReceive, _, _, _, _, _) (*really I should just be able to put a hole here. some evar thing goes wrong though??*)
-                                             | S (S n') => _
-                                             end).
-      specialize (Hsat f eq_refl). assert (Hpossf : possible_execution f).
+      simpl. intros * H. Print interact_step.
+      assert (Hl' : exists l', map.putmany_of_list_zip binds resvals l = Some l').
+      { assert (eml' := em (exists l' : locals, map.putmany_of_list_zip binds resvals l = Some l')).
+        destruct eml'; try assumption. exfalso.
+        specialize (Hsat (fun _ => _) eq_refl). eassert (Hposs : _). 2: specialize (Hsat Hposs).
+        { intros i. right. cbv [stuck_state]. split; [|reflexivity]. intros H'.
+          apply H0. fwd. destr_sstate st. subst. inversion H'. subst.
+          apply H0.
+        
+        eset (f := fun n => match n with
+                            | O => _
+                            | S O => (add_mem mReceive, _, _, _, _, _) (*really I should just be able to put a hole here. some evar thing goes wrong though??*)
+                            | S (S n') => _
+                            end).
+        specialize (Hsat f eq_refl). assert (Hpossf : possible_execution f).
       { intros n. destruct n.
-        - left. cbv [step_state state_step]. simpl.
-          simpl. econstructor; try eassumption.
+        - eassert (good_or_not := em _). destruct good_or_not as [good|not].
+          + left. cbv [step_state state_step].
+            simpl. econstructor. 5: eapply good. all: eassumption.
+          + right. cbv [stuck_state].
       (*I could do something like m' := map.putmany mKeep mReceive,
         but that actually seems less nice than what I do here:*)
    
