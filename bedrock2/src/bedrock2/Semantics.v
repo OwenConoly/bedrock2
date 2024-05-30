@@ -679,11 +679,14 @@ Module exec. Section WithEnv.
       k t m l mc
       mKeep mGive (_: map.split m mKeep mGive)
       args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
-      (_: forall (*t0 don't need this.*) mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive)
+      (*(_: forall (*t0 don't need this.*) mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive)*)
+      (*^that was the only way I could think of to assert that we chose the correct mGive, while remaining agnostic as to whether there is any post such that ext_spec _ _ _ _ post is True.
+        Now, due to the way I rewrote the intersection property of ext_spec_ok, we no longer need to be agnostic, and we can use the following hypothesis.*)
+      (_ : ext_spec t mGive action args (fun _ _ _ => True))
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
-      m' (_ : map.split m' mKeep mReceive)
+      m' (_ : map.split m' mKeep mReceive) (*we don't actually need this!  alternatively, we could have *)
     : step (sinteract binds action arges) k t m l mc
         sskip (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc'))).
 
@@ -720,8 +723,20 @@ Module exec. Section WithEnv.
   | nondet_stuck_interact : forall k t m l mc binds action arges mKeep mGive args mc' k',
       map.split m mKeep mGive ->
       evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
-      (forall mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->
-      (exists mid, ext_spec mid /\ mid _ _ _ -> the result is good) ->
+      (*(forall mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->don't need this because of the next line*)
+      ext_spec t mGive action args (fun mReceive resvals klist =>
+                                      (exists l', map.putmany_of_list_zip binds resvals l = Some l') (*/\
+                                        (exists m', map.split m' mKeep mReceive)
+                                        ^can't put this here because we don't actually need it 
+                                         to be implied by ext_spec; we just need that when it is
+                                         true, then we get the appropriate postcondition about m'.
+                                         it's almost like we split into two branches depending on 
+                                         just mReceive: sometimes we get nondeterministically
+                                         stuck, and sometimes not.  this seems to suggest splitting
+                                         the interact stage into two steps, the second of which 
+                                         simply combines mKeep with mReceive
+                                         (and gets nondeterministically stuck if there is overlap).
+*)) ->
       (~exists st, state_step (sinteract binds action arges, k, t, m, l, mc) st) ->
       nondet_stuck (sinteract binds action arges, k, t, m, l, mc)
   | nondet_stuck_seq : forall s1 s2 k t m l mc,
@@ -1202,11 +1217,12 @@ Module exec. Section WithEnv.
            inversion HhSO. subst. fwd. unify_eval_exprs. exists (S O). left. rewrite Ef0. eauto.
         -- exfalso. apply HhSO. eexists (_, _, _, _, _, _). rewrite HhO. econstructor; eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
+    - destruct ext_spec_ok.
+      intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
-        inversion HSO. subst. unify_eval_exprs. specialize (H8 _ _ H1).
-        Check map.split_diff.
-        destruct (map.split_diff H8 H H6). subst. clear H6 H8.
+        inversion HSO. subst. unify_eval_exprs.
+        specialize unique_mGive_footprint with (1 := H1) (2 := H8).
+        destruct (map.split_diff unique_mGive_footprint H H6). subst.
         specialize (H9 _ H1). apply H2 in H9. fwd. apply H9p1 in H22. clear H9p1.
         unify_eval_exprs. exists (S O). rewrite Ef. left. auto.
       + assert (step_or_not :=
@@ -1217,17 +1233,17 @@ Module exec. Section WithEnv.
                             mid' mReceive resvals klist)).
         destruct step_or_not as [step | not_step].
         -- fwd. assert (Hmid := stepp1 _ H1). apply H2 in Hmid. fwd.
-           Search map.split.
            exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO.
-           econstructor; eauto.
-           destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto.
+           econstructor; eauto. eapply weaken; eauto. cbv [pointwise_relation Basics.impl]. auto.
         -- exists O. right. rewrite HO. econstructor; eauto.
-           { destruct ext_spec_ok. intros. eapply unique_mGive_footprint; eauto. }
+           { eapply weaken. 2: eassumption. cbv [pointwise_relation Basics.impl].
+             intros * Hmid. apply H2 in Hmid. fwd. eauto. }
            intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_state] in H'.
            destr_sstate st. inversion H'. subst.
            unify_eval_exprs.
-           specialize (H8 _ _ H1). Check map.split_diff.
-           destruct (map.split_diff H8 H H6). subst. clear H6 H8. assert (Hmid := H9 _ H1).
+           specialize unique_mGive_footprint with (1 := H1) (2 := H8).
+           destruct (map.split_diff unique_mGive_footprint H H6). subst.
+           assert (Hmid := H9 _ H1).
            eexists. eexists. eexists. intuition eauto. eapply H9. apply H3.
            Unshelve. (*where did that come from?*) exact (word.of_Z 0).
   Qed.
@@ -1683,25 +1699,42 @@ Module exec. Section WithEnv.
       rewrite <- Hdone in Hsatg. destruct Hsatg as [Hsatg|Hsatg].
       2: { inversion Hsatg. }
       fwd. eauto.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. inversion HsucO. subst.
-           econstructor; try eassumption.
-           { destruct ext_spec_ok. apply intersect. }
-           simpl. intros. exfalso. apply H10. eexists (_, _, _, _, _, _).
-           cbv [state_step step_state]. econstructor. try eassumption.
-      }
+    - destruct ext_spec_ok.
+      assert (HsucO := Hsuc O).
+      assert (stuck_enough: nondet_stuck (f O) -> exec (cmd.interact binds action args) k t m l mc post).
+      { clear HsucO. intros Hstuck. rewrite HfO in Hstuck. inversion Hstuck. subst.
+        econstructor. 3: eapply intersect. (*not H9*) all: try eassumption.
+        simpl. intros * H. fwd. apply H in H9. fwd. eexists; split; eauto.
+        intros. exfalso. apply H10. eexists (_, _, _, _, _, _).
+        cbv [state_step step_state]. econstructor; try eassumption.
+        eapply weaken; eauto. cbv [pointwise_relation Basics.impl]. auto. }
+      destruct HsucO as [HsucO|HsucO].
+      2: apply stuck_enough; assumption.
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst.
+      inversion HsucO. subst. econstructor. 3: eapply intersect. all: try eassumption.
+      rewrite HfO in stuck_enough.
+      clear f HfO Hposs Hsatf Hsuc Ef mReceive resvals klist HsucO H5 H17 H18.
+      simpl. intros * H. eset (f := fun n => match n with
+                                             | O => _
+                                             | S _ => _
+                                             end).
+      specialize (Hsat f eq_refl).
+      (*I could do something like m' := map.putmany mKeep mReceive,
+        but that actually seems less nice than what I do here:*)
+      assert (disj_or_not := em (exists m', map.split m' mKeep mReceive)). Print nondet_stuck.
+      Search map.split. Search map.map. apply H in H4. fwd. eexists. split; eauto.
       assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
       specialize (Hdone eq_refl).
       destruct Hsatf as [i Hsatf]. destruct i as [|i].
       { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
         - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
-        - inversion Hsatf. }
+        - apply stuck_enough. rewrite HfO. assumption. }
       rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
-      fwd. econstructor; eassumption.
-
+      fwd. econstructor. 3: eapply intersect. all: try eassumption.
+      simpl. intros * H. apply H in H4. fwd. eexists. split; eauto.
+      
+      
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
       forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
