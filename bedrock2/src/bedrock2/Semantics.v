@@ -567,7 +567,8 @@ Module exec. Section WithEnv.
   | scall (binds : list String.string) (function : String.string) (args: list expr)
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
-  | sinteract (binds : list String.string) (action : String.string) (args: list expr).
+  | sinteract (binds : list String.string) (action : String.string) (args: list expr)
+  | add_mem (other : mem).
   
   Fixpoint inclusion (s : cmd) :=
     match s with
@@ -686,9 +687,13 @@ Module exec. Section WithEnv.
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
-      m' (_ : map.split m' mKeep mReceive) (*we don't actually need this!  alternatively, we could have *)
     : step (sinteract binds action arges) k t m l mc
-        sskip (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc'))).
+        (add_mem mReceive) (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) mGive l' (ami 1 (ams 1 (aml 2 mc')))
+  | add_mem_step othermem
+      k t m l mc
+      m' (_ : map.split m' m othermem)
+    : step (add_mem othermem) k t m l mc
+        sskip k t m' l mc.
 
   Definition sstate : Type := scmd * trace * io_trace * mem * locals * metrics.
   Definition get_scmd (st : sstate) : scmd :=
@@ -1223,8 +1228,13 @@ Module exec. Section WithEnv.
         inversion HSO. subst. unify_eval_exprs.
         specialize unique_mGive_footprint with (1 := H1) (2 := H8).
         destruct (map.split_diff unique_mGive_footprint H H6). subst.
-        specialize (H9 _ H1). apply H2 in H9. fwd. apply H9p1 in H22. clear H9p1.
-        unify_eval_exprs. exists (S O). rewrite Ef. left. auto.
+        assert (HSSO := HS (S O)). destruct HSSO as [HSSO | HSSO].
+        -- cbv [step_state state_step] in HSSO. rewrite Ef in HSSO. destr_sstate (f (S (S O))).
+           inversion HSSO. subst.
+           exists (S (S O)). rewrite Ef0. left. intuition.
+           specialize H20 with (1 := H1). specialize H2 with (1 := H20). fwd.
+           apply H2p1.
+           specialize H2p1 with (1 := apply H2. auto.
       + assert (step_or_not :=
                   em (exists mReceive resvals klist,
                         (exists m', map.split m' mKeep mReceive)(*map.disjoint mKeep mReceive*) /\
