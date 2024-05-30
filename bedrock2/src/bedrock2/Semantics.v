@@ -543,6 +543,8 @@ Module exec. Section WithEnv.
     : exec (cmd.interact binds action arges) k t m l mc post
   .
 
+  Check (_ -> ((_ /\ _) -> _)).
+
   Definition state : Type := trace * io_trace * mem * locals * metrics. Print cmd.cmd.
   Notation ami := addMetricInstructions.
   Notation aml := addMetricLoads.
@@ -644,7 +646,7 @@ Module exec. Section WithEnv.
       v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
       (_ : word.unsigned v = 0)
     : step (swhile e c) k t m l mc
-        sskip (leak_bool false :: k') t m l (ami 1 (aml 1 (amj 1 mc')))
+         sskip (leak_bool false :: k') t m l (ami 1 (aml 1 (amj 1 mc')))
   | while_true_step e c
       k t m l mc post
       v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
@@ -719,6 +721,7 @@ Module exec. Section WithEnv.
       map.split m mKeep mGive ->
       evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
       (forall mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive) ->
+      (exists mid, ext_spec mid /\ mid _ _ _ -> the result is good) ->
       (~exists st, state_step (sinteract binds action arges, k, t, m, l, mc) st) ->
       nondet_stuck (sinteract binds action arges, k, t, m, l, mc)
   | nondet_stuck_seq : forall s1 s2 k t m l mc,
@@ -1682,25 +1685,10 @@ Module exec. Section WithEnv.
       fwd. eauto.
     - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
       2: { rewrite HfO in HsucO. inversion HsucO. subst.
-           (*probably could just do em with H10 here...*)
-           assert (step_or_not := em (forall mReceive resvals klist,
-                                      exists mid, ext_spec t mGive action args0 mid /\
-                                                    ~ mid mReceive resvals klist)).
-           destruct step_or_not as [not|step].
-           - econstructor; eauto.
-             + destruct ext_spec_ok. apply intersect.
-             + simpl. intros * H. exfalso. specialize (not mReceive resvals klist).
-               fwd. apply notp1. apply H. apply notp0.
-           - exfalso. apply step. intros. eexists. split.
-             + destruct ext_spec_ok. eapply intersect.
-             + simpl. intros H'. apply H10. eexists (_, _, _, _, _, _).
-               cbv [state_step step_state]. econstructor.
-               eassumption.
-               instantiateeconstructor. Check naen. exists (Check enna.
-               simpl. apply H in notp0.
-               instantiate (1 := fun mReceive resvals klist => forall mid, ext_spec t mGive action args0 mid -> mid mReceive resvals klist). simpl.
-           econstructor. Check ext_spec_ok. try eassumption.
-           - exfalso.
+           econstructor; try eassumption.
+           { destruct ext_spec_ok. apply intersect. }
+           simpl. intros. exfalso. apply H10. eexists (_, _, _, _, _, _).
+           cbv [state_step step_state]. econstructor. try eassumption.
       }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
