@@ -559,7 +559,6 @@ Module exec. Section WithEnv.
   | sunset (lhs : String.string)
   | sstore (_ : access_size) (address : expr) (value : expr)
   | sstackalloc (lhs : String.string) (nbytes : Z) (body : scmd)
-  | start_stackalloc (lhs : String.string) (nbytes : Z) (a : word)
   | end_stackalloc (nbytes : Z) (a : word)
   (* { lhs = alloca(nbytes); body; /*allocated memory freed right here*/ } *)
   | scond (condition : expr) (nonzero_branch zero_branch : scmd)
@@ -606,17 +605,13 @@ Module exec. Section WithEnv.
     : step (sstore sz ea ev) k t m l mc
         sskip (leak_word a :: k'') t m' l (ami 1 (aml 1 (ams 1 mc'')))
   | stackalloc_step x n body a
-      k t m l mc
-    : step (sstackalloc x n body) k t m l mc
-        (sseq (start_stackalloc x n a) (sseq body (end_stackalloc n a))) k t m l mc
-  | stackalloc_start_step x n a
       k t mSmall l mc
       mStack mCombined
       (_ : Z.modulo n (bytes_per_word width) = 0)
       (_ : anybytes a n mStack)
       (_ : map.split mCombined mSmall mStack)
-    : step (start_stackalloc x n a) k t mSmall l mc
-        sskip (consume_word a :: k) t mCombined (map.put l x a) (ami 1 (aml 1 mc))
+    : step (sstackalloc x n body) k t mSmall l mc
+        (sseq body (end_stackalloc n a)) (consume_word a :: k) t mCombined (map.put l x a) (ami 1 (aml 1 mc))
   | stackalloc_end_step n a
       k t mCombined l mc
       mSmall mStack
@@ -725,12 +720,12 @@ Module exec. Section WithEnv.
 
   Print end_interact.
   Check (end_interact_step _ _ _ _ _ _ _ _ _).
-
+  Check sstackalloc.
   Inductive nondet_stuck : sstate -> Prop :=
-  | nondet_stuck_stackalloc : forall k t m l mc x n a,
+  | nondet_stuck_stackalloc : forall k t m l mc x n body,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (~exists st, state_step (start_stackalloc x n a, k, t, m, l, mc) st) ->
-      nondet_stuck (start_stackalloc x n a, k, t, m, l, mc)
+      (~exists st, state_step (sstackalloc x n body, k, t, m, l, mc) st) ->
+      nondet_stuck (sstackalloc x n body, k, t, m, l, mc)
   | nondet_stuck_interact : forall k t m l mc binds action arges mKeep mGive args mc' k',
       map.split m mKeep mGive ->
       evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
@@ -1119,48 +1114,34 @@ Module exec. Section WithEnv.
     - intros f HO HS. simpl in HO. clear H0. assert (HSO := HS O).
       destruct HSO as [HSO | HSO ].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO.
-        destr_sstate (f (S O)). inversion HSO. subst. clear HO. assert (HSSO := HS (S O)).
-        destruct HSSO as [HSSO | HSSO ].
-        * cbv [step_state state_step] in HSSO.
-          simpl in HSO. rewrite Ef in HSSO. destr_sstate (f (S (S O))).
-          inversion HSSO. subst. clear Ef HSO. inversion H14. subst. clear HSSO H14.
-          assert (HSSSO := HS (S (S O))). destruct HSSSO as [HSSSO | HSSSO ].
-          -- cbv [step_state state_step] in HSSSO. rewrite Ef0 in HSSSO.
-             destr_sstate (f (S (S (S O)))). inversion HSSSO.
-             ++ subst. inversion H15.
-             ++ subst. clear HSSSO Ef0. eapply satisfies_offset; eauto.
-                instantiate (1 := 3%nat). 
-                eapply build_seq.
-                2: apply Ef.
-                2: apply possible_execution_offset; assumption.
-                intros.
-                eapply satisfies_weaken. 2: eapply H1; eauto.
-                simpl. intros.
-                specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
-                rewrite H5 in *. clear H5. destr_sstate (g (S O)).
-                repeat match goal with
-                       | H: anybytes _ _ _ |- _ => clear H
-                       | H: map.split _ _ _ |- _ => clear H
-                       end.
-                destruct H6 as [H6 | H6].
-                +++ inversion H6. subst. fwd.
-                    match goal with
-                    | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-                        specialize @map.split_diff with (4 := A) (5 := B) as P
-                    end.
-                    edestruct P; try typeclasses eauto.
-                    1: eapply anybytes_unique_domain; eassumption.
-                    subst. eexists (S O). left. rewrite Ef0. auto.
-                +++ exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
-                    econstructor; eauto.
-          -- cbv [stuck_state] in HSSSO. exfalso. apply HSSSO. clear HSSSO.
-             eexists (_, _, _, _, _, _). rewrite Ef0. cbv [state_step].
-             apply seq_done_step.
-        * cbv [stuck_state] in HSSO. exists (S O).
-          right. rewrite Ef. constructor. constructor; eauto. intros H'.
-          apply HSSO. clear HSSO. cbv [state_step] in H'. fwd. eexists (_, _, _, _, _, _).
-          rewrite Ef. cbv [state_step]. constructor. eassumption.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor.
+        destr_sstate (f (S O)). inversion HSO. subst. clear HO.
+        eapply satisfies_offset; eauto.
+        instantiate (1 := S O). 
+        eapply build_seq.
+        2: apply Ef.
+        2: apply possible_execution_offset; assumption.
+        intros.
+        eapply satisfies_weaken. 2: eapply H1; eauto.
+        simpl. intros.
+        specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
+        rewrite H5 in *. clear H5. destr_sstate (g (S O)).
+        repeat match goal with
+               | H: anybytes _ _ _ |- _ => clear H
+               | H: map.split _ _ _ |- _ => clear H
+               end.
+        destruct H6 as [H6 | H6].
+        -- inversion H6. subst. fwd.
+           match goal with
+           | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
+               specialize @map.split_diff with (4 := A) (5 := B) as P
+           end.
+           edestruct P; try typeclasses eauto.
+           1: eapply anybytes_unique_domain; eassumption.
+           subst. eexists (S O). left. rewrite Ef0. auto.
+        -- exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
+           econstructor; eauto.
+      + exists O. right. rewrite HO. econstructor; try eassumption.
+        cbv [stuck_state] in HSO. rewrite HO in HSO. destruct HSO. assumption.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO.
         destr_sstate (f 1%nat). inversion HSO; try congruence. subst. unify_eval_exprs.
@@ -1260,7 +1241,6 @@ Module exec. Section WithEnv.
            destruct (map.split_diff unique_mGive_footprint H H6). subst.
            assert (Hmid := H20 _ H1).
            eexists. eexists. eexists. intuition eauto. eapply H20. apply H3.
-           Unshelve. (*where did that come from?*) exact (word.of_Z 0).
   Qed.
 
   Require Import Coq.Logic.ChoiceFacts.
@@ -1489,6 +1469,29 @@ Module exec. Section WithEnv.
   Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f.
   Proof. Admitted.
+
+  Lemma weaken: forall s k t m l mc post1,
+      exec s k t m l mc post1 ->
+      forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
+        (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
+        exec s k t m l mc post2.
+  Proof.
+    induction 1; intros; try solve [econstructor; eauto].
+    - eapply stackalloc. 1: assumption.
+      intros.
+      eapply H1; eauto.
+      intros. fwd. eauto 10.
+    - eapply call.
+      4: eapply IHexec.
+      all: eauto.
+      intros.
+      edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
+      eauto 10.
+    - eapply interact; try eassumption.
+      intros.
+      edestruct H2 as (? & ? & ?); [eassumption|].
+      eauto 10.
+  Qed.
   
   Lemma step_to_exec s k t m l mc post :
     excluded_middle ->
@@ -1563,7 +1566,45 @@ Module exec. Section WithEnv.
       rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
       fwd. econstructor; eassumption.
-    - admit.
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
+      2: { rewrite HfO in HsucO. inversion HsucO. subst. econstructor; try eassumption.
+           intros. exfalso. apply H8. eexists (_, _, _, _, _, _). econstructor; eassumption. }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO. subst.
+      econstructor; eauto. clear a f Ef mStack HfO Hposs Hsatf Hsuc HsucO H14 H15.
+      intros.
+      assert (Xs := X (s, consume_word a :: k, t0, m0, map.put l lhs a, ami 1 (aml 1 mc))).
+      eassert (lt : _). 2: specialize (Xs lt); clear lt.
+      { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
+        2: { apply t_step. right. instantiate (1 := (_, _, _, _, _, _)).
+             apply t_step. eapply HsucO. }
+        apply t_step. left. apply t_step. constructor. }
+      simpl in Xs.
+      assert (Hind : forall g, g O = f (S O) -> possible_execution g -> satisfies g post).
+      { intros g HgO Hpossg. eset (Sg := fun n => match n with
+                                                        | O => _
+                                                        | S n' => g n'
+                                                  end).
+        specialize (Hsat Sg eq_refl). assert (Hsathyp : possible_execution Sg).
+        2: specialize (Hsat Hsathyp); clear Hsathyp.
+        { intros n. destruct n as [|n].
+          - left. cbv [step_state state_step]. simpl. rewrite HgO. rewrite Ef. assumption.
+          - apply Hpossg. }
+        destruct Hsat as [i Hsat]. destruct i as [|i].
+        { simpl in Hsat. destruct Hsat as [Hsat|Hsat].
+          - destruct Hsat as [Hsat _]. congruence.
+          - inversion Hsat. subst. exfalso. apply H9. clear H9.
+            eexists (_, _, _, _, _, _). eassumption. }
+        exists i. apply Hsat. }
+      rewrite Ef in Hind. assert (Hind' := invert_seq). specialize Hind' with (1 := Hind).
+      specialize Xs with (1 := Hind'). intros. eapply weaken.
+cucu      1: eapply Xs. eassumption.
+
+      eapply invert_seq in Hind. specialize Xs with (1 := Hind).
+        
+      assert (invert_the_seq := invert_seq).
+      specialize invert_the_seq with (1 := Hsatf).
+
     - admit.
     - clear f HfO Hposs Hsatf Hsuc.
       assert (Xs1 := X (s1, k, t, m, l, mc)). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
@@ -1769,30 +1810,6 @@ Module exec. Section WithEnv.
       + destruct HsucSO as [HsucSO _]. simpl in HsucSO. rewrite SfO in HsucSO.
         inversion HsucSO. subst. fwd. eexists. split; eauto. intros.
         exfalso. apply H19. clear H19. eexists (_, _, _, _, _, _). econstructor; eassumption.
-  Qed.
-      
-      
-  Lemma weaken: forall s k t m l mc post1,
-      exec s k t m l mc post1 ->
-      forall post2: _ -> _ -> _ -> _ -> _ -> Prop,
-        (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
-        exec s k t m l mc post2.
-  Proof.
-    induction 1; intros; try solve [econstructor; eauto].
-    - eapply stackalloc. 1: assumption.
-      intros.
-      eapply H1; eauto.
-      intros. fwd. eauto 10.
-    - eapply call.
-      4: eapply IHexec.
-      all: eauto.
-      intros.
-      edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-      eauto 10.
-    - eapply interact; try eassumption.
-      intros.
-      edestruct H2 as (? & ? & ?); [eassumption|].
-      eauto 10.
   Qed.
 
   Lemma intersect: forall k t l m mc s post1,
