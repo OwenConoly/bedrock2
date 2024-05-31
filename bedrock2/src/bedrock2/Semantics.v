@@ -619,12 +619,12 @@ Module exec. Section WithEnv.
       (_ : map.split mCombined mSmall mStack)
     : step (end_stackalloc n a) k t mCombined l mc
         sskip k t mSmall l mc
-  | if_true_step k t m l mc e c1 c2 post
+  | if_true_step k t m l mc e c1 c2
     v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
     (_ : word.unsigned v <> 0)
     : step (scond e c1 c2) k t m l mc
         c1 (leak_bool true :: k') t m l (ami 2 (aml 2 (amj 1 mc')))
-  | if_false_step k t m l mc e c1 c2 post
+  | if_false_step k t m l mc e c1 c2
     v mc' k' (_ : eval_expr m l e mc k = Some (v, mc', k'))
     (_ : word.unsigned v = 0)
     : step (scond e c1 c2) k t m l mc
@@ -1615,7 +1615,49 @@ Module exec. Section WithEnv.
       rewrite <- Hdone in Hsat'. destruct Hsat' as [Hsat'|Hsat'].
       2: { inversion Hsat'. }
       destruct Hsat' as [_ Hsat']. eauto.
-    - admit.
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
+      2: { rewrite HfO in HsucO. inversion HsucO. }
+      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
+      inversion HsucO; subst.
+      + eassert (Xs1 := X _). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
+        { cbv [lifted_comes_after_or_repeated_prefix lift].
+          eapply t_step. right. eapply t_step.
+          instantiate (1 := (_, _, _, _, _, _)). econstructor; eassumption. }
+        simpl in Xs1. eapply if_true; try eassumption. eapply Xs1. clear Xs1.
+        intros g HgO Hgposs. specialize (Hsat (fun n => match n with
+                                                        | O => f O
+                                                        | S n' => g n'
+                                                        end)).
+        simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
+        eassert (Hsathyp : _). 2: specialize (Hsat Hsathyp); clear Hsathyp.
+        { intros n. destruct n as [|n].
+          - left. cbv [step_state state_step]. rewrite HgO. assumption.
+          - specialize (Hgposs n). apply Hgposs. }
+        destruct Hsat as [n Hsat]. destruct n as [|n].
+        { destruct Hsat as [Hsat|Hsat].
+          - destruct Hsat as [Hsat _]. simpl in Hsat. discriminate Hsat.
+          - inversion Hsat. }
+        exists n. apply Hsat.
+      (*below, literally only changed if_true to if_false*)
+      + eassert (Xs1 := X _). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
+        { cbv [lifted_comes_after_or_repeated_prefix lift].
+          eapply t_step. right. eapply t_step.
+          instantiate (1 := (_, _, _, _, _, _)). econstructor; eassumption. }
+        simpl in Xs1. eapply if_false; try eassumption. eapply Xs1. clear Xs1.
+        intros g HgO Hgposs. specialize (Hsat (fun n => match n with
+                                                        | O => f O
+                                                        | S n' => g n'
+                                                        end)).
+        simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
+        eassert (Hsathyp : _). 2: specialize (Hsat Hsathyp); clear Hsathyp.
+        { intros n. destruct n as [|n].
+          - left. cbv [step_state state_step]. rewrite HgO. assumption.
+          - specialize (Hgposs n). apply Hgposs. }
+        destruct Hsat as [n Hsat]. destruct n as [|n].
+        { destruct Hsat as [Hsat|Hsat].
+          - destruct Hsat as [Hsat _]. simpl in Hsat. discriminate Hsat.
+          - inversion Hsat. }
+        exists n. apply Hsat.
     - clear f HfO Hposs Hsatf Hsuc.
       assert (Xs1 := X (s1, k, t, m, l, mc)). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
       { apply t_step. (* <- this is magic, and I do not understand it *)
