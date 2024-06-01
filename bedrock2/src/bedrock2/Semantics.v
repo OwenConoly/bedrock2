@@ -1073,7 +1073,13 @@ Module exec. Section WithEnv.
     exists n,
       get_scmd (f n) = sskip /\
         forall m, m < n -> step_state (execute_with_tail f s2) m.
-  Proof. Admitted.
+  Proof.
+    intros H1 H2. Check nats_have_mins. destruct H2 as [n Hn].
+    assert (Hn' := nats_have_mins n (fun n => get_scmd (f n) = sskip)).
+    eassert (hyp : _). 2: specialize (Hn' hyp); clear hyp.
+    { intros. simpl. destr_sstate (f i); destruct s; simpl; (left; reflexivity) || (right; congruence). }
+    specialize (Hn' Hn). clear n Hn. destruct Hn' as [n [Hn Hnmin]].
+    
 
   (*TODO (to make my proofs less long and repetitive): write a lemma that says
     satisfies f post -> forall i, get_scmd (f i) = sskip -> post (f i).*)
