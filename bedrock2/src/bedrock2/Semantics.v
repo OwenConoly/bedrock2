@@ -279,9 +279,6 @@ Section semantics.
       | _ => Some (nil, mc, tr)
     end.
     
-
-    
-
     Lemma expr_to_other_trace e mc mc' k1 k1' v :
       eval_expr e mc k1 = Some (v, mc', k1') ->
       exists k'',
@@ -725,30 +722,30 @@ Module exec. Section WithEnv.
   Print end_interact.
   Check (end_interact_step _ _ _ _ _ _ _ _ _).
   Check sstackalloc.
-  Inductive nondet_stuck : sstate -> Prop :=
-  | nondet_stuck_stackalloc : forall k t m l mc x n body,
+  Inductive good_stuck : sstate -> Prop :=
+  | good_stuck_stackalloc : forall k t m l mc x n body,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (~exists st, state_step (sstackalloc x n body, k, t, m, l, mc) st) ->
-      nondet_stuck (sstackalloc x n body, k, t, m, l, mc)
-  | nondet_stuck_interact : forall k t m l mc binds action arges mKeep mGive args mc' k',
+      state_stuck (sstackalloc x n body, k, t, m, l, mc) ->
+      good_stuck (sstackalloc x n body, k, t, m, l, mc)
+  | good_stuck_interact : forall k t m l mc binds action arges mKeep mGive args mc' k',
       map.split m mKeep mGive ->
       evaluate_call_args_log m l arges mc k = Some (args, mc', k') ->
       ext_spec t mGive action args (fun _ _ _ => True) ->
-      (~exists st, state_step (sinteract binds action arges, k, t, m, l, mc) st) ->
-      nondet_stuck (sinteract binds action arges, k, t, m, l, mc)
-  | nondet_stuck_end_interact : forall k t m l mc binds action args k' mc' mKeep mGive mReceive resvals klist,
+      state_stuck (sinteract binds action arges, k, t, m, l, mc) ->
+      good_stuck (sinteract binds action arges, k, t, m, l, mc)
+  | good_stuck_end_interact : forall k t m l mc binds action args k' mc' mKeep mGive mReceive resvals klist,
       (*I don't think there's any principled reason to have the l' condition here
         but not the m' condition.  just the way exec was written.*)
       (exists l', map.putmany_of_list_zip binds resvals l = Some l') ->
-      (~exists st, state_step (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc) st) ->
-      nondet_stuck (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc)
-  | nondet_stuck_seq : forall s1 s2 k t m l mc,
-    nondet_stuck (s1, k, t, m, l, mc) ->
-    nondet_stuck (sseq s1 s2, k, t, m, l, mc).
+      state_stuck (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc) ->
+      good_stuck (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc)
+  | good_stuck_seq : forall s1 s2 k t m l mc,
+    good_stuck (s1, k, t, m, l, mc) ->
+    good_stuck (sseq s1 s2, k, t, m, l, mc).
 
   Definition state_satisfies st post : Prop :=
     (let '(s, k, t, m, l, mc) := st in s = sskip /\ post k t m l mc) \/
-      nondet_stuck st.
+      good_stuck st.
 
   Definition satisfies (f : nat -> _) post := exists i, state_satisfies (f i) post.
 
@@ -1066,11 +1063,16 @@ Module exec. Section WithEnv.
     let '(s, k, t, m, l, mc) := f n in
     (sseq s s2, k, t, m, l, mc).
   
-  Lemma nondet_stuck_stuck st :
-    nondet_stuck st ->
+  Lemma good_stuck_stuck st :
+    good_stuck st ->
     state_stuck st.
-  Proof. Admitted.
-
+  Proof.
+    intros H. induction H; auto. intros H'. apply IHgood_stuck.
+    destruct H' as [st' H']. destr_sstate st'. inversion H'; subst.
+    - eexists (_, _, _, _, _, _). eassumption.
+    - inversion H.
+  Qed.
+  
   Lemma step_not_stuck st st' :
     state_step st st' ->
     state_stuck st ->
@@ -1175,10 +1177,22 @@ Module exec. Section WithEnv.
       + apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
   Qed.
 
-    Lemma comes_after_seq k t m l mc k' t' m' l' mc' : forall s1 s1' s2,
-      comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-      comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc).
-  Proof. Admitted.
+  Definition append (st : sstate) s' :=
+    let '(s, k, t, m, l, mc) := st in (sseq s s', k, t, m, l, mc).
+
+  Lemma comes_after_seq' st st' s :
+      comes_after st' st ->
+      comes_after (append st' s) (append st s).
+  Proof.
+    intros H. induction H.
+    - apply t_step. destr_sstate x. destr_sstate y. apply seq_step. apply H.
+    - eapply t_trans; eassumption.
+  Qed.
+
+  Lemma comes_after_seq s k t m l mc s' k' t' m' l' mc' s2 :
+    comes_after (s', k', t', m', l', mc') (s, k, t, m, l, mc) ->
+    comes_after (sseq s' s2, k', t', m', l', mc') (sseq s s2, k, t, m, l, mc).
+  Proof. apply (comes_after_seq' (s, k, t, m, l, mc) (s', k', t', m', l', mc')). Qed.
     
   Lemma invert_seq s1 s2 k t m l mc post :
     (forall (f : nat -> _),
@@ -1281,7 +1295,7 @@ Module exec. Section WithEnv.
         + cbv [done_state] in fdone. destruct fdone as [fdone _]. rewrite Ef1 in fdone.
           simpl in fdone. subst. inversion H. subst. inversion H1.
         + cbv [step_state state_step] in fsteps. rewrite Ef1 in fsteps.
-          apply nondet_stuck_stuck in H. apply H. destr_sstate (f (S b)).
+          apply good_stuck_stuck in H. apply H. destr_sstate (f (S b)).
           eexists (_, _, _, _, _, _). apply seq_step. eassumption. }
     apply H.
   Qed.
@@ -1451,7 +1465,7 @@ Module exec. Section WithEnv.
            { eapply weaken. 2: eassumption. cbv [pointwise_relation Basics.impl].
              intros * Hmid. apply H2 in Hmid. fwd. eauto. }
            intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_state] in H'.
-           destr_sstate st. inversion H'. subst.
+           destr_sstate st'. inversion H'. subst.
            unify_eval_exprs.
            specialize unique_mGive_footprint with (1 := H1) (2 := H19).
            destruct (map.split_diff unique_mGive_footprint H H6). subst.
@@ -1585,7 +1599,7 @@ Module exec. Section WithEnv.
       + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
       + apply H4. clear H4. fwd. eexists (_, _, _, _, _, _). eassumption.
       + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply IHnondet_stuck. clear IHnondet_stuck. fwd. inversion H''; subst.
+      + apply IHgood_stuck. clear IHgood_stuck. fwd. inversion H''; subst.
         -- do 6 eexists. eassumption.
         -- inversion H1.
   Qed.
@@ -1629,30 +1643,43 @@ Module exec. Section WithEnv.
     intros. apply lifted_Acc. eapply steps_Acc'; eassumption.
   Qed.
 
-  Lemma done_stable f i :
+  Lemma done_stable f n :
     possible_execution f ->
-    get_scmd (f i) = sskip ->
-    forall j,
-      f i = f (i + j).
+    get_scmd (f n) = sskip ->
+    forall m, n <= m ->
+              f m = f n.
   Proof.
-    intros. induction j. (*easy*) Admitted.
+    intros H1 H2 H3. apply stuck_stable; try assumption. intros H'.
+    destruct H' as [st' H']. destr_sstate (f n). destr_sstate st'.
+    simpl in H2. rewrite H2 in H'. inversion H'.
+  Qed.
 
+  Definition successful_execution f post :=
+    forall i, step_state f i \/ state_satisfies (f i) post.
 
-
-  
-
-  Lemma comes_right_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
-          lifted_comes_right_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-          lifted_comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
-  Proof. Admitted.
-
-  Print possible_execution.
-  Definition successful_execution f :=
-    forall i, step_state f i \/ (nondet_stuck (f i) /\ f i = f (S i)).
+  Lemma satisfies_stuck st post :
+    state_satisfies st post ->
+    state_stuck st.
+  Proof.
+    intros. destr_sstate st. destruct H as [H|H].
+    - fwd. intros [st' H']. destr_sstate st'. inversion H'.
+    - apply good_stuck_stuck. assumption.
+  Qed.
   
   Lemma ps_suc f post :
-    possible_execution f -> satisfies f post -> successful_execution f.
-  Proof. Admitted.
+    possible_execution f -> satisfies f post -> successful_execution f post.
+  Proof.
+    intros H1 H2 n. assert (H5 := H1 n). destruct H5 as [H5|H5].
+    { left. assumption. }
+    right. destruct H5 as [H3 H4].
+    assert (stuck_stable1 := stuck_stable _ _ H1 H3).
+    destruct H2 as [m H2]. assert (H6 := satisfies_stuck _ _ H2).
+    assert (stuck_stable2 := stuck_stable _ _ H1 H6).
+    specialize (stuck_stable1 (Nat.max n m) ltac:(lia)).
+    specialize (stuck_stable2 (Nat.max n m) ltac:(lia)).
+    rewrite stuck_stable1 in stuck_stable2. rewrite stuck_stable2 in *.
+    assumption.
+  Qed.
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
@@ -1699,12 +1726,13 @@ Module exec. Section WithEnv.
     destruct s.
     - econstructor. assert (Hdone := done_stable f O Hposs). rewrite HfO in Hdone.
       specialize (Hdone eq_refl). destruct Hsatf as [i Hsatf]. simpl in Hdone.
-      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
       fwd. assumption.
     - (* the 0th state is a step state *)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. simpl in HsucO.
+           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       (* find out what the 1st state is *)
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
@@ -1717,12 +1745,13 @@ Module exec. Section WithEnv.
         - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
         - inversion Hsatf. }
       (* show that the first state satisfies the postcondition *)
-      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
       fwd. econstructor; eassumption.
     - (*this is identical to the previous case...*)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. simpl in HsucO.
+           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
       assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
@@ -1731,12 +1760,13 @@ Module exec. Section WithEnv.
       { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
         - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
         - inversion Hsatf. }
-      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
       fwd. econstructor; eassumption.
     - (*this is identical to the previous case...*)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. simpl in HsucO.
+           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
       assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
@@ -1745,11 +1775,13 @@ Module exec. Section WithEnv.
       { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
         - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
         - inversion Hsatf. }
-      rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
       2: { inversion Hsatf. }
       fwd. econstructor; eassumption.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. subst. econstructor; try eassumption.
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. simpl in HsucO.
+           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. subst.
+           econstructor; try eassumption.
            intros. exfalso. apply H8. eexists (_, _, _, _, _, _). econstructor; eassumption. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
@@ -1784,8 +1816,8 @@ Module exec. Section WithEnv.
       eassert (Hpossg := possible_execution_exists). edestruct Hpossg as [g [HgO Hpossg']].
       clear Hpossg. specialize Hsat' with (1 := HgO) (2 := Hpossg').
       assert (Hsuc := ps_suc _ _ Hpossg' Hsat'). assert (HsucO := Hsuc O).
-      destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HgO in HsucO. inversion HsucO. }
+      destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HgO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HgO in HsucO. destr_sstate (g (S O)).
       inversion HsucO. subst.
       assert (Hdone := done_stable g (S O) Hpossg'). rewrite Ef in Hdone.
@@ -1794,11 +1826,11 @@ Module exec. Section WithEnv.
       { rewrite HgO in Hsat'. destruct Hsat' as [Hsat'|Hsat'].
         - destruct Hsat' as [Hsat' _]. simpl in Hsat'. congruence.
         - inversion Hsat'. }
-      rewrite <- Hdone in Hsat'. destruct Hsat' as [Hsat'|Hsat'].
+      rewrite Hdone in Hsat' by lia. destruct Hsat' as [Hsat'|Hsat'].
       2: { inversion Hsat'. }
       destruct Hsat' as [_ Hsat']. eauto.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO; subst.
       + eassert (Xs1 := X _). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
@@ -1852,8 +1884,8 @@ Module exec. Section WithEnv.
       { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
         apply t_step. right. eassumption. }
       simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO; subst.
       + assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
@@ -1862,7 +1894,7 @@ Module exec. Section WithEnv.
         { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
           - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
           - inversion Hsatf. }
-        rewrite <- Hdone in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
+        rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
         2: { inversion Hsatf. }
         fwd. eapply while_false; eassumption.
       + (*I'm kind of inlining the whole proof for the seq case here, plus some more stuff...
@@ -1928,11 +1960,12 @@ Module exec. Section WithEnv.
           - destruct Hind as [Hind _]. congruence.
           - inversion Hind. subst. inversion H0. }
         cbv [satisfies]. exists n. apply Hind.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
-      2: { rewrite HfO in HsucO. inversion HsucO. }
+    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
+      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst. assert (HsucSO := Hsuc (S O)). destruct HsucSO as [HsucSO|[HsucSO _]].
-      2: { rewrite Ef in HsucSO. inversion HsucSO. subst. inversion H0. }
+      inversion HsucO. subst. assert (HsucSO := Hsuc (S O)). destruct HsucSO as [HsucSO|HsucSO].
+      2: { rewrite Ef in HsucSO. destruct HsucSO as [[HsucSO _]|HsucSO]; inversion HsucSO.
+           subst. inversion H0. }
       cbv [step_state state_step] in HsucSO. rewrite Ef in HsucSO. destr_sstate (f (S (S O))).
       inversion HsucSO. subst. inversion H12. subst.
       specialize (X (fbody, leak_unit :: k', t, m, l, ami 100 (amj 100 (aml 100 (ams 100 mc'))))).
@@ -1973,8 +2006,8 @@ Module exec. Section WithEnv.
       assert (Hposs' := possible_execution_exists (end_call binds rets l0, k'', t', m', st1, mc'')).
       destruct Hposs' as [g [HgO Hgposs]].
       assert (Hsatg := Hafter g HgO Hgposs). assert (Haftersuc := ps_suc _ _ Hgposs Hsatg).
-      assert (HaftersucO := Haftersuc O). destruct HaftersucO as [HaftersucO|[HaftersucO _]].
-      2: { rewrite HgO in HaftersucO. inversion HaftersucO. }
+      assert (HaftersucO := Haftersuc O). destruct HaftersucO as [HaftersucO|HaftersucO].
+      2: { rewrite HgO in HaftersucO. destruct HaftersucO as [[HaftersucO _]|HaftersucO]; inversion HaftersucO. }
       cbv [step_state state_step] in HaftersucO. rewrite HgO in HaftersucO. destr_sstate (g (S O)).
       inversion HaftersucO. subst.
       assert (Hdone := done_stable g (S O) Hgposs). rewrite Ef1 in Hdone.
@@ -1983,18 +2016,19 @@ Module exec. Section WithEnv.
       { rewrite HgO in Hsatg. destruct Hsatg as [Hsatg|Hsatg].
         - destruct Hsatg as [Hsatg _]. simpl in Hsatg. congruence.
         - inversion Hsatg. }
-      rewrite <- Hdone in Hsatg. destruct Hsatg as [Hsatg|Hsatg].
+      rewrite Hdone in Hsatg by lia. destruct Hsatg as [Hsatg|Hsatg].
       2: { inversion Hsatg. }
       fwd. eauto.
     - destruct ext_spec_ok.
       assert (HsucO := Hsuc O).
-      assert (stuck_enough: nondet_stuck (f O) -> exec (cmd.interact binds action args) k t m l mc post).
+      assert (stuck_enough: good_stuck (f O) -> exec (cmd.interact binds action args) k t m l mc post).
       { clear HsucO. intros Hstuck. rewrite HfO in Hstuck. inversion Hstuck. subst.
         econstructor. 3: eapply intersect. (*not H9*) all: try eassumption.
         simpl. intros * H. exfalso. apply H10. eexists (_, _, _, _, _, _).
         econstructor; eassumption. }
-      destruct HsucO as [HsucO|[HsucO _]].
-      2: apply stuck_enough; assumption.
+      destruct HsucO as [HsucO|HsucO].
+      2: { apply stuck_enough. rewrite HfO in *.
+           destruct HsucO as [[HsucO _]|HsucO]; [discriminate HsucO|assumption]. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst. econstructor. 3: eapply intersect. all: try eassumption.
       rewrite HfO in stuck_enough. simpl.
@@ -2024,18 +2058,24 @@ Module exec. Section WithEnv.
           - exfalso. inversion Hsat. subst. assert (HsucO := Hsuc O).
             destruct HsucO as [HsucO|HsucO].
             + apply H14. eexists. eapply HsucO.
-            + destruct HsucO as [_ HsucO]. simpl in HsucO. rewrite SfO in HsucO.
-              Fail congruence. discriminate HsucO. }
+            + simpl in HsucO. destruct HsucO as [[HsucO _]|HsucO]; [inversion HsucO|].
+              specialize (Hpossf O). destruct Hpossf as [Hpossf|Hpossf].
+              -- eapply step_not_stuck; eassumption.
+              -- destruct Hpossf as [_ Hpossf]. simpl in Hpossf. rewrite SfO in Hpossf.
+                 Fail congruence. discriminate Hpossf. }
         destruct i as [|i].
         { simpl in Hsat. rewrite SfO in Hsat. destruct Hsat as [Hsat|Hsat].
           - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
           - exfalso. inversion Hsat. subst. apply H20. eexists (_, _, _, _, _, _). eassumption. }
-        simpl in Hsat. rewrite <- Hdone in Hsat. destruct Hsat as [Hsat|Hsat].
+        simpl in Hsat. replace (Sf (S i)) with (f (S (S i))) in Hsat by reflexivity.
+        rewrite Hdone in Hsat by lia. destruct Hsat as [Hsat|Hsat].
         2: { inversion Hsat. }
         destruct Hsat as [_ Hsat]. Search map.split.
         specialize @map.split_det with (1 := H25) (2 := H0).
         intros. subst. apply Hsat.
-      + destruct HsucSO as [HsucSO _]. simpl in HsucSO. rewrite SfO in HsucSO.
+      + destruct HsucSO as [HsucSO|HsucSO].
+        { simpl in HsucSO. rewrite SfO in HsucSO. simpl in HsucSO. destruct HsucSO. congruence. }
+        simpl in HsucSO. rewrite SfO in HsucSO.
         inversion HsucSO. subst. fwd. eexists. split; eauto. intros.
         exfalso. apply H19. clear H19. eexists (_, _, _, _, _, _). econstructor; eassumption.
   Qed.
