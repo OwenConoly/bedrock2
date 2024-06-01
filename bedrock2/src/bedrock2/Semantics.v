@@ -1052,8 +1052,60 @@ Module exec. Section WithEnv.
      + destr_sstate (execution_of_first_part f i). destruct s; simpl; try congruence.
         inversion H.
   Qed.
+
+  Print execution_of_first_part.
+
+  Definition append (st : sstate) (s2 : scmd) :=
+    let '(s, k, t, m, l, mc) := st in
+    (sseq s s2, k, t, m, l, mc).
+
+  Definition execute_with_tail (f : nat -> sstate) (s2 : scmd) (n : nat) : sstate :=
+    let '(s, k, t, m, l, mc) := f n in
+    (sseq s s2, k, t, m, l, mc).
+
+  (*characterization of execute_with_tail:
+    let n be the smallest number such that f n is a skip.  Then, for every i < n,
+    we have step_state i n.*) Print satisfies.
+
+  Lemma execute_with_tail_works f s2 :
+    possible_execution f ->
+    (exists n, get_scmd (f n) = sskip) ->
+    exists n,
+      get_scmd (f n) = sskip /\
+        forall m, m < n -> step_state (execute_with_tail f s2) m.
+  Proof. Admitted.
+
+  (*TODO (to make my proofs less long and repetitive): write a lemma that says
+    satisfies f post -> forall i, get_scmd (f i) = sskip -> post (f i).*)
+
+  Lemma possible_execution_exists s k t m l mc :
+    exists f, f O = (s, k, t, m, l, mc) /\
+                possible_execution f.
+  Proof. Admitted.
+
+  Lemma step_until_done f i :
+    possible_execution f ->
+    get_scmd (f i) = sskip ->
+    forall j,
+      done_state f j \/ step_state f j.
+  Proof. Admitted.
+
+  Lemma later_comes_after f i j :
+    possible_execution f ->
+    step_state f i ->
+    i < j ->
+    comes_after (f j) (f i).
+  Proof. Admitted.
+
+  Print stuck_state.
+  Lemma nondet_stuck_stuck st :
+    nondet_stuck st ->
+    ~ exists st', state_step st st'.
+  Proof. Admitted.
+  
     
   Lemma invert_seq s1 s2 k t m l mc post :
+    excluded_middle ->
     (forall (f : nat -> _),
         f O = (sseq s1 s2, k, t, m, l, mc) ->
         possible_execution f ->
@@ -1062,12 +1114,101 @@ Module exec. Section WithEnv.
         f O = (s1, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f (fun k' t' m' l' mc' =>
-                       comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) /\
+                       (comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) \/
+                          (sskip, k', t', m', l', mc') = (s1, k, t, m, l, mc)) /\
                          forall (g : nat -> _),
                            g O = (s2, k', t', m', l', mc') ->
                            possible_execution g ->
                            satisfies g post)).
-  Proof. Admitted.
+  Proof.
+    intros em H f HfO Hfposs.
+    
+(*is excluded middle really necessary here? intuitively it seems like the only option...
+      yes, it is necessary.
+      If I wanted to first define some execution f of sseq s1 s2 without first branching on whether
+      the execution of (s1, k, t, m, l, mc) terminates, then I wouldn't know ahead of time what 
+      would be the (sseq sskip s2, k', t', m', l', mc') state that the sseq s1 s2 eventually ends 
+      up in, so I'd then need to have some map (s2, k', t', m', l', mc') |-> g, where g is a 
+      possible_execution starting with that state.  Defining that map would use excluded middle 
+      as in the proof of possible_execution_exists, and it would also need choice (!), since 
+      we don't just want the existence statement (as in possible_execution_exists)
+      but an actual function.*)
+    assert (terminates_or_not := em (exists n, get_scmd (f n) = sskip)).
+    destruct terminates_or_not as [terminates|not].
+    2: { assert (Hseqposs : possible_execution (execute_with_tail f s2)).
+         { intros n. specialize (Hfposs n).
+           cbv [step_state state_step stuck_state] in *. cbv [execute_with_tail].
+           destr_sstate (f n). destr_sstate (f (S n)).
+           destruct Hfposs as [Hfposs|Hfposs].
+           - left. apply seq_step. assumption.
+           - right. fwd. split; [|reflexivity].
+             intros H'. fwd. apply Hfpossp0.
+             inversion H'; subst.
+             + eexists (_, _, _, _, _, _). eassumption.
+             + exfalso. apply not. exists n. rewrite Ef. reflexivity. }
+         Fail specialize (H _ eq_refl Hseqposs). (*weird error message*)
+         specialize (H (execute_with_tail f s2)). cbv [execute_with_tail] in H.
+         rewrite HfO in H. specialize (H eq_refl Hseqposs). destruct H as [n H].
+         exists n. right. destr_sstate (f n). destruct H as [H|H].
+         { destruct H as [H _]. discriminate H. }
+         inversion H. subst. assumption. }
+    assert (Hs1 := execute_with_tail_works f s2 Hfposs terminates). clear terminates.
+    destruct Hs1 as [n [Hn Hs1]].
+    assert (fsteps := step_until_done f n Hfposs Hn).
+    exists n. destr_sstate (f n). simpl in Hn. subst. cbv [state_satisfies].
+    left. split; [reflexivity|]. split.
+    { rewrite <- Ef. rewrite <- HfO. clear -Hs1. induction n.
+      - right. reflexivity.
+      - left. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
+        { intros. apply Hs1. lia. }
+        specialize (Hs1 n ltac:(lia)). cbv [step_state state_step execute_with_tail] in Hs1.
+        destr_sstate (f n). destr_sstate (f (S n)). inversion Hs1; subst.
+        2: { clear -H7. exfalso. induction s2; congruence. }
+        destruct IHn as [IHn|IHn].
+        + eapply t_trans.
+          -- apply t_step. instantiate (1 := (_, _, _, _, _, _)). eassumption.
+          -- assumption.
+        + apply t_step. rewrite <- IHn. assumption. }
+    intros f2 Hf2O Hf2poss.
+    remember (fun m =>
+                if Nat.leb m n
+                then execute_with_tail f s2 m
+                else f2 (m - n - 1)) as g eqn:Eg.
+    specialize (H g). eassert (HgO : g O = _).
+    { rewrite Eg. simpl. cbv [execute_with_tail]. rewrite HfO. reflexivity. }
+    specialize (H HgO). assert (Hgposs : possible_execution g).
+    { intros i. specialize (fsteps i).
+      cbv [possible_execution] in Hf2poss. cbv [step_state state_step stuck_state] in *.
+      subst. cbv [execute_with_tail] in *. destr_sstate (f i). destr_sstate (f (S i)).
+      destruct (Nat.leb i n) eqn:Ei.
+      - apply PeanoNat.Nat.leb_le in Ei. destruct (Nat.leb (S i) n) eqn:ESi.
+        + apply PeanoNat.Nat.leb_le in ESi. destruct fsteps as [fdone|fsteps].
+          { exfalso. specialize (Hs1 i ltac:(lia)). rewrite Ef0, Ef1 in Hs1.
+            cbv [done_state] in fdone. fwd. rewrite Ef0 in fdonep0. simpl in fdonep0. subst.
+            inversion Hs1; subst.
+            - inversion H13.
+            - clear -H6. induction s2; congruence. }
+          left. apply seq_step. assumption.
+        + apply PeanoNat.Nat.leb_nle in ESi. assert (i = n) by lia. subst.
+          rewrite Ef in Ef0. inversion Ef0. subst. replace (S n - n - 1) with O by lia.
+          rewrite Hf2O. left. constructor.
+      - apply PeanoNat.Nat.leb_nle in Ei. destruct (Nat.leb (S i) n) eqn:ESi.
+        + apply PeanoNat.Nat.leb_le in ESi. lia.
+        + apply PeanoNat.Nat.leb_nle in ESi. replace (S i - n - 1) with (S (i - n - 1)) by lia.
+          apply Hf2poss. }
+    specialize (H Hgposs). destruct H as [b H]. exists (b - n - 1).
+    rewrite Eg in H. cbv [state_satisfies execute_with_tail] in H.
+    destr_sstate (f2 (b - n - 1)). destruct (Nat.leb b n).
+    { exfalso. destr_sstate (f b). destruct H as [H|H].
+      - destruct H as [H _]. discriminate H.
+      - specialize (fsteps b). destruct fsteps as [fdone|fsteps].
+        + cbv [done_state] in fdone. destruct fdone as [fdone _]. rewrite Ef1 in fdone.
+          simpl in fdone. subst. inversion H. subst. inversion H1.
+        + cbv [step_state state_step] in fsteps. rewrite Ef1 in fsteps.
+          apply nondet_stuck_stuck in H. apply H. destr_sstate (f (S b)).
+          eexists (_, _, _, _, _, _). apply seq_step. eassumption. }
+    apply H.
+  Qed.
 
   Ltac unify_eval_exprs :=
     repeat match goal with
@@ -1437,17 +1578,6 @@ Module exec. Section WithEnv.
   Proof.
     intros. induction j. (*easy*) Admitted.
 
-  Lemma possible_execution_exists s k t m l mc :
-    exists f, f O = (s, k, t, m, l, mc) /\
-                possible_execution f.
-  Proof. Admitted.
-
-  Lemma step_until_done f i :
-    possible_execution f ->
-    get_scmd (f i) = sskip ->
-    forall j,
-      done_state f j \/ step_state f j.
-  Proof. Admitted.
 
 
   
