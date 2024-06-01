@@ -799,6 +799,11 @@ Module exec. Section WithEnv.
     let Ef := fresh "Ef" in
     destruct st as [ [ [ [ [s k] t] m] l] mc] eqn:Ef.
 
+  Section choice_and_middle.
+    Context
+      (em : excluded_middle)
+        (choice : FunctionalChoice_on sstate sstate).
+
   Lemma sskip_or_first_part' f n :
     match (execution_of_first_part f n) with
     | (sskip, _, _, _, _, _) => True
@@ -1121,12 +1126,9 @@ Module exec. Section WithEnv.
     end.
 
   Lemma possible_execution_exists st :
-    FunctionalChoice_on sstate sstate ->
-    excluded_middle ->
-    exists f, f O = st /\
-                possible_execution f.
+    exists f, f O = st /\ possible_execution f.
   Proof.
-    intros choice em. cbv [possible_execution step_state stuck_state].
+    cbv [possible_execution step_state stuck_state].
     assert (Hnext : exists (next : sstate -> sstate), forall st,
                state_step st (next st) \/ state_stuck st /\ next st = st).
     { clear -choice em. cbv [FunctionalChoice_on] in choice. apply (choice (fun st st' => state_step st st' \/ state_stuck st /\ st' = st)).
@@ -1172,9 +1174,13 @@ Module exec. Section WithEnv.
         -- destruct H1 as [_ H1]. rewrite H1. assumption.
       + apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
   Qed.
+
+    Lemma comes_after_seq k t m l mc k' t' m' l' mc' : forall s1 s1' s2,
+      comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
+      comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc).
+  Proof. Admitted.
     
   Lemma invert_seq s1 s2 k t m l mc post :
-    excluded_middle ->
     (forall (f : nat -> _),
         f O = (sseq s1 s2, k, t, m, l, mc) ->
         possible_execution f ->
@@ -1183,14 +1189,13 @@ Module exec. Section WithEnv.
         f O = (s1, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f (fun k' t' m' l' mc' =>
-                       (comes_after (sskip, k', t', m', l', mc') (s1, k, t, m, l, mc) \/
-                          (sskip, k', t', m', l', mc') = (s1, k, t, m, l, mc)) /\
+                       comes_after (s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc) /\
                          forall (g : nat -> _),
                            g O = (s2, k', t', m', l', mc') ->
                            possible_execution g ->
                            satisfies g post)).
   Proof.
-    intros em H f HfO Hfposs.
+    intros H f HfO Hfposs.
     
 (*is excluded middle really necessary here? intuitively it seems like the only option...
       yes, it is necessary.
@@ -1210,7 +1215,7 @@ Module exec. Section WithEnv.
            - left. apply seq_step. assumption.
            - right. fwd. split; [|reflexivity].
              intros H'. fwd. apply Hfpossp0.
-             inversion H'; subst.
+             destr_sstate st'. inversion H'; subst.
              + eexists (_, _, _, _, _, _). eassumption.
              + exfalso. apply not. exists n. rewrite Ef. reflexivity. }
          Fail specialize (H _ eq_refl Hseqposs). (*weird error message*)
@@ -1219,18 +1224,24 @@ Module exec. Section WithEnv.
          exists n. right. destr_sstate (f n). destruct H as [H|H].
          { destruct H as [H _]. discriminate H. }
          inversion H. subst. assumption. }
-    assert (Hs1 := execute_with_tail_works f s2 Hfposs terminates). clear terminates.
+    assert (Hs1 := execute_with_tail_works' f Hfposs terminates). clear terminates.
     destruct Hs1 as [n [Hn Hs1]].
     assert (fsteps := step_until_done f n Hfposs Hn).
     exists n. destr_sstate (f n). simpl in Hn. subst. cbv [state_satisfies].
     left. split; [reflexivity|]. split.
-    { rewrite <- Ef. rewrite <- HfO. clear -Hs1. induction n.
+    { enough (H' : comes_after (f n) (s1, k, t, m, l, mc) \/ f n = (s1, k, t, m, l, mc)).
+      { destruct H' as [H'|H'].
+        - eapply t_trans.
+          2: { apply comes_after_seq. rewrite Ef in H'. apply H'. }
+          apply t_step. apply seq_done_step.
+        - rewrite Ef in H'. inversion H'. subst. apply t_step. apply seq_done_step. }
+      rewrite <- HfO. clear -Hs1. induction n.
       - right. reflexivity.
       - left. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
         { intros. apply Hs1. lia. }
         specialize (Hs1 n ltac:(lia)). cbv [step_state state_step execute_with_tail] in Hs1.
-        destr_sstate (f n). destr_sstate (f (S n)). inversion Hs1; subst.
-        2: { clear -H7. exfalso. induction s2; congruence. }
+        destr_sstate (f n). destr_sstate (f (S n)). (*inversion Hs1; subst.
+        2: { clear -H7. exfalso. induction s2; congruence. }*)
         destruct IHn as [IHn|IHn].
         + eapply t_trans.
           -- apply t_step. instantiate (1 := (_, _, _, _, _, _)). eassumption.
@@ -1252,9 +1263,7 @@ Module exec. Section WithEnv.
         + apply PeanoNat.Nat.leb_le in ESi. destruct fsteps as [fdone|fsteps].
           { exfalso. specialize (Hs1 i ltac:(lia)). rewrite Ef0, Ef1 in Hs1.
             cbv [done_state] in fdone. fwd. rewrite Ef0 in fdonep0. simpl in fdonep0. subst.
-            inversion Hs1; subst.
-            - inversion H13.
-            - clear -H6. induction s2; congruence. }
+            inversion Hs1. }
           left. apply seq_step. assumption.
         + apply PeanoNat.Nat.leb_nle in ESi. assert (i = n) by lia. subst.
           rewrite Ef in Ef0. inversion Ef0. subst. replace (S n - n - 1) with O by lia.
@@ -1292,14 +1301,13 @@ Module exec. Section WithEnv.
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
   Lemma exec_to_step (s : cmd) k t m l mc post :
-    excluded_middle ->
     exec s k t m l mc post ->
     forall (f : nat -> _),
       f O = (inclusion s, k, t, m, l, mc) ->
       possible_execution f ->
       satisfies f post.
   Proof.
-    intros em H. induction H.
+    intros H. induction H.
     - intros. exists O. left. rewrite H0. eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
       + exists (S O). cbv [step_state state_step] in HSO.
@@ -1457,11 +1465,10 @@ Module exec. Section WithEnv.
   Proof. intros H [y H']. apply H'. apply H. Qed.
   
   Lemma naen (A : Type) (P : A -> Prop) :
-    excluded_middle ->
     ~(forall y, P y) ->
     exists y, ~P y.
   Proof.
-    clear. cbv [excluded_middle]. intros em H. assert (H1 := em (exists y, ~P y)).
+    clear -em. cbv [excluded_middle]. intros H. assert (H1 := em (exists y, ~P y)).
     destruct H1 as [H1|H1].
     - assumption.
     - exfalso. apply H. clear H. intros y. assert (H2 := em (P y)).
@@ -1471,19 +1478,18 @@ Module exec. Section WithEnv.
   Qed.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
-    excluded_middle ->
     FunctionalChoice_on A A ->
     (forall f : nat -> A,
         f O = x ->
         ~(forall i, R (f (S i)) (f i))) ->
     Acc R x.
   Proof.
-    intros em choice H. cbv [FunctionalChoice_on] in choice.
+    clear choice. intros choice H. cbv [FunctionalChoice_on] in choice.
     specialize (choice (fun x y => ~Acc R x -> ~Acc R y /\ R y x)). destruct choice as [f H'].
     { clear -em. intros x. cbv [excluded_middle] in em.
       assert (H1 := em (forall y : A, R y x -> Acc R y)). destruct H1 as [H1|H1].
       - exists x. intros H. exfalso. apply H. constructor. assumption.
-      - assert (H2 := naen). specialize H2 with (1 := em) (2 := H1).
+      - assert (H2 := naen). specialize H2 with (1 := H1).
         simpl in H2. destruct H2 as [y H2]. exists y. intros _. split.
         + intros H. apply H2. intros. assumption.
         + assert (H3 := em (R y x)). destruct H3 as [H3|H3].
@@ -1551,16 +1557,14 @@ Module exec. Section WithEnv.
   Qed.
   
   Lemma steps_Acc'' s k t m l mc post :
-    excluded_middle ->
-    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     Acc comes_right_after (inclusion s, k, t, m, l, mc).
   Proof.
-    intros em choice. intros.
-    apply chains_finite_implies_Acc; [apply em|apply choice|].
+    intros.
+    apply chains_finite_implies_Acc; [apply choice|].
     clear em choice.
     intros. intros H'. specialize (H f).
     simpl in H. specialize (H H0).
@@ -1603,8 +1607,6 @@ Module exec. Section WithEnv.
   Qed.
 
   Lemma steps_Acc' s k t m l mc post :
-    excluded_middle ->
-    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
@@ -1618,8 +1620,6 @@ Module exec. Section WithEnv.
   Qed.
 
   Lemma steps_Acc s k t m l mc post :
-    excluded_middle ->
-    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
@@ -1644,11 +1644,6 @@ Module exec. Section WithEnv.
   Lemma comes_right_after_seq s1 s1' k t m l mc k' t' m' l' mc' s2 :
           lifted_comes_right_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
           lifted_comes_right_after (cmd.seq s1' s2, k', t', m', l', mc') (cmd.seq s1 s2, k, t, m, l, mc).
-  Proof. Admitted.
-
-  Lemma comes_after_seq k t m l mc k' t' m' l' mc' : forall s1 s1' s2,
-      comes_after (s1', k', t', m', l', mc') (s1, k, t, m, l, mc) ->
-      comes_after (sseq s1' s2, k', t', m', l', mc') (sseq s1 s2, k, t, m, l, mc).
   Proof. Admitted.
 
   Print possible_execution.
@@ -1683,22 +1678,20 @@ Module exec. Section WithEnv.
   Qed.
   
   Lemma step_to_exec s k t m l mc post :
-    excluded_middle ->
-    FunctionalChoice_on (scmd * trace * io_trace * mem * locals * metrics) (scmd * trace * io_trace * mem * locals * metrics) ->
     (forall (f : nat -> _),
         f O = (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     exec s k t m l mc post.
   Proof.
-    intros em choice H. assert (H' := steps_Acc).
-    specialize H' with (1 := em) (2 := choice) (3 := H).
+    intros H. assert (H' := steps_Acc).
+    specialize H' with (1 := H).
     revert H. revert post.
     eapply (@Fix_F _ _ (fun x => let '(_, _, _, _, _, _) := x in _) _ _ H').
-    Unshelve. simpl. clear -em word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
+    Unshelve. simpl. clear -em choice word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
     intros post Hsat.
     (* there is a possible execution *)
-    assert (Hposs := possible_execution_exists (inclusion s) k t m l mc).
+    assert (Hposs := possible_execution_exists (inclusion s, k, t, m, l, mc)).
     destruct Hposs as [f [HfO Hposs] ].
     (* it is successful and satisfies the postcondition *)
     assert (Hsatf := Hsat f HfO Hposs). assert (Hsuc := ps_suc _ _ Hposs Hsatf).
@@ -1854,12 +1847,10 @@ Module exec. Section WithEnv.
       simpl in Xs1. assert (Hsatinv := invert_seq). specialize Hsatinv with (1 := Hsat).
       fold inclusion in Hsatinv. specialize Xs1 with (1 := Hsatinv).
       econstructor. 1: eapply Xs1. simpl. intros * [afters2 Hs2].
-      specialize comes_after_seq with (1 := afters2). intros comes_after_thing.
       fold sstate in *.
       assert (Xs2 := X (s2, k', t', m', l', mc')). eassert (lt: _). 2: specialize (Xs2 lt); clear lt.
-      { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
-        2: { apply t_step. right. eapply comes_after_thing. }
-        apply t_step. right. apply t_step. constructor. }
+      { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
+        apply t_step. right. eassumption. }
       simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
     - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|[HsucO _]].
       2: { rewrite HfO in HsucO. inversion HsucO. }
@@ -1910,9 +1901,7 @@ Module exec. Section WithEnv.
           apply t_step. right. eapply t_trans.
           2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). apply HsucO. }
           eapply t_trans.
-          2: { eapply comes_after_seq. eassumption. (*Hlt*) }
-          eapply t_trans.
-          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). eapply seq_done_step. }
+          2: { eassumption. }
           eapply t_trans.
           2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). eapply seq_step. econstructor. }
           eapply t_step. apply seq_done_step. }
@@ -1981,7 +1970,7 @@ Module exec. Section WithEnv.
       simpl in X. specialize X with (1 := Hind'). clear Hind'.
       econstructor; try eassumption. (*X is one assumption*)
       simpl. intros * [Hlt Hafter].
-      assert (Hposs' := possible_execution_exists (end_call binds rets l0) k'' t' m' st1 mc'').
+      assert (Hposs' := possible_execution_exists (end_call binds rets l0, k'', t', m', st1, mc'')).
       destruct Hposs' as [g [HgO Hgposs]].
       assert (Hsatg := Hafter g HgO Hgposs). assert (Haftersuc := ps_suc _ _ Hgposs Hsatg).
       assert (HaftersucO := Haftersuc O). destruct HaftersucO as [HaftersucO|[HaftersucO _]].
@@ -2011,9 +2000,7 @@ Module exec. Section WithEnv.
       rewrite HfO in stuck_enough. simpl.
       clear f HfO Hposs Hsatf Hsuc Ef mReceive resvals klist HsucO H16.
       intros * H. eset (f1 := (_, _, _, _, _, _)).
-      assert (HpossSf := match f1 as x return _ with
-                             | (s, k, t, m, l, mc) => possible_execution_exists s k t m l mc
-                         end).
+      assert (HpossSf := possible_execution_exists f1).
       destruct HpossSf as [Sf [SfO Sfposs]].
       eset (f := fun n => match n return sstate with
                             | O => _
