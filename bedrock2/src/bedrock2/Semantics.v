@@ -16,6 +16,7 @@ Require Import Coq.Classes.Morphisms.
   Require Import Relation_Operators.
   Require Import Relation_Definitions.
   Require Import Transitive_Closure.
+  Require Import Coq.Logic.ChoiceFacts.
 
 Print Memory.store.
 
@@ -709,8 +710,11 @@ Module exec. Section WithEnv.
   Definition done_state f i :=
     get_scmd (f i) = sskip /\ f (S i) = f i.
 
+  Definition state_stuck st :=
+    ~exists st', state_step st st'.
+
   Definition stuck_state f i :=
-    (~exists st, state_step (f i) st) /\ f (S i) = f i.
+    state_stuck (f i) /\ f (S i) = f i.
 
   Definition step_state f i :=
     state_step (f i) (f (S i)).
@@ -1053,62 +1057,121 @@ Module exec. Section WithEnv.
         inversion H.
   Qed.
 
-  Print execution_of_first_part.
-
-  Definition append (st : sstate) (s2 : scmd) :=
-    let '(s, k, t, m, l, mc) := st in
-    (sseq s s2, k, t, m, l, mc).
-
   Definition execute_with_tail (f : nat -> sstate) (s2 : scmd) (n : nat) : sstate :=
     let '(s, k, t, m, l, mc) := f n in
     (sseq s s2, k, t, m, l, mc).
+  
+  Lemma nondet_stuck_stuck st :
+    nondet_stuck st ->
+    state_stuck st.
+  Proof. Admitted.
 
-  (*characterization of execute_with_tail:
-    let n be the smallest number such that f n is a skip.  Then, for every i < n,
-    we have step_state i n.*) Print satisfies.
+  Lemma step_not_stuck st st' :
+    state_step st st' ->
+    state_stuck st ->
+    False.
+  Proof.
+    intros H H'.
+    cbv [state_step state_stuck] in *. apply H'. destr_sstate st. destr_sstate st'.
+    eexists (_, _, _, _, _, _). eassumption.
+  Qed.
+  
+  Lemma stuck_stable f n :
+    possible_execution f ->
+    state_stuck (f n) ->
+    forall m, n <= m ->
+              f m = f n.
+  Proof.
+    intros H1 H2 m Hm. induction m.
+    - replace n with O by lia. reflexivity.
+    - destruct (Nat.leb n m) eqn:E.
+      + apply PeanoNat.Nat.leb_le in E. specialize (IHm E). specialize (H1 m).
+        rewrite <- IHm in H2. destruct H1.
+        { exfalso. eapply step_not_stuck; eassumption. }
+        cbv [stuck_state] in H. destruct H as [_ H]. rewrite H. apply IHm.
+      + apply PeanoNat.Nat.leb_nle in E. replace n with (S m) by lia. reflexivity.
+  Qed.
 
-  Lemma execute_with_tail_works f s2 :
+  Lemma execute_with_tail_works' f :
     possible_execution f ->
     (exists n, get_scmd (f n) = sskip) ->
     exists n,
       get_scmd (f n) = sskip /\
-        forall m, m < n -> step_state (execute_with_tail f s2) m.
+        forall m, m < n -> step_state f (*(execute_with_tail f s2)*) m.
   Proof.
     intros H1 H2. Check nats_have_mins. destruct H2 as [n Hn].
     assert (Hn' := nats_have_mins n (fun n => get_scmd (f n) = sskip)).
     eassert (hyp : _). 2: specialize (Hn' hyp); clear hyp.
     { intros. simpl. destr_sstate (f i); destruct s; simpl; (left; reflexivity) || (right; congruence). }
     specialize (Hn' Hn). clear n Hn. destruct Hn' as [n [Hn Hnmin]].
-    
+    exists n. split; [assumption|]. intros m Hm. specialize (Hnmin m Hm).
+    assert (Hm' := H1 m). destruct Hm' as [Hm'|Hm']; try assumption.
+    destruct Hm' as [Hm' _].
+    assert (stable := stuck_stable f m H1 Hm' n ltac:(lia)). rewrite stable in Hn.
+    exfalso. auto.
+  Qed.
 
   (*TODO (to make my proofs less long and repetitive): write a lemma that says
     satisfies f post -> forall i, get_scmd (f i) = sskip -> post (f i).*)
 
-  Lemma possible_execution_exists s k t m l mc :
-    exists f, f O = (s, k, t, m, l, mc) /\
+  Fixpoint repeat_f {A: Type} (f : A -> A) x n :=
+    match n with
+    | O => x
+    | S n' => f (repeat_f f x n')
+    end.
+
+  Lemma possible_execution_exists st :
+    FunctionalChoice_on sstate sstate ->
+    excluded_middle ->
+    exists f, f O = st /\
                 possible_execution f.
-  Proof. Admitted.
+  Proof.
+    intros choice em. cbv [possible_execution step_state stuck_state].
+    assert (Hnext : exists (next : sstate -> sstate), forall st,
+               state_step st (next st) \/ state_stuck st /\ next st = st).
+    { clear -choice em. cbv [FunctionalChoice_on] in choice. apply (choice (fun st st' => state_step st st' \/ state_stuck st /\ st' = st)).
+      intros st. assert (step_or_not := em (exists st', state_step st st')).
+      destruct step_or_not as [step|not].
+      - destruct step as [st' step]. exists st'. left. assumption.
+      - exists st. right. split; [|reflexivity]. cbv [state_stuck]. apply not. }
+    destruct Hnext as [next Hnext]. Print repeat_f.
+    exists (fun n => repeat_f next st n). split; [reflexivity|]. intros.
+    apply Hnext.
+  Qed.
 
   Lemma step_until_done f i :
     possible_execution f ->
     get_scmd (f i) = sskip ->
     forall j,
       done_state f j \/ step_state f j.
-  Proof. Admitted.
+  Proof.
+    intros H1 H2 j. Check stuck_stable. assert (Hsskips := stuck_stable f i H1).
+    assert (Hj := stuck_stable f j H1). destr_sstate (f i). simpl in H2. subst.
+    assert (hyp : state_stuck (f i)).
+    { cbv [state_stuck]. intros H'. destruct H' as [st' H']. rewrite Ef in H'.
+      destr_sstate st'. inversion H'. }
+    rewrite Ef in hyp. specialize (Hsskips hyp). destruct (H1 j) as [H|H].
+    { right. assumption. }
+    left. destruct H as [H3 H4]. specialize (Hj H3).
+    specialize (Hsskips (Nat.max i j) ltac:(lia)). specialize (Hj (Nat.max i j) ltac:(lia)).
+    cbv [done_state]. split; [|assumption]. rewrite <- Hj. rewrite Hsskips. reflexivity.
+  Qed.
 
   Lemma later_comes_after f i j :
     possible_execution f ->
     step_state f i ->
     i < j ->
     comes_after (f j) (f i).
-  Proof. Admitted.
-
-  Print stuck_state.
-  Lemma nondet_stuck_stuck st :
-    nondet_stuck st ->
-    ~ exists st', state_step st st'.
-  Proof. Admitted.
-  
+  Proof.
+    intros H1 H2 H3. induction j.
+    - lia.
+    - destruct (Nat.ltb i j) eqn:E.
+      + apply PeanoNat.Nat.ltb_lt in E. specialize (IHj E). specialize (H1 j).
+        destruct H1 as [H1|H1].
+        -- eapply t_trans. 2: eassumption. apply t_step. apply H1.
+        -- destruct H1 as [_ H1]. rewrite H1. assumption.
+      + apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
+  Qed.
     
   Lemma invert_seq s1 s2 k t m l mc post :
     excluded_middle ->
@@ -1136,9 +1199,7 @@ Module exec. Section WithEnv.
       would be the (sseq sskip s2, k', t', m', l', mc') state that the sseq s1 s2 eventually ends 
       up in, so I'd then need to have some map (s2, k', t', m', l', mc') |-> g, where g is a 
       possible_execution starting with that state.  Defining that map would use excluded middle 
-      as in the proof of possible_execution_exists, and it would also need choice (!), since 
-      we don't just want the existence statement (as in possible_execution_exists)
-      but an actual function.*)
+      and choice, as in the proof of possible_execution_exists.*)
     assert (terminates_or_not := em (exists n, get_scmd (f n) = sskip)).
     destruct terminates_or_not as [terminates|not].
     2: { assert (Hseqposs : possible_execution (execute_with_tail f s2)).
@@ -1390,8 +1451,6 @@ Module exec. Section WithEnv.
            eexists. eexists. eexists. intuition eauto. eapply H20. apply H3.
   Qed.
 
-  Require Import Coq.Logic.ChoiceFacts.
-
   Lemma enna (A : Type) (P : A -> Prop) :
     (forall y, P y) ->
     ~exists y, ~P y.
@@ -1410,12 +1469,6 @@ Module exec. Section WithEnv.
       + assumption.
       + exfalso. apply H1. exists y. assumption.
   Qed.
-
-  Fixpoint repeat_f {A: Type} (f : A -> A) x n :=
-    match n with
-    | O => x
-    | S n' => f (repeat_f f x n')
-    end.
 
   Lemma chains_finite_implies_Acc (A : Type) (R : A -> A -> Prop) x :
     excluded_middle ->
