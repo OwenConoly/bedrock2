@@ -418,6 +418,7 @@ Module exec. Section WithEnv.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
   Context {ext_spec: ExtSpec}.
+  Context {pick_sp : PickSp}.
   Context (salloc_det : bool).
   Context (e: env).
   Local Notation metrics := MetricLog.
@@ -443,7 +444,7 @@ Module exec. Section WithEnv.
     I think so.
     It still should be less of a pain to deal with them if they're separated.
    *)
-  Inductive exec {pick_sp : PickSp} :
+  Inductive exec :
     cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
@@ -606,6 +607,7 @@ Module exec. Section WithEnv.
       k t mSmall l mc
       mStack mCombined
       (_ : Z.modulo n (bytes_per_word width) = 0)
+      (_ : salloc_det = true -> a = pick_sp k)
       (_ : anybytes a n mStack)
       (_ : map.split mCombined mSmall mStack)
     : step (sstackalloc x n body) k t mSmall l mc
@@ -2229,7 +2231,7 @@ Module otherexec. Section WithEnv.
     I think so.
     It still should be less of a pain to deal with them if they're separated.
    *)
-  Inductive exec {pick_sp : PickSp} :
+  Inductive exec :
     cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
