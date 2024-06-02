@@ -570,7 +570,7 @@ Module exec. Section WithEnv.
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr)
-  | end_interact (binds : list String.string) (action : String.string) (args : list word) (k' : trace) (mc' : metrics) (mKeep mGive mReceive : mem) (resvals klist : list word).
+  | end_interact (binds : list String.string) (action : String.string) (args : list word) (mKeep mGive mReceive : mem) (resvals klist : list word).
   
   Fixpoint inclusion (s : cmd) :=
     match s with
@@ -679,21 +679,18 @@ Module exec. Section WithEnv.
       k t m l mc
       mKeep mGive (_: map.split m mKeep mGive)
       args mc' k' (_ : evaluate_call_args_log m l arges mc k = Some (args, mc', k'))
-      (*(_: forall (*t0 don't need this.*) mGive0 mid0, ext_spec t mGive0 action args mid0 -> map.same_domain mGive0 mGive)*)
-      (*^that was the only way I could think of to assert that we chose the correct mGive, while remaining agnostic as to whether there is any post such that ext_spec _ _ _ _ post is True.
-        Now, due to the way I rewrote the intersection property of ext_spec_ok, we no longer need to be agnostic, and we can use the following hypothesis.*)
       (_ : ext_spec t mGive action args (fun _ _ _ => True))
       mReceive resvals klist
       (_ : forall mid, ext_spec t mGive action args mid -> mid mReceive resvals klist)
     : step (sinteract binds action arges) k t m l mc
-           (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist) k t m l mc
+           (end_interact binds action args mKeep mGive mReceive resvals klist) k' t m l mc'
   | end_interact_step (binds : list String.string) (action : String.string) (args : list word)
       (k' : trace) (mc' : MetricLog) (mKeep mGive mReceive : mem) (resvals klist : list word)
       k t m l mc
       l' (_ : map.putmany_of_list_zip binds resvals l = Some l')
       m' (_ : map.split m' mKeep mReceive)
-    : step (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist) k t m l mc
-        sskip (leak_list klist :: k')%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc'))).
+    : step (end_interact binds action args mKeep mGive mReceive resvals klist) k t m l mc
+        sskip (leak_list klist :: k)%list (((mGive, action, args), (mReceive, resvals)) :: t) m' l' (ami 1 (ams 1 (aml 2 mc))).
 
   Definition sstate : Type := scmd * trace * io_trace * mem * locals * metrics.
   Definition get_scmd (st : sstate) : scmd :=
@@ -737,12 +734,12 @@ Module exec. Section WithEnv.
       ext_spec t mGive action args (fun _ _ _ => True) ->
       state_stuck (sinteract binds action arges, k, t, m, l, mc) ->
       good_stuck (sinteract binds action arges, k, t, m, l, mc)
-  | good_stuck_end_interact : forall k t m l mc binds action args k' mc' mKeep mGive mReceive resvals klist,
+  | good_stuck_end_interact : forall k t m l mc binds action args mKeep mGive mReceive resvals klist,
       (*I don't think there's any principled reason to have the l' condition here
         but not the m' condition.  just the way exec was written.*)
       (exists l', map.putmany_of_list_zip binds resvals l = Some l') ->
-      state_stuck (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc) ->
-      good_stuck (end_interact binds action args k' mc' mKeep mGive mReceive resvals klist, k, t, m, l, mc)
+      state_stuck (end_interact binds action args mKeep mGive mReceive resvals klist, k, t, m, l, mc) ->
+      good_stuck (end_interact binds action args mKeep mGive mReceive resvals klist, k, t, m, l, mc)
   | good_stuck_seq : forall s1 s2 k t m l mc,
     good_stuck (s1, k, t, m, l, mc) ->
     good_stuck (sseq s1 s2, k, t, m, l, mc).
@@ -1450,7 +1447,7 @@ Module exec. Section WithEnv.
            exists (S (S O)). rewrite Ef0. left. intuition.
            specialize H20 with (1 := H1). specialize H2 with (1 := H20). fwd.
            clear H unique_mGive_footprint.
-           apply H2p1 in H28. unify_eval_exprs. apply H28.
+           apply H2p1 in H26. unify_eval_exprs. apply H26.
         -- exists (S O). right. cbv [stuck_state] in HSSO. destruct HSSO as [HSSO _].
            rewrite Ef. econstructor.
            ++ apply H20 in H1. apply H2 in H1. fwd. eauto.
@@ -2071,18 +2068,18 @@ Module exec. Section WithEnv.
         destruct i as [|i].
         { simpl in Hsat. rewrite SfO in Hsat. destruct Hsat as [Hsat|Hsat].
           - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
-          - exfalso. inversion Hsat. subst. apply H20. eexists (_, _, _, _, _, _). eassumption. }
+          - exfalso. inversion Hsat. subst. apply H18. eexists (_, _, _, _, _, _). eassumption. }
         simpl in Hsat. replace (Sf (S i)) with (f (S (S i))) in Hsat by reflexivity.
         rewrite Hdone in Hsat by lia. destruct Hsat as [Hsat|Hsat].
         2: { inversion Hsat. }
         destruct Hsat as [_ Hsat]. Search map.split.
-        specialize @map.split_det with (1 := H25) (2 := H0).
+        specialize @map.split_det with (1 := H23) (2 := H0).
         intros. subst. apply Hsat.
       + destruct HsucSO as [HsucSO|HsucSO].
         { simpl in HsucSO. rewrite SfO in HsucSO. simpl in HsucSO. destruct HsucSO. congruence. }
         simpl in HsucSO. rewrite SfO in HsucSO.
         inversion HsucSO. subst. fwd. eexists. split; eauto. intros.
-        exfalso. apply H19. clear H19. eexists (_, _, _, _, _, _). econstructor; eassumption.
+        exfalso. apply H17. clear H17. eexists (_, _, _, _, _, _). econstructor; eassumption.
   Qed.
   End choice_and_middle.
   End WithDet.
@@ -2091,7 +2088,157 @@ Module exec. Section WithEnv.
   Definition satisfies_det {pick_sp : PickSp} := satisfies true.
   Definition possible_execution_nondet {pick_sp : PickSp} := possible_execution false.
   Definition satisfies_nondet {pick_sp : PickSp} := satisfies false. Check predicts.
+  Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop.
 
+  Ltac destr_sstate st :=
+    (*this is not exactly what I want, I want all of them to be named the same way...*)
+    let s := fresh "s" in
+    let k := fresh "k" in
+    let t := fresh "t" in
+    let m := fresh "m" in
+    let l := fresh "l" in
+    let mc := fresh "mc" in
+    let Ef := fresh "Ef" in
+    destruct st as [ [ [ [ [s k] t] m] l] mc] eqn:Ef.
+
+  (*Lemma state_stuck_nondet_det {pick_sp : PickSp} st :
+    state_stuck false st -> state_stuck true st.
+  Proof.
+    intros H1 H2. apply H1. clear H1. fwd. exists st'.*)
+
+  Definition get_trace (st : sstate) :=
+    let '(s, k, t, m, l, mc) := st in k.
+
+  Lemma predicts_trivially k :
+    (forall x, ~In (consume_word x) k) ->
+    forall f,
+      predicts f k.
+  Proof.
+    induction k; constructor.
+    - intros Ha. destruct a; destruct Ha. simpl in H. specialize (H r). tauto.
+    - apply IHk. intros x Hx. eapply H. simpl. right. eassumption.
+  Qed.
+  
+  Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
+                      match l with
+                      | nil => m0
+                      | a1 :: l1 => a1 :: app l1 m0
+                      end) = @List.app event.
+  Proof. reflexivity. Qed.
+
+  Lemma predicts_app k1 k2 f :
+    predicts f k1 ->
+    predicts (fun k => f (k1 ++ k)) k2 ->
+    predicts f (k1 ++ k2).
+  Proof.
+    revert k2. revert f. induction k1.
+    - intros. assumption.
+    - intros. inversion H. subst. clear H. constructor.
+      + assumption.
+      + rewrite fold_app. apply IHk1; assumption.
+  Qed.
+
+  Lemma predicts_app_inv k1 k2 f :
+    predicts f (k1 ++ k2) ->
+    predicts f k1 /\ predicts (fun k => f (k1 ++ k)) k2.
+  Proof. Admitted.
+
+  Lemma step_extends_trace {pick_sp : PickSp} st st' :
+    state_step false st st' ->
+    exists k'', get_trace st' = k'' ++ get_trace st.
+  Proof. Admitted.
+
+  Lemma steps_extend_trace {pick_sp : PickSp} f n :
+    (forall i, i < n -> state_step false (f i) (f (S i))) ->
+    exists k'', get_trace (f n) = k'' ++ get_trace (f O).
+  Proof. Admitted.
+    
+  Lemma step_state_equiv {pick_sp : PickSp} st st' :
+    state_step true st st' <->
+      (state_step false st st' /\
+         exists k'',
+           get_trace st' = k'' ++ get_trace st /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace st))) (List.rev k'')).
+  Proof.
+    destr_sstate st. destr_sstate st'. subst. simpl. split.
+    { intros H; induction H; fwd.
+      all: try (split; [econstructor; eauto|]).
+      all: try (subst_exprs; eexists; split; [solve [trace_alignment]|]).
+      all: repeat rewrite app_nil_r; simpl.
+      all: try (apply predicts_trivially; intros;
+                repeat (rewrite in_app_iff || rewrite <- in_rev || simpl);
+                intuition eauto; congruence).
+      - constructor.
+        + intros _. specialize (H0 eq_refl). subst. reflexivity.
+        + constructor.
+      - assumption. }
+    { intros [H1 H2]. revert H2. induction H1; intros; fwd; try (econstructor; eauto).
+      intros _.
+      replace (consume_word a :: k) with ((consume_word a :: nil) ++ k) in H3p0 by reflexivity.
+      apply app_inv_tail in H3p0. subst. simpl in H3p1. inversion H3p1. subst.
+      simpl in H6. specialize (H6 I). inversion H6. subst. reflexivity. }
+  Qed.
+
+  Lemma step_states_equiv {pick_sp : PickSp} f n :
+    (forall i, i < n -> step_state true f i) <->
+      ((forall i, i < n -> step_state false f i) /\
+         exists k'',
+           get_trace (f n) = k'' ++ get_trace (f O) /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace (f O)))) (rev k'')).
+  Proof.
+    induction n.
+    - split.
+      + intros H. split.
+        -- intros. lia.
+        -- eexists; split; [trace_alignment|]. constructor.
+      + intros. lia.
+    - split.
+      + destruct IHn as [IHn _]. intros H. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
+        { intros. apply H. lia. }
+        fwd. split.
+        -- intros. specialize (H i ltac:(lia)). cbv [step_state] in H.
+           rewrite step_state_equiv in H. fwd. assumption.
+        -- specialize (H n ltac:(lia)). cbv [step_state] in H. rewrite step_state_equiv in H.
+           destruct H as [_ H]. fwd. eexists. split.
+           { rewrite Hp0. rewrite IHnp1p0. trace_alignment. }
+           rewrite app_nil_r. rewrite rev_app_distr. apply predicts_app.
+           ++ assumption.
+           ++ eapply predicts_ext. 2: eassumption. simpl. intros. f_equal. f_equal.
+              rewrite rev_app_distr. rewrite rev_involutive. repeat rewrite <- app_assoc.
+              rewrite IHnp1p0. reflexivity.
+      + destruct IHn as [_ IHn]. intros H. fwd.
+        assert (H' := steps_extend_trace f n).
+        eassert (hyp : _). 2: specialize (H' hyp); clear hyp.
+        { intros. apply Hp0. lia. }
+        assert (extend := Hp0 n ltac:(lia)). apply step_extends_trace in extend.
+        fwd. rewrite extend in Hp1p0. rewrite H' in Hp1p0. rewrite app_assoc in Hp1p0.
+        apply app_inv_tail in Hp1p0. subst.
+        rewrite rev_app_distr in Hp1p1.
+        apply predicts_app_inv in Hp1p1. fwd.
+        eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
+        { split.
+          - intros. apply Hp0. lia.
+          - fwd. exists k''1. split; assumption. }
+        intros. destruct (Nat.ltb i n) eqn:E.
+        { apply PeanoNat.Nat.ltb_lt in E. apply IHn. assumption. }
+        apply PeanoNat.Nat.ltb_nlt in E. assert (i = n) by lia. subst. clear E H.
+        cbv [step_state]. rewrite step_state_equiv. fwd. split.
+        { apply Hp0. lia. }
+        exists k''0. split; [assumption|].
+        eapply predicts_ext. 2: eassumption. simpl. intros. rewrite rev_app_distr.
+        rewrite rev_involutive. repeat rewrite <- app_assoc. rewrite H'. reflexivity.
+  Qed.
+    
+  Lemma poss_det_nondet {pick_sp : PickSp} f :
+    possible_execution_det f <->
+      (possible_execution_nondet f /\ forall n,
+        exists k'',
+          get_trace (f n) = k'' ++ get_trace (f O) /\
+            predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace (f O)))) (rev k'')).
+  Proof.
+    split.
+    intros H n. specialize (H n). cbv [step_state stuck_state] in *.
+ 
   Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post :
     (forall (f : nat -> _),
         f O = (s, k, t, m, l, mc) ->
@@ -2105,7 +2252,22 @@ Module exec. Section WithEnv.
         f O = (s, k, t, m, l, mc) ->
         possible_execution_det f ->
         satisfies_det f post).
-  
+  Proof.
+    intros. assert (Hfnondet : forall f, possible_execution_det f -> possible_execution_nondet f). { admit. }
+    specialize (H f H0 (Hfnondet _ H1)). destruct H as [n H]. exists n.
+    destr_sstate (f n).
+    destruct H as [H|H].
+    - fwd. assert (H' : forall f s k t m l mc s' k' t' m' l' mc', possible_execution_det f ->
+                             f O = (s, k, t, m, l, mc) ->
+                             f n = (s', k', t', m', l', mc') ->
+                             exists k'', k' = k'' ++ k /\
+                                           predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (rev k'')). { admit. }
+      specialize H' with (1 := H1) (2 := H0) (3 := Ef). fwd. apply app_inv_tail in H'p0. subst.
+      specialize Hp1p1 with (1 := H'p1). left. auto.
+    - right. assert (thing : forall st, good_stuck false st -> good_stuck true st). { admit. }
+      apply thing. assumption.
+  Qed.
+
 End exec.
 
 (*forall (f : nat -> _),
@@ -2534,34 +2696,6 @@ Module two_execs. Section WithEnv.
   Qed.
 
   Search predicts.
-  Lemma predicts_trivially k :
-    (forall x, ~In (consume_word x) k) ->
-    forall f,
-      predicts f k.
-  Proof.
-    induction k; constructor.
-    - intros Ha. destruct a; destruct Ha. simpl in H. specialize (H r). tauto.
-    - apply IHk. intros x Hx. eapply H. simpl. right. eassumption.
-  Qed.
-
-  Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
-                      match l with
-                      | nil => m0
-                      | a1 :: l1 => a1 :: app l1 m0
-                      end) = @List.app event.
-  Proof. reflexivity. Qed.
-
-  Lemma predicts_app k1 k2 f :
-    predicts f k1 ->
-    predicts (fun k => f (k1 ++ k)) k2 ->
-    predicts f (k1 ++ k2).
-  Proof.
-    revert k2. revert f. induction k1.
-    - intros. assumption.
-    - intros. inversion H. subst. clear H. constructor.
-      + assumption.
-      + rewrite fold_app. apply IHk1; assumption.
-  Qed.
       
   Lemma execs_related' pick_sp k t l m mc s post' :
     exec e s k t m l mc post' ->
