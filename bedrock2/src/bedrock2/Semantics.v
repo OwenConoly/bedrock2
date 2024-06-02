@@ -1355,14 +1355,14 @@ Module exec. Section WithEnv.
         intros.
         eapply satisfies_weaken. 2: eapply H1; eauto.
         simpl. intros.
-        specialize (H6 O). cbv [step_state stuck_state state_step] in H6.
-        rewrite H5 in *. clear H5. destr_sstate (g (S O)).
+        specialize (H7 O). cbv [step_state stuck_state state_step] in H7.
+        rewrite H6 in *. clear H6. destr_sstate (g (S O)).
         repeat match goal with
                | H: anybytes _ _ _ |- _ => clear H
                | H: map.split _ _ _ |- _ => clear H
                end.
-        destruct H6 as [H6 | H6].
-        -- inversion H6. subst. fwd.
+        destruct H7 as [H7 | H7].
+        -- inversion H7. subst. fwd.
            match goal with
            | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
                specialize @map.split_diff with (4 := A) (5 := B) as P
@@ -1370,7 +1370,7 @@ Module exec. Section WithEnv.
            edestruct P; try typeclasses eauto.
            1: eapply anybytes_unique_domain; eassumption.
            subst. eexists (S O). left. rewrite Ef0. auto.
-        -- exfalso. apply H6. clear H6. fwd. eexists (_, _, _, _, _, _).
+        -- exfalso. apply H7. clear H7. fwd. eexists (_, _, _, _, _, _).
            econstructor; eauto.
       + exists O. right. rewrite HO. econstructor; try eassumption.
         cbv [stuck_state] in HSO. rewrite HO in HSO. destruct HSO. assumption.
@@ -1787,7 +1787,7 @@ Module exec. Section WithEnv.
            intros. exfalso. apply H8. eexists (_, _, _, _, _, _). econstructor; eassumption. }
       cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
       inversion HsucO. subst.
-      econstructor; eauto. clear a f Ef mStack HfO Hposs Hsatf Hsuc HsucO H14 H15.
+      econstructor; eauto. clear a f Ef mStack HfO Hposs Hsatf Hsuc HsucO H3 H15 H16.
       intros. eset (st2 := (_, _, _, _, _, _)).
       assert (Xs := X st2).
       eassert (lt : _). 2: specialize (Xs lt); clear lt.
@@ -1804,12 +1804,13 @@ Module exec. Section WithEnv.
         specialize (Hsat Sg eq_refl). assert (Hsathyp : possible_execution Sg).
         2: specialize (Hsat Hsathyp); clear Hsathyp.
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. simpl. rewrite HgO. simpl. econstructor; eassumption.
+          - left. cbv [step_state state_step]. simpl. rewrite HgO. simpl.
+            econstructor; eassumption.
           - apply Hpossg. }
         destruct Hsat as [i Hsat]. destruct i as [|i].
         { simpl in Hsat. destruct Hsat as [Hsat|Hsat].
           - destruct Hsat as [Hsat _]. congruence.
-          - inversion Hsat. subst. exfalso. apply H11. clear H11.
+          - inversion Hsat. subst. exfalso. apply H12. clear H12.
             eexists (_, _, _, _, _, _). econstructor; eassumption. }
         exists i. apply Hsat. }
       assert (Hind := invert_seq). specialize Hind with (1 := Hind').
