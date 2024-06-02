@@ -418,6 +418,7 @@ Module exec. Section WithEnv.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
   Context {ext_spec: ExtSpec}.
+  Context (salloc_det : bool).
   Context (e: env).
   Local Notation metrics := MetricLog.
 
@@ -442,7 +443,7 @@ Module exec. Section WithEnv.
     I think so.
     It still should be less of a pain to deal with them if they're separated.
    *)
-  Inductive exec :
+  Inductive exec {pick_sp : PickSp} :
     cmd -> trace -> io_trace -> mem -> locals -> metrics ->
     (trace -> io_trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
@@ -472,6 +473,7 @@ Module exec. Section WithEnv.
     k t mSmall l mc post
     (_ : Z.modulo n (bytes_per_word width) = 0)
     (_ : forall a mStack mCombined,
+        (salloc_det = true -> a = pick_sp k) ->
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
         exec body (consume_word a :: k) t mCombined (map.put l x a) (addMetricInstructions 1 (addMetricLoads 1 mc))
@@ -542,8 +544,6 @@ Module exec. Section WithEnv.
                   (addMetricLoads 2 mc'))))
     : exec (cmd.interact binds action arges) k t m l mc post
   .
-
-  Check (_ -> ((_ /\ _) -> _)).
 
   Definition state : Type := trace * io_trace * mem * locals * metrics. Print cmd.cmd.
   Notation ami := addMetricInstructions.
