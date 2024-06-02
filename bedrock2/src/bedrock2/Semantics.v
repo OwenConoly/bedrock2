@@ -418,10 +418,12 @@ Module exec. Section WithEnv.
   Context {locals: map.map String.string word}.
   Context {env: map.map String.string (list String.string * list String.string * cmd)}.
   Context {ext_spec: ExtSpec}.
-  Context {pick_sp : PickSp}.
-  Context (salloc_det : bool).
   Context (e: env).
   Local Notation metrics := MetricLog.
+
+  Section WithDet.
+    Context {pick_sp : PickSp}.
+    Context (salloc_det : bool).
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
 
@@ -2082,8 +2084,45 @@ Module exec. Section WithEnv.
         inversion HsucSO. subst. fwd. eexists. split; eauto. intros.
         exfalso. apply H19. clear H19. eexists (_, _, _, _, _, _). econstructor; eassumption.
   Qed.
+  End choice_and_middle.
+  End WithDet.
+  Print possible_execution.
+  Definition possible_execution_det {pick_sp : PickSp} := possible_execution true.
+  Definition satisfies_det {pick_sp : PickSp} := satisfies true.
+  Definition possible_execution_nondet {pick_sp : PickSp} := possible_execution false.
+  Definition satisfies_nondet {pick_sp : PickSp} := satisfies false. Check predicts.
 
-  Lemma intersect: forall k t l m mc s post1,
+  Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post :
+    (forall (f : nat -> _),
+        f O = (s, k, t, m, l, mc) ->
+        possible_execution_nondet f ->
+        satisfies_nondet f (fun k' t' m' l' mc' =>
+                              exists k'',
+                                k' = k'' ++ k /\
+                                  (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
+                                   post k' t' m' l' mc'))) ->
+    (forall (f : nat -> _),
+        f O = (s, k, t, m, l, mc) ->
+        possible_execution_det f ->
+        satisfies_det f post).
+  
+End exec.
+
+(*forall (f : nat -> _),
+  f O = (inclusion s, k, t, m, l, mc) ->
+  possible_execution f ->
+  satisfies f post*)
+
+Print exec.possible_execution.
+
+
+Definition possible_execution_det := 
+
+
+
+Lemma small_steps_same
+
+Lemma intersect: forall k t l m mc s post1,
       exec s k t m l mc post1 ->
       forall post2,
         exec s k t m l mc post2 ->
