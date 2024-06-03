@@ -749,7 +749,7 @@ Module exec. Section WithEnv.
       good_stuck st.
 
   Definition satisfies (f : nat -> _) post := exists i, state_satisfies (f i) post.
-
+  
   Definition comes_right_after s1 s2 :=
     state_step s2 s1. Check pointwise_relation. Search (relation _ -> relation _).
   Definition lift {A B : Type} (R : relation B) (f : A -> B) : relation A :=
@@ -884,6 +884,71 @@ Module exec. Section WithEnv.
         -- apply IHnp1. lia.
   Qed.
 
+  (*I think we don't actually need em for this, but I don't care to prove it without it.*)
+  Lemma sstate_eq_dec (st1 st2 : sstate) :
+    st1 = st2 \/ st1 <> st2.
+  Proof. apply em. Qed.
+
+  Lemma good_stuck_stuck st :
+    good_stuck st ->
+    state_stuck st.
+  Proof.
+    intros H. induction H; auto. intros H'. apply IHgood_stuck.
+    destruct H' as [st' H']. destr_sstate st'. inversion H'; subst.
+    - eexists (_, _, _, _, _, _). eassumption.
+    - inversion H.
+  Qed.
+
+  Lemma satisfies_stuck st post :
+    state_satisfies st post ->
+    state_stuck st.
+  Proof.
+    intros. destr_sstate st. destruct H as [H|H].
+    - fwd. intros [st' H']. destr_sstate st'. inversion H'.
+    - apply good_stuck_stuck. assumption.
+  Qed.
+
+  Lemma step_not_stuck st st' :
+    state_step st st' ->
+    state_stuck st ->
+    False.
+  Proof.
+    intros H H'.
+    cbv [state_step state_stuck] in *. apply H'. destr_sstate st. destr_sstate st'.
+    eexists (_, _, _, _, _, _). eassumption.
+  Qed.
+
+  Lemma stuck_stable f n :
+    possible_execution f ->
+    state_stuck (f n) ->
+    forall m, n <= m ->
+              f m = f n.
+  Proof.
+    intros H1 H2 m Hm. induction m.
+    - replace n with O by lia. reflexivity.
+    - destruct (Nat.leb n m) eqn:E.
+      + apply PeanoNat.Nat.leb_le in E. specialize (IHm E). specialize (H1 m).
+        rewrite <- IHm in H2. destruct H1.
+        { exfalso. eapply step_not_stuck; eassumption. }
+        cbv [stuck_state] in H. destruct H as [_ H]. rewrite H. apply IHm.
+      + apply PeanoNat.Nat.leb_nle in E. replace n with (S m) by lia. reflexivity.
+  Qed.
+
+  Lemma min_satisfies f n post :
+    possible_execution f ->
+    state_satisfies (f n) post ->
+    exists m,
+      state_satisfies (f m) post /\
+        forall i, i < m -> step_state f i.
+  Proof.
+    intros H1 H2. assert (H := nats_have_mins n (fun n => state_satisfies (f n) post)).
+    simpl in H. specialize (H (fun i => em _) H2). clear n H2. fwd. exists m.
+    split; [assumption|]. intros i H. destruct (H1 i) as [H1'|H1']; try assumption.
+    exfalso. eapply Hp1; try eassumption. cbv [stuck_state] in H1'. destruct H1' as [H1' H2'].
+    assert (H' := stuck_stable _ _ H1 H1'). specialize (H' m ltac:(lia)). rewrite <- H'.
+    assumption.
+  Qed.
+
   Lemma possible_execution_offset f k :
     possible_execution f ->
     possible_execution (fun i => f (k + i)).
@@ -953,7 +1018,7 @@ Module exec. Section WithEnv.
       f j = (s2, k', t', m', l', mc').
   Proof.
     intros H1 H2 H3. assert (H4: get_scmd (execution_of_first_part f i) = sskip).
-    { rewrite H3. reflexivity. }
+    { rewrite H3. reflexivity. } Check nats_have_mins.
     apply (nats_have_mins i) in H4.
     2: { intros x. destr_sstate (execution_of_first_part f x). simpl.
          destruct s; (left; reflexivity) || (right; congruence). }
@@ -1063,42 +1128,6 @@ Module exec. Section WithEnv.
   Definition execute_with_tail (f : nat -> sstate) (s2 : scmd) (n : nat) : sstate :=
     let '(s, k, t, m, l, mc) := f n in
     (sseq s s2, k, t, m, l, mc).
-  
-  Lemma good_stuck_stuck st :
-    good_stuck st ->
-    state_stuck st.
-  Proof.
-    intros H. induction H; auto. intros H'. apply IHgood_stuck.
-    destruct H' as [st' H']. destr_sstate st'. inversion H'; subst.
-    - eexists (_, _, _, _, _, _). eassumption.
-    - inversion H.
-  Qed.
-  
-  Lemma step_not_stuck st st' :
-    state_step st st' ->
-    state_stuck st ->
-    False.
-  Proof.
-    intros H H'.
-    cbv [state_step state_stuck] in *. apply H'. destr_sstate st. destr_sstate st'.
-    eexists (_, _, _, _, _, _). eassumption.
-  Qed.
-  
-  Lemma stuck_stable f n :
-    possible_execution f ->
-    state_stuck (f n) ->
-    forall m, n <= m ->
-              f m = f n.
-  Proof.
-    intros H1 H2 m Hm. induction m.
-    - replace n with O by lia. reflexivity.
-    - destruct (Nat.leb n m) eqn:E.
-      + apply PeanoNat.Nat.leb_le in E. specialize (IHm E). specialize (H1 m).
-        rewrite <- IHm in H2. destruct H1.
-        { exfalso. eapply step_not_stuck; eassumption. }
-        cbv [stuck_state] in H. destruct H as [_ H]. rewrite H. apply IHm.
-      + apply PeanoNat.Nat.leb_nle in E. replace n with (S m) by lia. reflexivity.
-  Qed.
 
   Lemma execute_with_tail_works' f :
     possible_execution f ->
@@ -1658,14 +1687,8 @@ Module exec. Section WithEnv.
   Definition successful_execution f post :=
     forall i, step_state f i \/ state_satisfies (f i) post.
 
-  Lemma satisfies_stuck st post :
-    state_satisfies st post ->
-    state_stuck st.
-  Proof.
-    intros. destr_sstate st. destruct H as [H|H].
-    - fwd. intros [st' H']. destr_sstate st'. inversion H'.
-    - apply good_stuck_stuck. assumption.
-  Qed.
+  (*Lemma no_stepping_to_self :
+    f O = (inclusion s, k, t, m, l, mc)*)
   
   Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f post.
@@ -2228,18 +2251,33 @@ Module exec. Section WithEnv.
         eapply predicts_ext. 2: eassumption. simpl. intros. rewrite rev_app_distr.
         rewrite rev_involutive. repeat rewrite <- app_assoc. rewrite H'. reflexivity.
   Qed.
-    
+
+  Lemma forall_through_and {A : Type} (P Q : A -> Prop) :
+    (forall n, P n) /\ (forall n, Q n) <-> forall n, P n /\ Q n.
+  Proof.
+    split; intros; fwd; try tauto. 1: split; auto. split; intros n; specialize (H n); fwd; auto.
+  Qed.
+  
+  (*this is not true.  see what happens if f gets stuck deterministically but not nondeterministically*)
   Lemma poss_det_nondet {pick_sp : PickSp} f :
     possible_execution_det f <->
       (possible_execution_nondet f /\ forall n,
         exists k'',
-          get_trace (f n) = k'' ++ get_trace (f O) /\
+          get_trace (f (S n)) = k'' ++ get_trace (f O) /\
             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace (f O)))) (rev k'')).
+  Proof. Abort.
+
+  (*jLemma step_nondet_not_stuck_det {pick_sp : PickSp} f i:
+    step_state false f i ->
+    stuck_state true f i ->
+    False.
   Proof.
-    split.
-    intros H n. specialize (H n). cbv [step_state stuck_state] in *.
+    intros H1 H2.cbv [step_state stuck_state] in *. fwd. rewrite H2p1 in *. clear H2p1.
+    remember (f i) as st. clear i Heqst. destr_sstate st. inversion H1; subst.
+    - apply H2p0. eexists (_, _, _, _, _, _). econstructor; eauto.*)
  
   Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post :
+    excluded_middle ->
     (forall (f : nat -> _),
         f O = (s, k, t, m, l, mc) ->
         possible_execution_nondet f ->
@@ -2253,7 +2291,19 @@ Module exec. Section WithEnv.
         possible_execution_det f ->
         satisfies_det f post).
   Proof.
-    intros. assert (Hfnondet : forall f, possible_execution_det f -> possible_execution_nondet f). { admit. }
+    intros em H f HfO Hfposs. assert (nondet_or_not := em (possible_execution_nondet f)).
+    destruct nondet_or_not as [nondet|not].
+    - specialize (H _ ltac:(eassumption) ltac:(eassumption)). cbv [satisfies_nondet] in H.
+      destruct H as [n H].
+      apply (min_satisfies _ ltac:(eassumption) _ _ _ ltac:(eassumption)) in H.
+      clear n. destruct H as [n [H1 H2]]. destr_sstate (f n). cbv [state_satisfies] in H1.
+      destruct H1 as [H1|H1].
+      + fwd.
+      fwd. (*does nothing?*) destruct H1 as [? H1]. subst.
+      fwd. simpl in H1. cbv [state_satisfies] in H1. fwd.
+      destruct H as [n H].
+      
+    assert (Hfnondet : forall f, possible_execution_det f -> possible_execution_nondet f). { admit. }
     specialize (H f H0 (Hfnondet _ H1)). destruct H as [n H]. exists n.
     destr_sstate (f n).
     destruct H as [H|H].
