@@ -570,7 +570,8 @@ Module exec. Section WithEnv.
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr)
-  | end_interact (binds : list String.string) (action : String.string) (args : list word) (mKeep mGive mReceive : mem) (resvals klist : list word).
+  | end_interact (binds : list String.string) (action : String.string) (args : list word) (mKeep mGive mReceive : mem) (resvals klist : list word)
+  | terminated.
   
   Fixpoint inclusion (s : cmd) :=
     match s with
@@ -706,13 +707,13 @@ Module exec. Section WithEnv.
     step s1 k1 t1 m1 l1 mc1 s2 k2 t2 m2 l2 mc2.
 
   Definition done_state f i :=
-    get_scmd (f i) = sskip /\ f (S i) = f i.
+    get_scmd (f i) = sskip /\ get_scmd (f (S i)) = terminated.
 
   Definition state_stuck st :=
     ~exists st', state_step st st'.
 
   Definition stuck_state f i :=
-    state_stuck (f i) /\ f (S i) = f i.
+    state_stuck (f i) /\ get_scmd (f (S i)) = terminated.
 
   Definition step_state f i :=
     state_step (f i) (f (S i)).
@@ -720,9 +721,6 @@ Module exec. Section WithEnv.
   Definition possible_execution (f : nat -> sstate) :=
     forall i, step_state f i \/ stuck_state f i.
 
-  Print end_interact.
-  Check (end_interact_step _ _ _ _ _ _ _ _ _).
-  Check sstackalloc.
   Inductive good_stuck : sstate -> Prop :=
   | good_stuck_stackalloc : forall k t m l mc x n body,
       Z.modulo n (bytes_per_word width) = 0 ->
@@ -770,10 +768,13 @@ Module exec. Section WithEnv.
   Definition comes_after_or_repeated_prefix := clos_trans _ (union _ repeated_prefix comes_after).
   Definition lifted_comes_after_or_repeated_prefix := lift comes_after_or_repeated_prefix other_inclusion.
 
+  Definition a_terminated_state : sstate :=
+    (terminated, nil, nil, map.empty, map.empty, EmptyMetricLog).
+
   Definition first_part st : sstate :=
     match st with
     | (sseq s1 s2, k, t, m, l, mc) => (s1, k, t, m, l, mc)
-    | _ => (sskip, nil, nil, map.empty, map.empty, EmptyMetricLog)
+    | _ => a_terminated_state (*this is just some dummy value here*)
     end.
   
   Fixpoint execution_of_first_part (f : nat -> sstate) n :=
@@ -781,7 +782,8 @@ Module exec. Section WithEnv.
     | O => first_part (f O)
     | S n' =>
         match (execution_of_first_part f n') with
-        | (sskip, _, _, _, _, _) => execution_of_first_part f n'
+        | (sskip, _, _, _, _, _) => a_terminated_state
+        | (terminated, _, _, _, _, _) => a_terminated_state
         | _ => first_part (f n)
         end
     end.
@@ -805,6 +807,7 @@ Module exec. Section WithEnv.
   Lemma sskip_or_first_part' f n :
     match (execution_of_first_part f n) with
     | (sskip, _, _, _, _, _) => True
+    | (terminated, _, _, _, _, _) => True
     | _ => first_part (f n) = execution_of_first_part f n
     end.
   Proof.
@@ -816,12 +819,11 @@ Module exec. Section WithEnv.
       all: destruct s0; reflexivity.
   Qed.
 
-  Lemma sskip_or_first_part f n :
-    (exists k t m l mc, execution_of_first_part f n = (sskip, k, t, m, l, mc)) \/
-      first_part (f n) = execution_of_first_part f n.
+  Lemma sskip_terminated_or_first_part f n :
+    get_scmd (execution_of_first_part f n) = sskip \/ get_scmd (execution_of_first_part f n) = terminated \/ first_part (f n) = execution_of_first_part f n.
   Proof.
     assert (H := sskip_or_first_part' f n). destr_sstate (execution_of_first_part f n).
-    destruct s; try (right; assumption). left. do 5 eexists. reflexivity.
+    destruct s; auto.
   Qed.
   
   Lemma possible_first_part f :
@@ -829,17 +831,23 @@ Module exec. Section WithEnv.
     possible_execution (execution_of_first_part f).
   Proof.
     cbv [possible_execution]. intros H n.
-    specialize (H n). assert (H1 := sskip_or_first_part f n).
-    destruct H1 as [H1 | H1].
-    - fwd. right. cbv [stuck_state]. split.
-      + intros [st H']. rewrite H1 in H'. cbv [state_step step_state] in H'.
+    specialize (H n). assert (H1 := sskip_terminated_or_first_part f n).
+    destruct H1 as [H1 | [H1 | H1]].
+    - destr_sstate (execution_of_first_part f n). simpl in H1. subst.
+      right. cbv [stuck_state]. split.
+      + intros [st H']. rewrite Ef in H'. cbv [state_step step_state] in H'.
         destr_sstate st. inversion H'.
-      + simpl. rewrite H1. reflexivity.
+      + simpl. rewrite Ef. reflexivity.
+    - destr_sstate (execution_of_first_part f n). simpl in H1. subst.
+      right. cbv [stuck_state]. split.
+      + intros [st H']. rewrite Ef in H'. cbv [state_step step_state] in H'.
+        destr_sstate st. inversion H'.
+      + simpl. rewrite Ef. reflexivity.
     - destruct H as [H | H].
       + cbv [step_state state_step] in H. destr_sstate (f n).
         destr_sstate (execution_of_first_part f n).
-        assert (s0 = sskip \/ exists s1 s2, s = sseq s1 s2).
-        { destruct s; destruct s0; simpl in H1; try congruence.
+        assert (H0 : s0 = terminated \/ exists s1 s2, s = sseq s1 s2).
+        { destruct s; destruct s0; simpl in H1; cbv [a_terminated_state] in H1; try congruence.
           all: try (left; reflexivity). all: try (right; eexists; eexists; reflexivity). }
         destruct H0 as [H0 | H0].
         -- subst. right. cbv [stuck_state]. split.
@@ -854,6 +862,8 @@ Module exec. Section WithEnv.
                + intros [st H']. destr_sstate st. cbv [state_step step_state] in H'.
                  rewrite Ef0 in H'. inversion H'.
                + simpl. rewrite Ef0. reflexivity. }
+           all: cycle -1.
+           { right. cbv [stuck_state]. inversion H; subst. inversion H14. }
            all: left; inversion H; subst; cbv [step_state state_step]; simpl; rewrite Ef0;
              rewrite Ef1; simpl; assumption.
       + right. destruct H as [Hp1 Hp2]. split.
@@ -861,8 +871,8 @@ Module exec. Section WithEnv.
            cbv [state_step step_state] in *. destr_sstate (f n).           
            destr_sstate st. destruct s; simpl in H'; try solve [inversion H'].
            eexists (_, _, _, _, _, _). econstructor. eassumption.
-        -- simpl. rewrite <- H1. rewrite Hp2. destr_sstate (first_part (f n)).
-           destruct s; reflexivity.
+        -- simpl. destr_sstate (f (S n)). simpl in Hp2. subst.
+           destr_sstate (execution_of_first_part f n). destruct s; reflexivity.
   Qed.
 
   Require Import Lia.
@@ -921,20 +931,24 @@ Module exec. Section WithEnv.
   Lemma stuck_stable f n :
     possible_execution f ->
     state_stuck (f n) ->
-    forall m, n <= m ->
-              f m = f n.
+    forall m, n < m ->
+              get_scmd (f m) = terminated.
   Proof.
     intros H1 H2 m Hm. induction m.
-    - replace n with O by lia. reflexivity.
-    - destruct (Nat.leb n m) eqn:E.
+    - lia.
+    - destruct (Nat.ltb n m) eqn:E.
       + apply PeanoNat.Nat.leb_le in E. specialize (IHm E). specialize (H1 m).
-        rewrite <- IHm in H2. destruct H1.
+        destr_sstate (f m). destr_sstate (f (S m)). simpl in *. subst.
+        destruct H1 as [H1|H1].
+        { exfalso. cbv [step_state state_step] in H1. rewrite Ef, Ef0 in H1. inversion H1. }
+        cbv [stuck_state] in H1. fwd. rewrite Ef0 in H1p1. simpl in H1p1. subst. reflexivity.
+      + apply PeanoNat.Nat.ltb_nlt in E. assert (n = m) by lia. subst.
+        destruct (H1 m).
         { exfalso. eapply step_not_stuck; eassumption. }
-        cbv [stuck_state] in H. destruct H as [_ H]. rewrite H. apply IHm.
-      + apply PeanoNat.Nat.leb_nle in E. replace n with (S m) by lia. reflexivity.
+        destruct H. assumption.
   Qed.
 
-  Lemma min_satisfies f n post :
+  (*Lemma min_satisfies f n post :
     possible_execution f ->
     state_satisfies (f n) post ->
     exists m,
@@ -947,7 +961,7 @@ Module exec. Section WithEnv.
     exfalso. eapply Hp1; try eassumption. cbv [stuck_state] in H1'. destruct H1' as [H1' H2'].
     assert (H' := stuck_stable _ _ H1 H1'). specialize (H' m ltac:(lia)). rewrite <- H'.
     assumption.
-  Qed.
+  Qed.*)
 
   Lemma possible_execution_offset f k :
     possible_execution f ->
@@ -974,12 +988,13 @@ Module exec. Section WithEnv.
     - right. assumption.
   Qed.
 
+  (*why do we care*)
   Lemma execution_of_first_part_stable' f n :
     get_scmd (execution_of_first_part f n) = sskip ->
-    forall m, n <= m ->
-              execution_of_first_part f n = execution_of_first_part f m.
+    forall m, n < m ->
+               get_scmd (execution_of_first_part f m) = terminated.
   Proof.
-    intros. replace m with ((m - n) + n) by lia. clear H0.
+    intros. Admitted. (*replace m with ((m - n) + n) by lia. clear H0.
     induction (m - n).
     - reflexivity.
     - simpl. rewrite <- IHn0. clear IHn0.
@@ -998,90 +1013,56 @@ Module exec. Section WithEnv.
     destruct H as [H | H].
     - apply H3. assumption.
     - symmetry. apply H4. assumption.
-  Qed.
+  Qed.*)
 
   Lemma first_part_1 f i :
-    get_scmd (execution_of_first_part f i) <> sskip ->
+    get_scmd (execution_of_first_part f i) <> terminated ->
     execution_of_first_part f i = first_part (f i).
   Proof.
     intros H. destruct i.
     - reflexivity.
     - simpl in *. destr_sstate (execution_of_first_part f i).
-      destruct s; try reflexivity. simpl in H. congruence.
+      destruct s; try reflexivity.
+      all: cbv [a_terminated_state] in H; simpl in H; congruence.
   Qed.
+
+  Definition append (st : sstate) s' :=
+    let '(s, k, t, m, l, mc) := st in (sseq s s', k, t, m, l, mc).
 
   Lemma second_comes_after_first s1 s2 k t m l mc k' t' m' l' mc' f i :
     f O = (sseq s1 s2, k, t, m, l, mc) ->
     possible_execution f ->
     execution_of_first_part f i = (sskip, k', t', m', l', mc') ->
-    exists j,
-      f j = (s2, k', t', m', l', mc').
+    f (S i) = (s2, k', t', m', l', mc').
   Proof.
-    intros H1 H2 H3. assert (H4: get_scmd (execution_of_first_part f i) = sskip).
-    { rewrite H3. reflexivity. } Check nats_have_mins.
-    apply (nats_have_mins i) in H4.
-    2: { intros x. destr_sstate (execution_of_first_part f x). simpl.
-         destruct s; (left; reflexivity) || (right; congruence). }
-    destruct H4 as [n' [H4 H5] ].
-    assert (forall n, n < n' -> exists s, get_scmd (f n) = sseq s s2). (*this deserves to be its own lemma*)
+    intros H1 H2 H3.
+    assert (forall n, n <= i -> f n = append (execution_of_first_part f n) s2). (*this deserves to be its own lemma*)
     { intros n. induction n.
-      - intros. simpl. rewrite H1. simpl. eexists. reflexivity.
-      - intros H. specialize (IHn ltac:(lia)). fwd. specialize (H5 n ltac:(lia)).
-        simpl in H5. assert (get_scmd (first_part (f n)) <> sskip).
-        { intros H'. cbv [execution_of_first_part] in H5.
-          destruct n.
-          - apply H5. apply H'.
-          - fold execution_of_first_part in H5. destr_sstate (execution_of_first_part f n).
-            destr_sstate (first_part (f (S n))). simpl in H'. subst.
-            destruct s0; simpl in H5; congruence. }
-        destr_sstate (first_part (f n)). simpl in H0.
-        assert (Hn := H2 n). destr_sstate (f n). simpl in IHn. subst.
-        simpl in Ef. inversion Ef. subst. clear Ef. destruct Hn as [Hn | Hn].
-        + cbv [step_state state_step] in Hn. rewrite Ef0 in Hn.
-          destr_sstate (f (S n)). inversion Hn; subst.
-          -- eexists. reflexivity.
-          -- exfalso. apply H0. reflexivity.
-        + destruct Hn as [_ Hn]. rewrite Hn. rewrite Ef0. eexists. reflexivity. }
-    assert (H3': get_scmd (execution_of_first_part f i) = sskip).
+      - intros. simpl. rewrite H1. reflexivity.
+      - intros H. specialize (IHn ltac:(lia)). assert (Hn := H2 n). destruct Hn as [Hn|Hn].
+        + simpl. destr_sstate (execution_of_first_part f n). simpl in IHn.
+          cbv [step_state] in Hn. rewrite IHn in Hn. destr_sstate (f (S n)).
+          inversion Hn; subst.
+          -- inversion H16; reflexivity.
+          -- exfalso. assert (H' := execution_of_first_part_stable').
+             specialize (H' f n). rewrite Ef in H'. specialize (H' eq_refl i ltac:(lia)).
+             rewrite H3 in H'. simpl in H'. discriminate H'.
+        + cbv [stuck_state] in Hn. fwd. assert (Hstuck := stuck_stable _ _ H2 Hnp0).
+          specialize (Hstuck i ltac:(lia)). destruct i as [|i]; [lia|].
+          simpl in H3. destr_sstate (execution_of_first_part f i). destr_sstate (f (S i)).
+          simpl in Hstuck. subst. simpl in H3. destruct s; discriminate H3. }
+    (*assert (H3': get_scmd (execution_of_first_part f i) = sskip).
     { rewrite H3. reflexivity. }
     assert (H6 := execution_of_first_part_stable _ _ _ H4 H3').
     rewrite <- H6 in *. clear H6. clear i. clear H3' H4.
-    exists (S n').
-    destruct n'.
-    - simpl in H3. rewrite H1 in H3. simpl in H3. inversion H3. subst.
-      specialize (H2 O). destruct H2 as [H2 | H2].
-      + cbv [step_state state_step] in H2. rewrite H1 in H2. destr_sstate (f 1%nat).
-        inversion H2; subst.
-        -- inversion H17.
-        -- reflexivity.
-      + cbv [stuck_state] in H2. destruct H2 as [H2p1 H2p2]. exfalso. apply H2p1.
-        eexists (_, _, _, _, _, _). rewrite H1. Print step. eapply seq_done_step.
-    - specialize (H n' ltac:(lia)). destruct H as [s H].
-      specialize (H5 n' ltac:(lia)).
-      replace (execution_of_first_part f (S n')) with (first_part (f (S n'))) in *.
-      2: { simpl. destr_sstate (execution_of_first_part f n'). destruct s0; try reflexivity.
-           simpl in H5. congruence. }
-      assert (s <> sskip).
-      { intros H'. subst. destr_sstate (f n'). simpl in H. subst.
-        destruct n'.
-        - simpl in H5. rewrite Ef in H5. simpl in H5. apply H5. reflexivity.
-        - simpl in H5. rewrite Ef in H5. destr_sstate (execution_of_first_part f n').
-          destruct s; simpl in H5; congruence. }
-      destr_sstate (f n'). simpl in H. subst. assert (Hn' := H2 n').
-      destruct Hn' as [Hn' | Hn'].
-      + cbv [step_state state_step] in Hn'. rewrite Ef in Hn'. destr_sstate (f (S n')).
-        inversion Hn'; subst.
-        -- simpl in H3. inversion H3. subst. clear H3. assert (HSn' := H2 (S n')).
-           destruct HSn' as [HSn' | HSn'].
-           ++ cbv [step_state state_step] in HSn'. rewrite Ef0 in HSn'.
-              destr_sstate (f (S (S n'))). inversion HSn'; subst.
-              --- inversion H16.
-              --- reflexivity.
-           ++ destruct HSn' as [HSn'p1 HSn'p2]. exfalso. apply HSn'p1. eexists (_, _, _, _, _, _).
-              rewrite Ef0. eapply seq_done_step.
-        -- congruence.
-      + destruct Hn' as [Hn'p1 Hn'p2]. rewrite Ef in Hn'p2. rewrite Hn'p2 in H3. simpl in H3.
-        inversion H3. subst. congruence.
+    exists (S n').*)
+    specialize (H i ltac:(lia)). rewrite H3 in H. simpl in H. specialize (H2 i).
+    destruct H2 as [H2|H2].
+    2: { exfalso. destruct H2 as [stuck eq]. apply stuck. eexists (_, _, _, _, _, _).
+         rewrite H. apply seq_done_step. }
+    cbv [step_state] in H2. rewrite H in H2. destr_sstate (f (S i)). inversion H2; subst.
+    - inversion H16.
+    - reflexivity.
   Qed.
   
   Lemma build_seq s1 s2 k t m l mc post :
@@ -1104,22 +1085,23 @@ Module exec. Section WithEnv.
     - destr_sstate (execution_of_first_part f i). destruct H. subst.
       assert (H3 := second_comes_after_first).
       specialize H3 with (1 := H0) (2 := H1) (3 := Ef).
-      destruct H3 as [j H3]. specialize (H2 (fun i => f (j + i))).
-      simpl in H2. replace (j + 0) with j in H2 by lia.
+      specialize (H2 (fun j => f (S i + j))).
+      simpl in H2. replace (i + 0) with i in H2 by lia.
+      replace (fun j => f (S (i + j))) with (fun j => f (S i + j)) in H2 by reflexivity.
       specialize (H2 H3 (possible_execution_offset _ _ H1)).
       eapply satisfies_offset. eapply H2.
     - rewrite first_part_1 in H.
       + remember (first_part (f i)) as st eqn:E. cbv [satisfies]. exists i.
         cbv [state_satisfies]. right. destr_sstate (f i). destruct H.
-        -- destruct s; simpl in E; try congruence.
+        -- destruct s; simpl in E; cbv [a_terminated_state] in E; try congruence.
            inversion E. subst. clear E. constructor. constructor.
            ++ assumption.
            ++ assumption.
-        -- destruct s; simpl in E; try congruence.
+        -- destruct s; simpl in E; cbv [a_terminated_state] in E; try congruence.
            inversion E. subst. clear E. constructor. econstructor; eassumption.
-        -- destruct s; simpl in E; try congruence.
+        -- destruct s; simpl in E; cbv [a_terminated_state] in E; try congruence.
            inversion E. subst. clear E. constructor. constructor; assumption.
-        -- destruct s; simpl in E; try congruence.
+        -- destruct s; simpl in E; cbv [a_terminated_state] in E; try congruence.
            inversion E. subst. clear E. constructor. constructor. assumption.
      + destr_sstate (execution_of_first_part f i). destruct s; simpl; try congruence.
         inversion H.
@@ -1145,7 +1127,7 @@ Module exec. Section WithEnv.
     assert (Hm' := H1 m). destruct Hm' as [Hm'|Hm']; try assumption.
     destruct Hm' as [Hm' _].
     assert (stable := stuck_stable f m H1 Hm' n ltac:(lia)). rewrite stable in Hn.
-    exfalso. auto.
+    congruence.
   Qed.
 
   (*TODO (to make my proofs less long and repetitive): write a lemma that says
@@ -1206,9 +1188,6 @@ Module exec. Section WithEnv.
         -- destruct H1 as [_ H1]. rewrite H1. assumption.
       + apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
   Qed.
-
-  Definition append (st : sstate) s' :=
-    let '(s, k, t, m, l, mc) := st in (sseq s s', k, t, m, l, mc).
 
   Lemma comes_after_seq' st st' s :
       comes_after st' st ->
