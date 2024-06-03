@@ -570,8 +570,7 @@ Module exec. Section WithEnv.
   | start_call (binds : list String.string) (params : list String.string) (rets: list String.string) (fbody: scmd) (args: list expr)
   | end_call (binds : list String.string) (rets: list String.string) (l : locals)
   | sinteract (binds : list String.string) (action : String.string) (args: list expr)
-  | end_interact (binds : list String.string) (action : String.string) (args : list word) (mKeep mGive mReceive : mem) (resvals klist : list word)
-  | terminated.
+  | end_interact (binds : list String.string) (action : String.string) (args : list word) (mKeep mGive mReceive : mem) (resvals klist : list word).
   
   Fixpoint inclusion (s : cmd) :=
     match s with
@@ -701,25 +700,30 @@ Module exec. Section WithEnv.
     let '(s, k, t, m, l, mc) := st in
     (inclusion s, k, t, m, l, mc).
 
-  Definition state_step st1 st2 :=
-    let '(s1, k1, t1, m1, l1, mc1) := st1 in
-    let '(s2, k2, t2, m2, l2, mc2) := st2 in
-    step s1 k1 t1 m1 l1 mc1 s2 k2 t2 m2 l2 mc2.
+  Inductive state_step : sstate -> sstate -> Prop :=
+  | sstep s1 k1 t1 m1 l1 mc1 s2 k2 t2 m2 l2 mc2 (_ : step s1 k1 t1 m1 l1 mc1 s2 k2 t2 m2 l2 mc2)
+    : state_step (s1, k1, t1, m1, l1, mc1) (s2, k2, t2, m2, l2, mc2).
 
-  Definition done_state f i :=
-    get_scmd (f i) = sskip /\ get_scmd (f (S i)) = terminated.
+  (*Definition done_state f i :=
+    get_scmd (f i) = sskip /\ get_scmd (f (S i)) = terminated.*)
+
+  Inductive o1 {X : Type} (R : X -> Prop) : option X -> Prop :=
+  | co1 x : R x -> o1 R (Some x).
+
+  Inductive o2 {X Y : Type} (R : X -> Y -> Prop) : option X -> option Y -> Prop :=
+  | co2 x y : R x y -> o2 R (Some x) (Some y).
 
   Definition state_stuck st :=
     ~exists st', state_step st st'.
 
-  Definition stuck_state f i :=
-    state_stuck (f i) /\ get_scmd (f (S i)) = terminated.
+  Definition stuck_ostate f i :=
+    o1 state_stuck (f i) /\ f (S i) = None.
 
-  Definition step_state f i :=
-    state_step (f i) (f (S i)).
+  Definition step_ostate f i :=
+    o2 state_step (f i) (f (S i)).
 
-  Definition possible_execution (f : nat -> sstate) :=
-    forall i, step_state f i \/ stuck_state f i.
+  Definition possible_execution (f : nat -> option sstate) :=
+    forall i, step_ostate f i \/ stuck_ostate f i \/ f i = None.
 
   Inductive good_stuck : sstate -> Prop :=
   | good_stuck_stackalloc : forall k t m l mc x n body,
@@ -742,11 +746,11 @@ Module exec. Section WithEnv.
     good_stuck (s1, k, t, m, l, mc) ->
     good_stuck (sseq s1 s2, k, t, m, l, mc).
 
-  Definition state_satisfies st post : Prop :=
+  Definition state_satisfies post st : Prop :=
     (let '(s, k, t, m, l, mc) := st in s = sskip /\ post k t m l mc) \/
       good_stuck st.
 
-  Definition satisfies (f : nat -> _) post := exists i, state_satisfies (f i) post.
+  Definition satisfies (f : nat -> _) post := exists i, o1 (state_satisfies post) (f i).
   
   Definition comes_right_after s1 s2 :=
     state_step s2 s1. Check pointwise_relation. Search (relation _ -> relation _).
@@ -768,22 +772,19 @@ Module exec. Section WithEnv.
   Definition comes_after_or_repeated_prefix := clos_trans _ (union _ repeated_prefix comes_after).
   Definition lifted_comes_after_or_repeated_prefix := lift comes_after_or_repeated_prefix other_inclusion.
 
-  Definition a_terminated_state : sstate :=
-    (terminated, nil, nil, map.empty, map.empty, EmptyMetricLog).
-
-  Definition first_part st : sstate :=
+  Definition first_part st : option sstate :=
     match st with
-    | (sseq s1 s2, k, t, m, l, mc) => (s1, k, t, m, l, mc)
-    | _ => a_terminated_state (*this is just some dummy value here*)
+    | Some (sseq s1 s2, k, t, m, l, mc) => Some (s1, k, t, m, l, mc)
+    | _ => None (*this is just some dummy value here*)
     end.
   
-  Fixpoint execution_of_first_part (f : nat -> sstate) n :=
+  Fixpoint execution_of_first_part (f : nat -> option sstate) n :=
     match n with
     | O => first_part (f O)
     | S n' =>
         match (execution_of_first_part f n') with
-        | (sskip, _, _, _, _, _) => a_terminated_state
-        | (terminated, _, _, _, _, _) => a_terminated_state
+        | Some (sskip, _, _, _, _, _) => None
+        | None => None
         | _ => first_part (f n)
         end
     end.
@@ -806,24 +807,26 @@ Module exec. Section WithEnv.
 
   Lemma sskip_or_first_part' f n :
     match (execution_of_first_part f n) with
-    | (sskip, _, _, _, _, _) => True
-    | (terminated, _, _, _, _, _) => True
+    | Some (sskip, _, _, _, _, _) => True
+    | None => True
     | _ => first_part (f n) = execution_of_first_part f n
     end.
   Proof.
     destruct n.
-    - simpl. destr_sstate (f 0%nat). destruct s; try reflexivity.
-      destruct s1; eexists; reflexivity.
-    - simpl. destr_sstate (execution_of_first_part f n). destruct s; try reflexivity.
-      all: destr_sstate (first_part (f (S n))); destruct s; try reflexivity.
+    - simpl. destruct (f O) as [st|]; [|reflexivity]. destr_sstate st.
+      destruct s; try reflexivity. simpl. destruct s1; eexists; reflexivity.
+    - simpl. destruct (execution_of_first_part f n) as [st|]; [|reflexivity].
+      destr_sstate st. destruct s; try reflexivity.
+      all: destruct (first_part (f (S n))) as [st'|]; [|reflexivity].
+      all: destr_sstate st'; destruct s; try reflexivity.
       all: destruct s0; reflexivity.
   Qed.
 
   Lemma sskip_terminated_or_first_part f n :
-    get_scmd (execution_of_first_part f n) = sskip \/ get_scmd (execution_of_first_part f n) = terminated \/ first_part (f n) = execution_of_first_part f n.
+    option_map get_scmd (execution_of_first_part f n) = Some sskip \/ execution_of_first_part f n = None \/ first_part (f n) = execution_of_first_part f n.
   Proof.
-    assert (H := sskip_or_first_part' f n). destr_sstate (execution_of_first_part f n).
-    destruct s; auto.
+    assert (H := sskip_or_first_part' f n). destruct (execution_of_first_part f n) as [st|]; auto.
+    destr_sstate st. destruct s; auto.
   Qed.
   
   Lemma possible_first_part f :
