@@ -1091,9 +1091,19 @@ Module exec. Section WithEnv.
 
   Definition execute_with_tail (f : nat -> sstate) (s2 : scmd) (n : nat) : sstate :=
     let '(s, k, t, m, l, mc) := f n in
-    (sseq s s2, k, t, m, l, mc).
+    match s with
+    | terminated => a_terminated_state
+    | _ => (sseq s s2, k, t, m, l, mc)
+    end.
 
-  Print done_state.
+  Lemma simple_execute_with_tail f s2 n :
+    get_scmd (f n) <> terminated ->
+    execute_with_tail f s2 n =
+      let '(s, k, t, m, l, mc) := f n in (sseq s s2, k, t, m, l, mc).
+  Proof.
+    intros H. cbv [execute_with_tail]. destr_sstate (f n).
+    destruct s; try reflexivity. simpl in H. congruence.
+  Qed.
 
   Lemma step_until_stuck f n :
     possible_execution f ->
@@ -1192,11 +1202,20 @@ Module exec. Section WithEnv.
     destruct terminates_or_not as [terminates|not].
     2: { assert (Hseqposs : possible_execution (execute_with_tail f s2)).
          { intros n. specialize (Hfposs n).
-           cbv [step_state state_step stuck_state] in *. cbv [execute_with_tail].
+           cbv [step_state state_step stuck_state] in *.
            destr_sstate (f n). destr_sstate (f (S n)).
            destruct Hfposs as [Hfposs|Hfposs].
-           - left. apply seq_step. assumption.
-           - right. fwd. split; [|reflexivity].
+           - left. repeat rewrite simple_execute_with_tail.
+             2: { rewrite Ef0. simpl. intros ?. subst. inversion Hfposs. subst. }simpl. replace (execute_with_tail f s2 n) with (sseq s s2, k0, t0, m0, l0, mc0).
+             2: { cbv [execute_with_tail]. rewrite Ef. destruct s; try reflexivity.
+                  inversion Hfposs. }
+             replace (execute_with_tail destruct s0; cbv [execute_with_tail]; try reflexivity.
+             { destruct cbv [a_terminated_state].
+             
+             destruct s; try solve [inversion Hfposs].
+             all: destruct s0; try solve [inversion Hfposs]. all: 
+             destruct s; try destruct s0; try (apply seq_step; assumption).
+           - right. simpl in Hfposs. fwd. split; [|reflexivity].
              intros H'. fwd. apply Hfpossp0.
              destr_sstate st'. inversion H'; subst.
              + eexists (_, _, _, _, _, _). eassumption.
