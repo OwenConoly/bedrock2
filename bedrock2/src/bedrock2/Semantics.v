@@ -1000,19 +1000,6 @@ Module exec. Section WithEnv.
     - simpl. rewrite <- IHn0. clear IHn0.
       destr_sstate (execution_of_first_part f n). simpl in H. subst.
       reflexivity.
-  Qed.
-
-  Lemma execution_of_first_part_stable f n1 n2 :
-    get_scmd (execution_of_first_part f n1) = sskip ->
-    get_scmd (execution_of_first_part f n2) = sskip ->
-    execution_of_first_part f n1 = execution_of_first_part f n2.
-  Proof.
-    intros H1 H2. assert (H3 := execution_of_first_part_stable' _ _ H1).
-    assert (H4 := execution_of_first_part_stable' _ _ H2).
-    Search (_ <= _ \/ _ <= _). assert (H := PeanoNat.Nat.le_ge_cases n1 n2).
-    destruct H as [H | H].
-    - apply H3. assumption.
-    - symmetry. apply H4. assumption.
   Qed.*)
 
   Lemma first_part_1 f i :
@@ -1051,11 +1038,6 @@ Module exec. Section WithEnv.
           specialize (Hstuck i ltac:(lia)). destruct i as [|i]; [lia|].
           simpl in H3. destr_sstate (execution_of_first_part f i). destr_sstate (f (S i)).
           simpl in Hstuck. subst. simpl in H3. destruct s; discriminate H3. }
-    (*assert (H3': get_scmd (execution_of_first_part f i) = sskip).
-    { rewrite H3. reflexivity. }
-    assert (H6 := execution_of_first_part_stable _ _ _ H4 H3').
-    rewrite <- H6 in *. clear H6. clear i. clear H3' H4.
-    exists (S n').*)
     specialize (H i ltac:(lia)). rewrite H3 in H. simpl in H. specialize (H2 i).
     destruct H2 as [H2|H2].
     2: { exfalso. destruct H2 as [stuck eq]. apply stuck. eexists (_, _, _, _, _, _).
@@ -1111,23 +1093,15 @@ Module exec. Section WithEnv.
     let '(s, k, t, m, l, mc) := f n in
     (sseq s s2, k, t, m, l, mc).
 
-  Lemma execute_with_tail_works' f :
+  Print done_state.
+
+  Lemma step_until_stuck f n :
     possible_execution f ->
-    (exists n, get_scmd (f n) = sskip) ->
-    exists n,
-      get_scmd (f n) = sskip /\
-        forall m, m < n -> step_state f (*(execute_with_tail f s2)*) m.
+    get_scmd (f n) <> terminated ->
+    forall m, m < n -> step_state f m.
   Proof.
-    intros H1 H2. Check nats_have_mins. destruct H2 as [n Hn].
-    assert (Hn' := nats_have_mins n (fun n => get_scmd (f n) = sskip)).
-    eassert (hyp : _). 2: specialize (Hn' hyp); clear hyp.
-    { intros. simpl. destr_sstate (f i); destruct s; simpl; (left; reflexivity) || (right; congruence). }
-    specialize (Hn' Hn). clear n Hn. destruct Hn' as [n [Hn Hnmin]].
-    exists n. split; [assumption|]. intros m Hm. specialize (Hnmin m Hm).
-    assert (Hm' := H1 m). destruct Hm' as [Hm'|Hm']; try assumption.
-    destruct Hm' as [Hm' _].
-    assert (stable := stuck_stable f m H1 Hm' n ltac:(lia)). rewrite stable in Hn.
-    congruence.
+    intros H1 H2. intros. assert (Hm := H1 m). destruct Hm as [Hm|Hm]; [assumption|].
+    exfalso. apply H2. eapply stuck_stable; try eassumption. destruct Hm. assumption.
   Qed.
 
   (*TODO (to make my proofs less long and repetitive): write a lemma that says
@@ -1144,49 +1118,35 @@ Module exec. Section WithEnv.
   Proof.
     cbv [possible_execution step_state stuck_state].
     assert (Hnext : exists (next : sstate -> sstate), forall st,
-               state_step st (next st) \/ state_stuck st /\ next st = st).
-    { clear -choice em. cbv [FunctionalChoice_on] in choice. apply (choice (fun st st' => state_step st st' \/ state_stuck st /\ st' = st)).
+               state_step st (next st) \/ state_stuck st /\ get_scmd (next st) = terminated).
+    { clear -choice em. cbv [FunctionalChoice_on] in choice. apply (choice (fun st st' => state_step st st' \/ state_stuck st /\ get_scmd st' = terminated)).
       intros st. assert (step_or_not := em (exists st', state_step st st')).
       destruct step_or_not as [step|not].
       - destruct step as [st' step]. exists st'. left. assumption.
-      - exists st. right. split; [|reflexivity]. cbv [state_stuck]. apply not. }
+      - exists a_terminated_state. right. split; [|reflexivity]. cbv [state_stuck]. apply not. }
     destruct Hnext as [next Hnext]. Print repeat_f.
     exists (fun n => repeat_f next st n). split; [reflexivity|]. intros.
     apply Hnext.
   Qed.
 
-  Lemma step_until_done f i :
-    possible_execution f ->
-    get_scmd (f i) = sskip ->
-    forall j,
-      done_state f j \/ step_state f j.
-  Proof.
-    intros H1 H2 j. Check stuck_stable. assert (Hsskips := stuck_stable f i H1).
-    assert (Hj := stuck_stable f j H1). destr_sstate (f i). simpl in H2. subst.
-    assert (hyp : state_stuck (f i)).
-    { cbv [state_stuck]. intros H'. destruct H' as [st' H']. rewrite Ef in H'.
-      destr_sstate st'. inversion H'. }
-    rewrite Ef in hyp. specialize (Hsskips hyp). destruct (H1 j) as [H|H].
-    { right. assumption. }
-    left. destruct H as [H3 H4]. specialize (Hj H3).
-    specialize (Hsskips (Nat.max i j) ltac:(lia)). specialize (Hj (Nat.max i j) ltac:(lia)).
-    cbv [done_state]. split; [|assumption]. rewrite <- Hj. rewrite Hsskips. reflexivity.
-  Qed.
-
   Lemma later_comes_after f i j :
     possible_execution f ->
     step_state f i ->
+    get_scmd (f j) <> terminated ->
     i < j ->
     comes_after (f j) (f i).
   Proof.
     intros H1 H2 H3. induction j.
     - lia.
     - destruct (Nat.ltb i j) eqn:E.
-      + apply PeanoNat.Nat.ltb_lt in E. specialize (IHj E). specialize (H1 j).
-        destruct H1 as [H1|H1].
+      + apply PeanoNat.Nat.ltb_lt in E. eassert (hyp : _). 2: specialize (IHj hyp); clear hyp.
+        { intros H. apply H3. apply (stuck_stable _ j); try assumption; try lia.
+          destr_sstate (f j). simpl in H. subst. intros H. destruct H as [st' H].
+          destr_sstate st'. inversion H. }
+        intros H. specialize (IHj ltac:(lia)). specialize (H1 j). destruct H1 as [H1|H1].
         -- eapply t_trans. 2: eassumption. apply t_step. apply H1.
-        -- destruct H1 as [_ H1]. rewrite H1. assumption.
-      + apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
+        -- destruct H1 as [_ H1]. exfalso. auto.
+      + intros. apply PeanoNat.Nat.ltb_nlt in E. replace j with i by lia. apply t_step. apply H2.
   Qed.
 
   Lemma comes_after_seq' st st' s :
