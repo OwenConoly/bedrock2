@@ -1307,59 +1307,67 @@ Module exec. Section WithEnv.
       + exists (S O). cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
         destruct (f (S O)) as [st'|]; [|destruct HSO]. destr_sstate st'.
         simpl in HSO. simpl. inversion HSO. subst. unify_eval_exprs. left. eauto.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
-        econstructor; eassumption.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
-        destr_sstate (f (S O)). rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. left. eauto.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
-        econstructor; eassumption.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
-        destr_sstate (f (S O)). rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. left. eauto.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
-        econstructor; eassumption.
+      + exfalso. cbv [stuck_ostate] in HSO. rewrite HO in HSO. destruct HSO as [HSO _].
+        apply HSO. eexists (_, _, _, _, _, _). econstructor; eassumption.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|]; [|destruct HSO]. destr_sstate st'.
+        simpl in HSO. simpl. inversion HSO. subst. unify_eval_exprs. left. eauto.
+      + exfalso. cbv [stuck_ostate] in HSO. rewrite HO in HSO. destruct HSO as [HSO _].
+        apply HSO. eexists (_, _, _, _, _, _). econstructor; eassumption.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|]; [|destruct HSO]. destr_sstate st'.
+        simpl in HSO. simpl. inversion HSO. subst. unify_eval_exprs. left. eauto.
+      + exfalso. cbv [stuck_ostate] in HSO. rewrite HO in HSO. destruct HSO as [HSO _].
+        apply HSO. eexists (_, _, _, _, _, _). econstructor; eassumption.
+      + fwd. congruence.
     - intros f HO HS. simpl in HO. clear H0. assert (HSO := HS O).
-      destruct HSO as [HSO | HSO ].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
-        destr_sstate (f (S O)). inversion HSO. subst. clear HO.
+      destruct HSO as [HSO | [HSO|HSO]].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
+        simpl in HSO. inversion HSO. subst. clear HO.
         eapply satisfies_offset; eauto.
         instantiate (1 := S O). 
         eapply build_seq.
-        2: apply Ef.
+        2: apply Est'.
         2: apply possible_execution_offset; assumption.
         intros.
         eapply satisfies_weaken. 2: eapply H1; eauto.
         simpl. intros.
-        specialize (H7 O). cbv [step_state stuck_state state_step] in H7.
-        rewrite H6 in *. clear H6. destr_sstate (g (S O)).
+        specialize (H7 O). cbv [step_ostate stuck_ostate state_step] in H7.
+        rewrite H6 in *. clear H6.
         repeat match goal with
                | H: anybytes _ _ _ |- _ => clear H
                | H: map.split _ _ _ |- _ => clear H
                end.
-        destruct H7 as [H7 | H7].
-        -- inversion H7. subst. fwd.
+        destruct H7 as [H7 | [H7 | H7]].
+        -- destruct (g (S O)) as [st'|] eqn:Eg1; [|destruct H7]. destr_sstate st'.
+           inversion H7. subst. fwd.
            match goal with
            | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
                specialize @map.split_diff with (4 := A) (5 := B) as P
            end.
            edestruct P; try typeclasses eauto.
            1: eapply anybytes_unique_domain; eassumption.
-           subst. eexists (S O). left. rewrite Ef0. auto.
+           subst. eexists (S O). rewrite Eg1. left. auto.
         -- exfalso. apply H7. clear H7. fwd. eexists (_, _, _, _, _, _).
            econstructor; eauto.
-      + exists O. right. rewrite HO. econstructor; try eassumption.
-        cbv [stuck_state] in HSO. rewrite HO in HSO. destruct HSO. assumption.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
-        destr_sstate (f 1%nat). inversion HSO; try congruence. subst. unify_eval_exprs.
-        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Ef in IHexec.
+        -- fwd. congruence.
+      + exists O. rewrite HO. right. econstructor; try eassumption.
+        cbv [stuck_ostate] in HSO. rewrite HO in HSO. destruct HSO. assumption.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO]].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
+        inversion HSO; try congruence. subst. unify_eval_exprs.
+        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Est' in IHexec.
         specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
         specialize (IHexec Hposs). clear Hposs. Search satisfies.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
-      + cbv [stuck_state] in HSO. exfalso. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
+      + cbv [stuck_ostate] in HSO. exfalso. fwd. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
         rewrite HO. eapply if_true_step; eauto.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
       + cbv [step_state state_step] in HSO. rewrite HO in HSO.
