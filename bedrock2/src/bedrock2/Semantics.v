@@ -1247,35 +1247,36 @@ Module exec. Section WithEnv.
                 else f2 (m - n - 1)) as g eqn:Eg.
     specialize (H g). eassert (HgO : g O = _).
     { rewrite Eg. simpl. cbv [execute_with_tail]. rewrite HfO. reflexivity. }
-    specialize (H HgO). assert (Hgposs : possible_execution g).
-    { intros i. specialize (fsteps i).
-      cbv [possible_execution] in Hf2poss. cbv [step_state state_step stuck_state] in *.
-      subst. cbv [execute_with_tail] in *. destr_sstate (f i). destr_sstate (f (S i)).
-      destruct (Nat.leb i n) eqn:Ei.
+    specialize (H HgO). clear HgO. assert (Hgposs : possible_execution g).
+    { intros i. specialize (Hs1 i).
+      cbv [possible_execution] in Hf2poss. cbv [step_ostate state_step stuck_ostate] in *.
+      subst. cbv [execute_with_tail] in *. destruct (Nat.leb i n) eqn:Ei.
       - apply PeanoNat.Nat.leb_le in Ei. destruct (Nat.leb (S i) n) eqn:ESi.
-        + apply PeanoNat.Nat.leb_le in ESi. destruct fsteps as [fdone|fsteps].
-          { exfalso. specialize (Hs1 i ltac:(lia)). rewrite Ef0, Ef1 in Hs1.
-            cbv [done_state] in fdone. fwd. rewrite Ef0 in fdonep0. simpl in fdonep0. subst.
-            inversion Hs1. }
-          left. apply seq_step. assumption.
+        + apply PeanoNat.Nat.leb_le in ESi. specialize (Hs1 ltac:(lia)).
+          destruct (f i) as [st|]; [|destruct Hs1]. destruct (f (S i)) as [st'|]; [|destruct Hs1].
+          destr_sstate st. destr_sstate st'. simpl. left. apply seq_step. assumption.
         + apply PeanoNat.Nat.leb_nle in ESi. assert (i = n) by lia. subst.
-          rewrite Ef in Ef0. inversion Ef0. subst. replace (S n - n - 1) with O by lia.
-          rewrite Hf2O. left. constructor.
+          left. rewrite E. replace (S n - n - 1) with O by lia.
+          rewrite Hf2O. simpl. constructor.
       - apply PeanoNat.Nat.leb_nle in Ei. destruct (Nat.leb (S i) n) eqn:ESi.
         + apply PeanoNat.Nat.leb_le in ESi. lia.
         + apply PeanoNat.Nat.leb_nle in ESi. replace (S i - n - 1) with (S (i - n - 1)) by lia.
           apply Hf2poss. }
     specialize (H Hgposs). destruct H as [b H]. exists (b - n - 1).
     rewrite Eg in H. cbv [state_satisfies execute_with_tail] in H.
-    destr_sstate (f2 (b - n - 1)). destruct (Nat.leb b n).
-    { exfalso. destr_sstate (f b). destruct H as [H|H].
+    destruct (Nat.leb b n) eqn:E1.
+    { exfalso. apply PeanoNat.Nat.leb_le in E1.
+      destruct (f b) as [stb|] eqn:Eb; [|destruct H]. destr_sstate stb. simpl in H.
+      destruct H as [H|H].
       - destruct H as [H _]. discriminate H.
-      - specialize (fsteps b). destruct fsteps as [fdone|fsteps].
-        + cbv [done_state] in fdone. destruct fdone as [fdone _]. rewrite Ef1 in fdone.
-          simpl in fdone. subst. inversion H. subst. inversion H1.
-        + cbv [step_state state_step] in fsteps. rewrite Ef1 in fsteps.
-          apply good_stuck_stuck in H. apply H. destr_sstate (f (S b)).
-          eexists (_, _, _, _, _, _). apply seq_step. eassumption. }
+      - specialize (Hs1 b). destruct (Nat.eqb b n) eqn:E2.
+        + apply PeanoNat.Nat.eqb_eq in E2. subst. rewrite Eb in E. inversion E. clear E. subst.
+          inversion H. subst. inversion H1.
+        + apply PeanoNat.Nat.eqb_neq in E2. specialize (Hs1 ltac:(lia)).
+          cbv [step_ostate] in Hs1. subst. rewrite Eb in Hs1.
+          destruct (f (S b)) as [st'|]; [|destruct Hs1]. simpl in Hs1. destr_sstate st'.
+          apply good_stuck_stuck in H. apply H. eexists (_, _, _, _, _, _). eapply seq_step.
+          eassumption. }
     apply H.
   Qed.
 
@@ -1296,16 +1297,16 @@ Module exec. Section WithEnv.
   Lemma exec_to_step (s : cmd) k t m l mc post :
     exec s k t m l mc post ->
     forall (f : nat -> _),
-      f O = (inclusion s, k, t, m, l, mc) ->
+      f O = Some (inclusion s, k, t, m, l, mc) ->
       possible_execution f ->
       satisfies f post.
   Proof.
     intros H. induction H.
-    - intros. exists O. left. rewrite H0. eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
-      + exists (S O). cbv [step_state state_step] in HSO.
-        destr_sstate (f (S O)). rewrite HO in HSO.
-        inversion HSO. subst. unify_eval_exprs. left. eauto.
+    - intros. exists O. rewrite H0. left. eauto.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + exists (S O). cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|]; [|destruct HSO]. destr_sstate st'.
+        simpl in HSO. simpl. inversion HSO. subst. unify_eval_exprs. left. eauto.
       + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. cbv [state_step].
         econstructor; eassumption.
     - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO ].
