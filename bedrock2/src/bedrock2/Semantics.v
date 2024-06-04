@@ -940,13 +940,27 @@ Module exec. Section WithEnv.
       + apply PeanoNat.Nat.leb_nle in E. assert (n = S m) by lia. subst. assumption.
   Qed.
 
+  Lemma state_stuck_stuck_state f n :
+    possible_execution f ->
+    o1 state_stuck (f n) ->
+    stuck_ostate f n.
+  Proof.
+    intros H1 H2. specialize (H1 n). cbv [step_ostate stuck_ostate] in H1.
+    destruct (f n) as [st|] eqn:Est; [|destruct H2]. destruct H1 as [H1|[H1|H1]].
+    - destruct (f (S n)) as [st'|]; [|destruct H1]. exfalso. apply H2.
+      eexists. apply H1.
+    - cbv [stuck_ostate]. rewrite Est. assumption.
+    - fwd. congruence.
+  Qed.
+
   Lemma stuck_stable f n :
     possible_execution f ->
-    stuck_ostate f n ->
+    o1 state_stuck (f n) ->
     forall m, n < m ->
               f m = None.
   Proof.
-    intros H1 H2 m Hm. cbv [stuck_ostate] in H2. fwd. eapply done_stable; eassumption.
+    intros H1 H2 m Hm. apply (state_stuck_stuck_state _ _ H1) in H2. destruct H2.
+    eapply done_stable; eassumption.
   Qed.    
 
   Lemma possible_execution_offset f k :
@@ -1022,7 +1036,8 @@ Module exec. Section WithEnv.
           -- exfalso. assert (H' := execution_of_first_part_stable').
              specialize (H' f n). rewrite E1 in H'. specialize (H' eq_refl i ltac:(lia)).
              rewrite H3 in H'. simpl in H'. discriminate H'.
-        + assert (Hdone := stuck_stable f n ltac:(assumption) ltac:(assumption) i ltac:(lia)).
+        + destruct Hn.
+          assert (Hdone := stuck_stable f n ltac:(assumption) ltac:(assumption) i ltac:(lia)).
           destruct i as [|i]; [lia|]. simpl in H3. rewrite Hdone in H3.
           destruct (execution_of_first_part f i) as [st|]; [|congruence].
           destr_sstate st. destruct s; simpl in H3; congruence.
@@ -1096,7 +1111,7 @@ Module exec. Section WithEnv.
   Proof.
     intros H1 H2. intros. assert (Hm := H1 m). destruct Hm as [Hm|Hm]; [assumption|].
     exfalso. apply H2. destruct Hm as [Hm|Hm].
-    - eapply stuck_stable; eassumption.
+    - destruct Hm. eapply stuck_stable; eassumption.
     - fwd. eapply done_stable; eassumption.
   Qed.
 
@@ -1367,78 +1382,102 @@ Module exec. Section WithEnv.
         specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
         specialize (IHexec Hposs). clear Hposs. Search satisfies.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
-      + cbv [stuck_ostate] in HSO. exfalso. fwd. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
-        rewrite HO. eapply if_true_step; eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO.
-        destr_sstate (f 1%nat). inversion HSO; try congruence. subst. unify_eval_exprs.
-        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Ef in IHexec.
+      + cbv [stuck_ostate] in HSO. exfalso. destruct HSO as [HSO _]. rewrite HO in HSO.
+        apply HSO. clear HSO. eexists (_, _, _, _, _, _). eapply if_true_step; eauto.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO]].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
+        inversion HSO; try congruence. subst. unify_eval_exprs.
+        specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Est' in IHexec.
         specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
         specialize (IHexec Hposs). clear Hposs. Search satisfies.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
-      + cbv [stuck_state] in HSO. exfalso. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
-        rewrite HO. eapply if_false_step; eauto.
+      + cbv [stuck_ostate] in HSO. exfalso. destruct HSO as [HSO _]. rewrite HO in HSO.
+        apply HSO. clear HSO. eexists (_, _, _, _, _, _). eapply if_false_step; eauto.
+      + fwd. congruence.
     - eapply build_seq. fold inclusion. intros f H2 H3. eapply satisfies_weaken; eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
-        inversion HSO; try congruence. subst. unify_eval_exprs. exists (S O). left.
-        rewrite Ef. eauto.
-      + exfalso. cbv [stuck_state] in HSO. apply HSO. clear HSO. eexists (_, _, _, _, _, _).
-        rewrite HO. econstructor; eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
+        inversion HSO; try congruence. subst. unify_eval_exprs. exists (S O). rewrite Est'.
+        left. eauto.
+      + exfalso. cbv [stuck_ostate] in HSO. destruct HSO as [HSO _]. rewrite HO in HSO.
+        apply HSO. clear HSO. eexists (_, _, _, _, _, _). econstructor; eauto.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
         inversion HSO; try congruence. subst. unify_eval_exprs. eapply satisfies_offset; eauto.
         instantiate (1 := 1%nat). eapply build_seq; eauto.
         2: eapply possible_execution_offset; eauto.
         intros. eapply satisfies_weaken; eauto. intros * g ? HgO HgS.
-        assert (HgSO := HgS O). destruct HgSO as [HgSO | HgSO].
-        -- cbv [step_state state_step] in HgSO. rewrite HgO in HgSO. destr_sstate (g0 1%nat).
+        assert (HgSO := HgS O). destruct HgSO as [HgSO | [HgSO | HgSO] ].
+        -- cbv [step_ostate state_step] in HgSO. rewrite HgO in HgSO.
+           destruct (g0 (S O)) as [stg01|] eqn:Eg1; [|destruct HgSO]. destr_sstate stg01.
            inversion HgSO. subst. inversion H20. subst. assert (HgSSO := HgS (S O)).
-           destruct HgSSO as [HgSSO | HgSSO].
-           ++ cbv [step_state state_step] in HgSSO. rewrite Ef0 in HgSSO.
-              destr_sstate (g0 2%nat). inversion HgSSO; subst.
+           destruct HgSSO as [HgSSO | [HgSSO | HgSSO] ].
+           ++ cbv [step_ostate state_step] in HgSSO. rewrite Eg1 in HgSSO.
+              destruct (g0 2%nat) as [stg02|] eqn:Eg02; [|destruct HgSSO]. destr_sstate stg02.
+              inversion HgSSO; subst.
               --- inversion H21.
               --- eapply satisfies_offset; eauto. instantiate (1 := 2%nat).
                   eapply H3; eauto. apply possible_execution_offset. assumption.
-           ++ exfalso. apply HgSSO. eexists (_, _, _, _, _, _). rewrite Ef0.
-              eapply seq_done_step.
-        -- exfalso. apply HgSO. eexists (_, _, _, _, _, _). rewrite HgO. econstructor.
-           econstructor.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. eapply while_true_step; eauto.
-    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+           ++ exfalso. cbv [stuck_ostate] in HgSSO. rewrite Eg1 in HgSSO. apply HgSSO.
+              eexists (_, _, _, _, _, _). eapply seq_done_step.
+           ++ fwd. congruence.
+        -- exfalso. cbv [stuck_ostate] in HgSO. rewrite HgO in HgSO. destruct HgSO as [HgSO _].
+           apply HgSO. eexists (_, _, _, _, _, _). eapply seq_step. econstructor.
+        -- fwd. congruence.
+      + exfalso. destruct HSO as [HSO _]. rewrite HO in HSO. apply HSO.
+        eexists (_, _, _, _, _, _). eapply while_true_step; eauto.
+      + fwd. congruence.
+    - intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
         inversion HSO. subst. unify_eval_exprs. eapply satisfies_offset.
         instantiate (1 := 1%nat). eapply build_seq; eauto.
         2: eapply possible_execution_offset; eauto.
         intros g HgO HgS. eapply satisfies_weaken.
-        2: { assert (HgSO := HgS O). destruct HgSO as [HgSO | HgSO].
-             - cbv [step_state state_step] in HgSO. rewrite HgO in HgSO. destr_sstate (g 1%nat).
+        2: { assert (HgSO := HgS O). destruct HgSO as [HgSO | [HgSO | HgSO] ].
+             - cbv [step_ostate state_step] in HgSO. rewrite HgO in HgSO.
+               destruct (g (S O)) as [st'g|] eqn:Est'g; [|destruct HgSO]. destr_sstate st'g.
                inversion HgSO. subst. unify_eval_exprs. eapply satisfies_offset with (k := 1%nat).
                eapply IHexec; eauto. apply possible_execution_offset; auto.
-             - exfalso. apply HgSO. eexists (_, _, _, _, _, _). rewrite HgO. econstructor; eauto. }
+             - exfalso. destruct HgSO as [HgSO _]. rewrite HgO in HgSO. apply HgSO.
+               eexists (_, _, _, _, _, _). econstructor; eauto.
+             - fwd. congruence. }
         intros * Hmid h HhO HhS. apply H3 in Hmid. fwd.
-        assert (HhSO := HhS O). destruct HhSO as [HhSO | HhSO].
-        -- cbv [step_state state_step] in HhSO. rewrite HhO in HhSO. destr_sstate (h 1%nat).
-           inversion HhSO. subst. fwd. unify_eval_exprs. exists (S O). left. rewrite Ef0. eauto.
-        -- exfalso. apply HhSO. eexists (_, _, _, _, _, _). rewrite HhO. econstructor; eauto.
-      + exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO. econstructor; eauto.
+        assert (HhSO := HhS O). destruct HhSO as [HhSO | [HhSO | HhSO] ].
+        -- cbv [step_ostate state_step] in HhSO. rewrite HhO in HhSO.
+           destruct (h (S O)) as [st'h|] eqn:Est'h; [|destruct HhSO]. destr_sstate st'h.
+           inversion HhSO. subst. fwd. unify_eval_exprs. exists (S O). rewrite Est'h. left. eauto.
+        -- exfalso. destruct HhSO as [HhSO _]. rewrite HhO in HhSO. apply HhSO.
+           eexists (_, _, _, _, _, _). econstructor; eauto.
+        -- fwd. congruence.
+      + exfalso. destruct HSO as [HSO _]. rewrite HO in HSO. apply HSO.
+        eexists (_, _, _, _, _, _). econstructor; eauto.
+      + fwd. congruence.
     - destruct ext_spec_ok.
-      intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | HSO].
-      + cbv [step_state state_step] in HSO. rewrite HO in HSO. destr_sstate (f 1%nat).
+      intros f HO HS. assert (HSO := HS O). destruct HSO as [HSO | [HSO | HSO] ].
+      + cbv [step_ostate state_step] in HSO. rewrite HO in HSO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HSO]. destr_sstate st'.
         inversion HSO. subst. unify_eval_exprs.
         specialize unique_mGive_footprint with (1 := H1) (2 := H19).
         destruct (map.split_diff unique_mGive_footprint H H6). subst.
-        assert (HSSO := HS (S O)). destruct HSSO as [HSSO | HSSO].
-        -- cbv [step_state state_step] in HSSO. rewrite Ef in HSSO. destr_sstate (f (S (S O))).
+        assert (HSSO := HS (S O)). destruct HSSO as [HSSO | [HSSO | HSSO] ].
+        -- cbv [step_ostate state_step] in HSSO. rewrite Est' in HSSO.
+           destruct (f (S (S O))) as [st''|] eqn:Est''; [|destruct HSSO]. destr_sstate st''.
            inversion HSSO. subst.
-           exists (S (S O)). rewrite Ef0. left. intuition.
+           exists (S (S O)). rewrite Est''. left. intuition.
            specialize H20 with (1 := H1). specialize H2 with (1 := H20). fwd.
            clear H unique_mGive_footprint.
            apply H2p1 in H26. unify_eval_exprs. apply H26.
-        -- exists (S O). right. cbv [stuck_state] in HSSO. destruct HSSO as [HSSO _].
-           rewrite Ef. econstructor.
+        -- exists (S O). rewrite Est'. right. destruct HSSO as [HSSO _]. rewrite Est' in HSSO.
+           econstructor.
            ++ apply H20 in H1. apply H2 in H1. fwd. eauto.
-           ++ rewrite Ef in HSSO. assumption.
+           ++ assumption.
+        -- fwd. congruence.
       + assert (step_or_not :=
                   em (exists mReceive resvals klist,
                         (*(exists m', map.split m' mKeep mReceive)map.disjoint mKeep mReceive /\*)
@@ -1447,18 +1486,20 @@ Module exec. Section WithEnv.
                             mid' mReceive resvals klist)).
         destruct step_or_not as [step | not_step].
         -- fwd. assert (Hmid := step _ H1). apply H2 in Hmid. fwd.
-           exfalso. apply HSO. eexists (_, _, _, _, _, _). rewrite HO.
-           econstructor; eauto. eapply weaken; eauto. cbv [pointwise_relation Basics.impl]. auto.
-        -- exists O. right. rewrite HO. econstructor; eauto.
+           exfalso. destruct HSO as [HSO _]. rewrite HO in HSO. apply HSO.
+           eexists (_, _, _, _, _, _). econstructor; eauto.
+           eapply weaken; eauto. cbv [pointwise_relation Basics.impl]. auto.
+        -- exists O. rewrite HO. right. econstructor; eauto.
            { eapply weaken. 2: eassumption. cbv [pointwise_relation Basics.impl].
              intros * Hmid. apply H2 in Hmid. fwd. eauto. }
-           intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_state] in H'.
+           intros H'. apply not_step. clear not_step. fwd. cbv [state_step step_ostate] in H'.
            destr_sstate st'. inversion H'. subst.
            unify_eval_exprs.
            specialize unique_mGive_footprint with (1 := H1) (2 := H19).
            destruct (map.split_diff unique_mGive_footprint H H6). subst.
            assert (Hmid := H20 _ H1).
            eexists. eexists. eexists. intuition eauto. eapply H20. apply H3.
+      + fwd. congruence.
   Qed.
 
   Lemma enna (A : Type) (P : A -> Prop) :
@@ -1557,46 +1598,6 @@ Module exec. Section WithEnv.
     all: constructor; intros ? H; inversion H.
     subst. auto.
   Qed.
-  
-  Lemma steps_Acc'' s k t m l mc post :
-    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
-        f O = (inclusion s, k, t, m, l, mc) ->
-        possible_execution f ->
-        satisfies f post) ->
-    Acc comes_right_after (inclusion s, k, t, m, l, mc).
-  Proof.
-    intros.
-    apply chains_finite_implies_Acc; [apply choice|].
-    clear em choice.
-    intros. intros H'. specialize (H f).
-    simpl in H. specialize (H H0).
-    assert (possible_execution f).
-    { cbv [possible_execution]. intros. left. apply H'. }
-    apply H in H1.
-    destruct H1 as [i H1]. specialize (H' i).
-    destruct (f i) as [ [ [ [ [si ki] ti] mi] li] mci].
-    destruct (f (S i)) as [ [ [ [ [sSi kSi] tSi] mSi] lSi] mcSi].
-    simpl in H1. simpl in H'. destruct H1 as [H1 | H1].
-    - destruct H1 as [H1p1 H1p2]. subst. inversion H'.
-    - remember (si, ki, ti, mi, li, mci) as st eqn:Est.
-      assert (H'' : let '(s, k, t, m, l, mc) := st in
-                     exists s' k' t' m' l' mc',
-                       step s k t m l mc s' k' t' m' l' mc').
-      { subst. do 6 eexists. eassumption. }
-      clear H' Est. induction H1.
-      + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply H4. clear H4. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
-      + apply IHgood_stuck. clear IHgood_stuck. fwd. inversion H''; subst.
-        -- do 6 eexists. eassumption.
-        -- inversion H1.
-  Qed.
-
-  Search Acc.
-
-  Lemma lift_iff {A B : Type} (f : A -> B) R x y :
-    R (f x) (f y) <-> lift R f x y.
-  Proof. cbv [lift]. reflexivity. Qed.
 
   Lemma lifted_Acc {A B : Type} (f : A -> B) R x :
     Acc R (f x) ->
@@ -1607,10 +1608,46 @@ Module exec. Section WithEnv.
     - eapply H1.
     - reflexivity.
   Qed.
+  
+  Lemma steps_Acc'' s k t m l mc post :
+    (forall (f : nat -> option (scmd * _ * _ * _ * _ * _)),
+        f O = Some (inclusion s, k, t, m, l, mc) ->
+        possible_execution f ->
+        satisfies f post) ->
+    Acc comes_right_after (inclusion s, k, t, m, l, mc).
+  Proof.
+    intros. enough (Acc (lift (o2 comes_right_after) Some) (inclusion s, k, t, m, l, mc)).
+    { apply H0. }
+    apply lifted_Acc.
+    apply chains_finite_implies_Acc; [apply choice|].
+    clear em choice.
+    intros. intros H'. specialize (H f).
+    simpl in H. specialize (H H0).
+    assert (possible_execution f).
+    { cbv [possible_execution]. intros. left. cbv [step_ostate]. specialize (H' i).
+      destruct (f i), (f (S i)); apply H'. (*that's kinda silly*) }
+    apply H in H1.
+    destruct H1 as [i H1]. specialize (H' i).
+    destruct (f i) as [st|] eqn:Est; [|destruct H1]. destr_sstate st.
+    destruct (f (S i)) as [st'|] eqn:Est'; [|destruct H']. destr_sstate st'.
+    simpl in H1. simpl in H'. destruct H1 as [H1 | H1].
+    - destruct H1 as [H1p1 H1p2]. subst. inversion H'.
+    - assert (H'' : let '(s, k, t, m, l, mc) := st in
+                    exists s' k' t' m' l' mc',
+                      step s k t m l mc s' k' t' m' l' mc').
+      { subst. do 6 eexists. eassumption. }
+      rewrite <- Ef in *. clear Ef Est H'. induction H1.
+      + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply H4. clear H4. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply H2. clear H2. fwd. eexists (_, _, _, _, _, _). eassumption.
+      + apply IHgood_stuck. clear IHgood_stuck. fwd. inversion H''; subst.
+        -- do 6 eexists. eassumption.
+        -- inversion H1.
+  Qed.
 
   Lemma steps_Acc' s k t m l mc post :
-    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
-        f O = (inclusion s, k, t, m, l, mc) ->
+    (forall (f : nat -> option (scmd * _ * _ * _ * _ * _)),
+        f O = Some (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     Acc comes_after_or_repeated_prefix (inclusion s, k, t, m, l, mc).
@@ -1622,8 +1659,8 @@ Module exec. Section WithEnv.
   Qed.
 
   Lemma steps_Acc s k t m l mc post :
-    (forall (f : nat -> (scmd * _ * _ * _ * _ * _)),
-        f O = (inclusion s, k, t, m, l, mc) ->
+    (forall (f : nat -> option (scmd * _ * _ * _ * _ * _)),
+        f O = Some (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     Acc lifted_comes_after_or_repeated_prefix (s, k, t, m, l, mc).
@@ -1631,36 +1668,32 @@ Module exec. Section WithEnv.
     intros. apply lifted_Acc. eapply steps_Acc'; eassumption.
   Qed.
 
-  Lemma done_stable f n :
-    possible_execution f ->
-    get_scmd (f n) = sskip ->
-    forall m, n <= m ->
-              f m = f n.
-  Proof.
-    intros H1 H2 H3. apply stuck_stable; try assumption. intros H'.
-    destruct H' as [st' H']. destr_sstate (f n). destr_sstate st'.
-    simpl in H2. rewrite H2 in H'. inversion H'.
-  Qed.
-
   Definition successful_execution f post :=
-    forall i, step_state f i \/ state_satisfies (f i) post.
+    forall i, step_ostate f i \/ o1 (state_satisfies post) (f i).
 
-  (*Lemma no_stepping_to_self :
-    f O = (inclusion s, k, t, m, l, mc)*)
+  Lemma stuck_unique f i j :
+    possible_execution f ->
+    o1 state_stuck (f i) ->
+    o1 state_stuck (f j) ->
+    i = j.
+  Proof. Admitted.
   
   Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f post.
   Proof.
-    intros H1 H2 n. assert (H5 := H1 n). destruct H5 as [H5|H5].
-    { left. assumption. }
-    right. destruct H5 as [H3 H4].
-    assert (stuck_stable1 := stuck_stable _ _ H1 H3).
-    destruct H2 as [m H2]. assert (H6 := satisfies_stuck _ _ H2).
-    assert (stuck_stable2 := stuck_stable _ _ H1 H6).
-    specialize (stuck_stable1 (Nat.max n m) ltac:(lia)).
-    specialize (stuck_stable2 (Nat.max n m) ltac:(lia)).
-    rewrite stuck_stable1 in stuck_stable2. rewrite stuck_stable2 in *.
-    assumption.
+    intros H1 H2 n. assert (H5 := H1 n). destruct H2 as [m H2]. destruct H5 as [H5|[H5|H5]].
+    - left. assumption.
+    - right. apply satisfies_stuck in H2. destruct H5 as [H3 H4].
+      assert (stuck_stable1 := stuck_stable _ _ H1 H3).
+      destruct H2 as [m H2]. destruct (f m) as [fm|] eqn:Efm; [|destruct H2].
+      assert (H6 := satisfies_stuck _ _ H2).
+      destruct (f n) as [fn|]; [|destruct H3].
+      eassert (stuck_stable2 := stuck_stable _ _ H1). rewrite Efm in stuck_stable2.
+      specialize (stuck_stable2 H6).
+      specialize (stuck_stable1 (S (Nat.max n m)) ltac:(lia)).
+      specialize (stuck_stable2 (S (Nat.max n m)) ltac:(lia)).
+      rewrite stuck_stable1 in stuck_stable2. rewrite stuck_stable2 in *.
+      assumption.
   Qed.
 
   Lemma weaken: forall s k t m l mc post1,
