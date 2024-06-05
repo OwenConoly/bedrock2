@@ -989,19 +989,17 @@ Module exec. Section WithEnv.
     - right. assumption.
   Qed.
 
-  (*why do we care*)
   Lemma execution_of_first_part_stable' f n :
     option_map get_scmd (execution_of_first_part f n) = Some sskip ->
     forall m, n < m ->
               execution_of_first_part f m = None.
   Proof.
-    intros. Admitted. (*replace m with ((m - n) + n) by lia. clear H0.
-    induction (m - n).
-    - reflexivity.
-    - simpl. rewrite <- IHn0. clear IHn0.
-      destr_sstate (execution_of_first_part f n). simpl in H. subst.
-      reflexivity.
-  Qed.*)
+    intros. replace m with ((m - n - 1) + S n) by lia. clear H0.
+    destruct (execution_of_first_part f n) as [ffn|] eqn:Effn; [|discriminate H].
+    destr_sstate ffn. simpl in H. inversion H. clear H. subst. induction (m - n - 1).
+    - simpl. rewrite Effn. reflexivity.
+    - simpl. rewrite IHn0. reflexivity.
+  Qed.
 
   Lemma first_part_1 f i :
     execution_of_first_part f i <> None ->
@@ -2156,20 +2154,47 @@ Module exec. Section WithEnv.
       + rewrite fold_app. apply IHk1; assumption.
   Qed.
 
+  Definition val_def {A : Type} (default : A) (x : option A) :=
+    match x with
+    | Some x => x
+    | None => default
+    end.
+
   Lemma predicts_app_inv k1 k2 f :
     predicts f (k1 ++ k2) ->
     predicts f k1 /\ predicts (fun k => f (k1 ++ k)) k2.
-  Proof. Admitted.
+  Proof.
+    intros H. revert f H. induction k1.
+    - intros f H. split; [constructor|assumption].
+    - intros f H. inversion H. subst. apply IHk1 in H4. fwd. split.
+      + constructor; assumption.
+      + assumption.
+  Qed.
 
   Lemma step_extends_trace {pick_sp : PickSp} st st' :
     state_step false st st' ->
     exists k'', get_trace st' = k'' ++ get_trace st.
-  Proof. Admitted.
+  Proof.
+    intros H. destr_sstate st. destr_sstate st'. subst. induction H; subst_exprs.
+    all: try (eexists; simpl; solve [trace_alignment]). fwd. exists k''. assumption.
+  Qed.
 
+  Lemma ostep_extends_trace {pick_sp : PickSp} st st' :
+    o2 (state_step false) st st' ->
+    exists k'', val_def nil (option_map get_trace st') = k'' ++ val_def nil (option_map get_trace st).
+  Proof. intros H. destruct st, st'; try solve [destruct H]. apply step_extends_trace. assumption. Qed.
+    
   Lemma steps_extend_trace {pick_sp : PickSp} f n :
-    (forall i, i < n -> state_step false (f i) (f (S i))) ->
-    exists k'', get_trace (f n) = k'' ++ get_trace (f O).
-  Proof. Admitted.
+    (forall i, i < n -> o2 (state_step false) (f i) (f (S i))) ->
+    exists k'', val_def nil (option_map get_trace (f n)) = k'' ++ val_def nil (option_map get_trace (f O)).
+  Proof.
+    induction n.
+    - intros _. exists nil. reflexivity.
+    - intros H. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
+      { intros. apply H. lia. }
+      fwd. specialize (H n ltac:(lia)). apply ostep_extends_trace in H. fwd.
+      eexists. rewrite H. trace_alignment. eassumption.
+  Qed.      
     
   Lemma step_state_equiv {pick_sp : PickSp} st st' :
     state_step true st st' <->
@@ -2197,26 +2222,44 @@ Module exec. Section WithEnv.
       simpl in H6. specialize (H6 I). inversion H6. subst. reflexivity. }
   Qed.
 
-  Lemma step_states_equiv {pick_sp : PickSp} f n :
-    (forall i, i < n -> step_state true f i) <->
-      ((forall i, i < n -> step_state false f i) /\
+  Lemma step_ostate_equiv {pick_sp : PickSp} f i :
+    step_ostate true f i <->
+      (step_ostate false f i /\
          exists k'',
-           get_trace (f n) = k'' ++ get_trace (f O) /\
-             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace (f O)))) (rev k'')).
+           val_def nil (option_map get_trace (f (S i))) = k'' ++ val_def nil (option_map get_trace (f i)) /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ val_def nil (option_map get_trace (f i))))) (List.rev k'')).
+  Proof.
+    cbv [step_ostate]. split.
+    - intros H.
+      destruct (f i) as [fi|]; [|destruct H]. destruct (f (S i)) as [fSi|]; [|destruct H].
+      simpl in H. rewrite step_state_equiv in H. simpl. apply H.
+    - intros H.
+      destruct (f i) as [fi|]; [|destruct H as [H _]; destruct H].
+      destruct (f (S i)) as [fSi|]; [|destruct H as [H _]; destruct H].
+      simpl. rewrite step_state_equiv. apply H.
+  Qed.
+
+  Lemma step_ostates_equiv {pick_sp : PickSp} f n :
+    (forall i, i < n -> step_ostate true f i) <->
+      ((forall i, i < n -> step_ostate false f i) /\
+         exists k'',
+           val_def nil (option_map get_trace (f n)) = k'' ++ val_def nil (option_map get_trace (f O)) /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ val_def nil (option_map get_trace (f O))))) (rev k'')).
   Proof.
     induction n.
     - split.
       + intros H. split.
         -- intros. lia.
-        -- eexists; split; [trace_alignment|]. constructor.
+        -- destruct (f O) as [f0|]; simpl.
+           2: { exists nil. intuition. constructor. }
+           eexists; split; [f_equal;trace_alignment|]. constructor.
       + intros. lia.
     - split.
       + destruct IHn as [IHn _]. intros H. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
         { intros. apply H. lia. }
         fwd. split.
-        -- intros. specialize (H i ltac:(lia)). cbv [step_state] in H.
-           rewrite step_state_equiv in H. fwd. assumption.
-        -- specialize (H n ltac:(lia)). cbv [step_state] in H. rewrite step_state_equiv in H.
+        -- intros. specialize (H i ltac:(lia)). rewrite step_ostate_equiv in H. fwd. assumption.
+        -- specialize (H n ltac:(lia)). rewrite step_ostate_equiv in H.
            destruct H as [_ H]. fwd. eexists. split.
            { rewrite Hp0. rewrite IHnp1p0. trace_alignment. }
            rewrite app_nil_r. rewrite rev_app_distr. apply predicts_app.
@@ -2228,7 +2271,7 @@ Module exec. Section WithEnv.
         assert (H' := steps_extend_trace f n).
         eassert (hyp : _). 2: specialize (H' hyp); clear hyp.
         { intros. apply Hp0. lia. }
-        assert (extend := Hp0 n ltac:(lia)). apply step_extends_trace in extend.
+        assert (extend := Hp0 n ltac:(lia)). apply ostep_extends_trace in extend.
         fwd. rewrite extend in Hp1p0. rewrite H' in Hp1p0. rewrite app_assoc in Hp1p0.
         apply app_inv_tail in Hp1p0. subst.
         rewrite rev_app_distr in Hp1p1.
@@ -2240,7 +2283,7 @@ Module exec. Section WithEnv.
         intros. destruct (Nat.ltb i n) eqn:E.
         { apply PeanoNat.Nat.ltb_lt in E. apply IHn. assumption. }
         apply PeanoNat.Nat.ltb_nlt in E. assert (i = n) by lia. subst. clear E H.
-        cbv [step_state]. rewrite step_state_equiv. fwd. split.
+        rewrite step_ostate_equiv. split.
         { apply Hp0. lia. }
         exists k''0. split; [assumption|].
         eapply predicts_ext. 2: eassumption. simpl. intros. rewrite rev_app_distr.
@@ -2254,46 +2297,62 @@ Module exec. Section WithEnv.
   Qed.
   
   (*this is not true.  see what happens if f gets stuck deterministically but not nondeterministically*)
-  Lemma poss_det_nondet {pick_sp : PickSp} f :
+  (*Lemma poss_det_nondet {pick_sp : PickSp} f :
     possible_execution_det f <->
       (possible_execution_nondet f /\ forall n,
         exists k'',
           get_trace (f (S n)) = k'' ++ get_trace (f O) /\
             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ get_trace (f O)))) (rev k'')).
-  Proof. Abort.
-
-  (*jLemma step_nondet_not_stuck_det {pick_sp : PickSp} f i:
-    step_state false f i ->
-    stuck_state true f i ->
-    False.
+  Proof. Abort.*)
+  
+  Lemma nondet_stuck_det_stuck {pick_sp : PickSp} st :
+    state_stuck false st -> state_stuck true st.
   Proof.
-    intros H1 H2.cbv [step_state stuck_state] in *. fwd. rewrite H2p1 in *. clear H2p1.
-    remember (f i) as st. clear i Heqst. destr_sstate st. inversion H1; subst.
-    - apply H2p0. eexists (_, _, _, _, _, _). econstructor; eauto.*)
+    intros H H'. apply H. fwd. rewrite step_state_equiv in H'. exists st'. fwd. assumption.
+  Qed.
+    
+
+  Lemma nondet_good_stuck_det_good_stuck {pick_sp : PickSp} st :
+    good_stuck false st -> good_stuck true st.
+  Proof.
+    intros H. induction H; econstructor; eauto using nondet_stuck_det_stuck.
+  Qed.
  
   Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post :
     excluded_middle ->
     (forall (f : nat -> _),
-        f O = (s, k, t, m, l, mc) ->
+        f O = Some (s, k, t, m, l, mc) ->
         possible_execution_nondet f ->
         satisfies_nondet f (fun k' t' m' l' mc' =>
-                              exists k'',
+                              exists k'',(*if I write forall k'' here, can I avoid the extends_trace lemmas?*)
                                 k' = k'' ++ k /\
                                   (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
                                    post k' t' m' l' mc'))) ->
     (forall (f : nat -> _),
-        f O = (s, k, t, m, l, mc) ->
+        f O = Some (s, k, t, m, l, mc) ->
         possible_execution_det f ->
         satisfies_det f post).
   Proof.
     intros em H f HfO Hfposs. assert (nondet_or_not := em (possible_execution_nondet f)).
     destruct nondet_or_not as [nondet|not].
     - specialize (H _ ltac:(eassumption) ltac:(eassumption)). cbv [satisfies_nondet] in H.
-      destruct H as [n H].
-      apply (min_satisfies _ ltac:(eassumption) _ _ _ ltac:(eassumption)) in H.
-      clear n. destruct H as [n [H1 H2]]. destr_sstate (f n). cbv [state_satisfies] in H1.
-      destruct H1 as [H1|H1].
-      + fwd.
+      destruct H as [n H]. destruct (f n) as [fn|] eqn:Efn; [|destruct H]. destr_sstate fn.
+      subst. simpl in H. destruct H as [H|H].
+      + (*both succeed*)
+        fwd. assert (Hsteps : forall i, i < n -> step_ostate true f i).
+        { Search step_ostate. apply step_until_stuck; try assumption. congruence. }
+        rewrite step_ostates_equiv in Hsteps. fwd.
+        exists n. rewrite Efn. simpl. cbv [state_satisfies]. left. intuition.
+        apply Hp1p1. rewrite HfO in Hstepsp1p1. rewrite HfO, Efn in Hstepsp1p0.
+        simpl in Hstepsp1p0. apply app_inv_tail in Hstepsp1p0. subst.
+        simpl in Hstepsp1p1. apply Hstepsp1p1.
+      + (*both good stuck*)
+        exists n. rewrite Efn. right. specialize (nondet n).
+        apply nondet_good_stuck_det_good_stuck. assumption.
+    - (*this means that f got stuck deterministically but not nondeterministically*)
+      
+  Qed.
+        eapply satisfies_short; try eassumption. simpl. exists n.
       fwd. (*does nothing?*) destruct H1 as [? H1]. subst.
       fwd. simpl in H1. cbv [state_satisfies] in H1. fwd.
       destruct H as [n H].
