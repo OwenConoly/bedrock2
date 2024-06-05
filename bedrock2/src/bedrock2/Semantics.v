@@ -1817,21 +1817,16 @@ Module exec. Section WithEnv.
         destruct HpossO. eapply satisfies_stuck_good; eassumption.
       + fwd. congruence.
     - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
-      + cbv [step_ostate] in HpossO. rewrite HfO in HpossO.
-        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HpossO]. destr_sstate st'.
-        inversion HpossO. subst. econstructor; try eassumption.
-        eapply satisfies_short; eauto.
-      + enough (sg : o1 good_stuck (f O)). { rewrite HfO in sg. inversion sg. }
-        destruct HpossO. eapply satisfies_stuck_good; eassumption.
-      + fwd. congruence.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. simpl in HsucO.
-           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. subst.
-           econstructor; try eassumption.
-           intros. exfalso. apply H8. eexists (_, _, _, _, _, _). econstructor; eassumption. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst.
-      econstructor; eauto. clear a f Ef mStack HfO Hposs Hsatf Hsuc HsucO H3 H15 H16.
+      2: { cbv [stuck_ostate] in HpossO. destruct HpossO as [HpossO _].
+           eapply satisfies_stuck_good in HpossO; try eassumption. rewrite HfO in HpossO.
+           simpl in HpossO. destruct HpossO as [HpossO|HpossO]; [|congruence].
+           inversion HpossO. subst. econstructor; eauto. intros. exfalso. apply H8.
+           eexists (_, _, _, _, _, _). econstructor; eauto. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossO. rewrite HfO in HpossO.
+      destruct (f (S O)) as [st'|]; [|destruct HpossO]. destr_sstate st'.
+      inversion HpossO. subst.
+      econstructor; eauto. clear a f mStack HfO Hposs Hsatf Hposs HpossO H3 H15 H16.
       intros. eset (st2 := (_, _, _, _, _, _)).
       assert (Xs := X st2).
       eassert (lt : _). 2: specialize (Xs lt); clear lt.
@@ -1840,7 +1835,7 @@ Module exec. Section WithEnv.
              apply t_step. econstructor; eauto. }
         apply t_step. left. apply t_step. constructor. }
       simpl in Xs.
-      eassert (Hind' : forall g, g O = (_, _, _, _, _, _) -> possible_execution g -> satisfies g post).
+      eassert (Hind' : forall g, g O = Some (_, _, _, _, _, _) -> possible_execution g -> satisfies g post).
       { intros g HgO Hpossg. eset (Sg := fun n => match n with
                                                         | O => _
                                                         | S n' => g n'
@@ -1848,7 +1843,7 @@ Module exec. Section WithEnv.
         specialize (Hsat Sg eq_refl). assert (Hsathyp : possible_execution Sg).
         2: specialize (Hsat Hsathyp); clear Hsathyp.
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. simpl. rewrite HgO. simpl.
+          - left. cbv [step_ostate state_step]. simpl. rewrite HgO. simpl.
             econstructor; eassumption.
           - apply Hpossg. }
         destruct Hsat as [i Hsat]. destruct i as [|i].
@@ -1862,24 +1857,23 @@ Module exec. Section WithEnv.
       simpl. intros * [Hlt Hsat'].
       eassert (Hpossg := possible_execution_exists). edestruct Hpossg as [g [HgO Hpossg']].
       clear Hpossg. specialize Hsat' with (1 := HgO) (2 := Hpossg').
-      assert (Hsuc := ps_suc _ _ Hpossg' Hsat'). assert (HsucO := Hsuc O).
-      destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HgO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HgO in HsucO. destr_sstate (g (S O)).
-      inversion HsucO. subst.
-      assert (Hdone := done_stable g (S O) Hpossg'). rewrite Ef in Hdone.
-      specialize (Hdone eq_refl).
-      destruct Hsat' as [i Hsat']. destruct i as [|i].
-      { rewrite HgO in Hsat'. destruct Hsat' as [Hsat'|Hsat'].
-        - destruct Hsat' as [Hsat' _]. simpl in Hsat'. congruence.
-        - inversion Hsat'. }
-      rewrite Hdone in Hsat' by lia. destruct Hsat' as [Hsat'|Hsat'].
-      2: { inversion Hsat'. }
-      destruct Hsat' as [_ Hsat']. eauto.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO; subst.
+      assert (Hpossg'O := Hpossg' O). destruct Hpossg'O as [Hpossg'O|[Hpossg'O|Hpossg'O]].
+      2: { cbv [stuck_ostate] in Hpossg'O. destruct Hpossg'O as [Hpossg'O _].
+           eapply satisfies_stuck_good in Hpossg'O; try eassumption. rewrite HgO in Hpossg'O.
+           simpl in Hpossg'O.
+           destruct Hpossg'O as [Hpossg'O _|Hpossg'O]; [inversion Hpossg'O|congruence]. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in Hpossg'O. rewrite HgO in Hpossg'O.
+      destruct (g (S O)) as [st'|] eqn:Est'; [|destruct Hpossg'O]. destr_sstate st'.
+      inversion Hpossg'O. subst. eexists. eexists. intuition eauto.
+      eapply satisfies_short; eauto.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      2: { destruct HpossO as [HpossO _]. eapply satisfies_stuck_good in HpossO; try eassumption.
+           rewrite HfO in HpossO. simpl in HpossO. destruct HpossO as [HpossO|HpossO]; [inversion HpossO|congruence]. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossO. rewrite HfO in HpossO.
+      destruct (f (S O)) as [st'|] eqn:Ef1; [|destruct HpossO]. destr_sstate st'.
+      inversion HpossO; subst.
       + eassert (Xs1 := X _). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
         { cbv [lifted_comes_after_or_repeated_prefix lift].
           eapply t_step. right. eapply t_step.
@@ -1892,7 +1886,7 @@ Module exec. Section WithEnv.
         simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
         eassert (Hsathyp : _). 2: specialize (Hsat Hsathyp); clear Hsathyp.
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. rewrite HgO. assumption.
+          - left. cbv [step_ostate state_step]. rewrite HgO. assumption.
           - specialize (Hgposs n). apply Hgposs. }
         destruct Hsat as [n Hsat]. destruct n as [|n].
         { destruct Hsat as [Hsat|Hsat].
@@ -1912,14 +1906,14 @@ Module exec. Section WithEnv.
         simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
         eassert (Hsathyp : _). 2: specialize (Hsat Hsathyp); clear Hsathyp.
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. rewrite HgO. assumption.
+          - left. cbv [step_ostate state_step]. rewrite HgO. assumption.
           - specialize (Hgposs n). apply Hgposs. }
         destruct Hsat as [n Hsat]. destruct n as [|n].
         { destruct Hsat as [Hsat|Hsat].
           - destruct Hsat as [Hsat _]. simpl in Hsat. discriminate Hsat.
           - inversion Hsat. }
         exists n. apply Hsat.
-    - clear f HfO Hposs Hsatf Hsuc.
+    - clear f HfO Hposs Hsatf.
       assert (Xs1 := X (s1, k, t, m, l, mc)). eassert (lt : _). 2: specialize (Xs1 lt); clear lt.
       { apply t_step. (* <- this is magic, and I do not understand it *)
         left. apply t_step. constructor. }
@@ -1928,27 +1922,21 @@ Module exec. Section WithEnv.
       econstructor. 1: eapply Xs1. simpl. intros * [afters2 Hs2].
       fold sstate in *.
       assert (Xs2 := X (s2, k', t', m', l', mc')). eassert (lt: _). 2: specialize (Xs2 lt); clear lt.
-      { Check t_trans. cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
+      { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
         apply t_step. right. eassumption. }
       simpl in Xs2. specialize Xs2 with (1 := Hs2). apply Xs2.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO; subst.
-      + assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
-        specialize (Hdone eq_refl).
-        destruct Hsatf as [i Hsatf]. destruct i as [|i].
-        { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
-          - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
-          - inversion Hsatf. }
-        rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
-        2: { inversion Hsatf. }
-        fwd. eapply while_false; eassumption.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      2: { destruct HpossO as [HpossO _]. eapply satisfies_stuck_good in HpossO; try eassumption.
+           rewrite HfO in HpossO. simpl in HpossO. destruct HpossO as [HpossO|HpossO]; [inversion HpossO|congruence]. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossO. rewrite HfO in HpossO.
+      destruct (f (S O)) as [st'|] eqn:Ef1; [|destruct HpossO]. destr_sstate st'.
+      inversion HpossO; subst.
+      + eapply while_false; try eassumption. eapply satisfies_short; eassumption.
       + (*I'm kind of inlining the whole proof for the seq case here, plus some more stuff...
           I wouldn't have to do this if jump_back would just be a valid thing in the
           big-step language.  Arguably I should have some intermediate big-step language.
           Oh well. *)
-        Check invert_seq.
         assert (forall g, g O = f (S O) -> possible_execution g -> satisfies g post).
         { intros. specialize (Hsat (fun n => match n with
                                              | O => f O
@@ -1957,19 +1945,19 @@ Module exec. Section WithEnv.
           simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
           eassert (Hposs' : _). 2: specialize (Hsat Hposs'); clear Hposs'.
           { intros n. destruct n.
-            - left. cbv [step_state state_step]. rewrite H. rewrite Ef. apply HsucO.
-            - apply H0. (*apply continues to impress me*) }
+            - left. cbv [step_ostate state_step]. rewrite H. rewrite Ef1. apply HpossO.
+            - apply H0. (*apply continues to impress and confuse me*) }
           destruct Hsat as [n Hsat]. destruct n as [|n].
           { cbv [state_satisfies] in Hsat. destruct Hsat as [Hsat|Hsat].
             - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
             - inversion Hsat. }
           exists n. apply Hsat. }
-        rewrite Ef in H. assert (H' := invert_seq). specialize H' with (1 := H).
+        rewrite Ef1 in H. assert (H' := invert_seq). specialize H' with (1 := H).
         clear H.
         assert (Xs := X (s, leak_bool true :: k', t0, m0, l0, mc0)).
         eassert (lt : _). 2: specialize (Xs lt); clear lt.
         { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
-          2: { apply t_step. right. apply t_step. cbv [comes_right_after state_step step_state].
+          2: { apply t_step. right. apply t_step. cbv [comes_right_after state_step step_ostate].
                instantiate (1 := (_, _, _, _, _, _)). simpl. eassumption. }
           apply t_step. left. apply t_step. constructor. }
         simpl in Xs. specialize Xs with (1 := H'). clear H'.
@@ -1978,7 +1966,7 @@ Module exec. Section WithEnv.
         eassert (lt' : _). 2: specialize (Xw lt'); clear lt'.
         { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl.
           apply t_step. right. eapply t_trans.
-          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). apply HsucO. }
+          2: { apply t_step. instantiate (1 := (_, _, _, _, _, _)). apply HpossO. }
           eapply t_trans.
           2: { eassumption. }
           eapply t_trans.
@@ -1992,10 +1980,10 @@ Module exec. Section WithEnv.
                                                   end).
         specialize (Hind h' eq_refl). assert (Hpossh' : possible_execution h').
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. simpl. instantiate (1 := (_, _, _, _, _, _)).
+          - left. cbv [step_ostate state_step]. simpl. instantiate (1 := Some (_, _, _, _, _, _)).
             simpl. eapply seq_step. econstructor.
           - destruct n as [|n].
-            + left. cbv [step_state state_step]. simpl. rewrite HhO. constructor.
+            + left. cbv [step_ostate state_step]. simpl. rewrite HhO. constructor.
             + apply Hpossh. }
         specialize (Hind Hpossh'). clear Hpossh'. destruct Hind as [n Hind].
         destruct n as [|n].
@@ -2007,14 +1995,20 @@ Module exec. Section WithEnv.
           - destruct Hind as [Hind _]. congruence.
           - inversion Hind. subst. inversion H0. }
         cbv [satisfies]. exists n. apply Hind.
-    - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst. assert (HsucSO := Hsuc (S O)). destruct HsucSO as [HsucSO|HsucSO].
-      2: { rewrite Ef in HsucSO. destruct HsucSO as [[HsucSO _]|HsucSO]; inversion HsucSO.
-           subst. inversion H0. }
-      cbv [step_state state_step] in HsucSO. rewrite Ef in HsucSO. destr_sstate (f (S (S O))).
-      inversion HsucSO. subst. inversion H12. subst.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      2: { destruct HpossO as [HpossO _]. eapply satisfies_stuck_good in HpossO; try eassumption.
+           rewrite HfO in HpossO. simpl in HpossO. destruct HpossO as [HpossO|HpossO]; [inversion HpossO|congruence]. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossO. rewrite HfO in HpossO.
+      destruct (f (S O)) as [f1|] eqn:Ef1; [|destruct HpossO]. destr_sstate f1.
+      inversion HpossO. subst. assert (HpossSO := Hposs (S O)).
+      destruct HpossSO as [HpossSO|[HpossSO|HpossSO]].
+      2: { destruct HpossSO as [HpossSO _]. eapply satisfies_stuck_good in HpossSO; try eassumption.
+           rewrite Ef1 in HpossSO. simpl in HpossSO. destruct HpossSO as [HpossSO|HpossSO]; [|congruence]. inversion HpossSO. subst. inversion H0. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossSO. rewrite Ef1 in HpossSO.
+      destruct (f (S (S O))) as [f2|] eqn:Ef2; [|destruct HpossSO]. destr_sstate f2.
+      inversion HpossSO. subst. inversion H12. subst.
       specialize (X (fbody, leak_unit :: k', t, m, l, ami 100 (amj 100 (aml 100 (ams 100 mc'))))).
       eassert (lt : _). 2: specialize (X lt); clear lt.
       { cbv [lifted_comes_after_or_repeated_prefix lift]. simpl. eapply t_trans.
@@ -2031,9 +2025,9 @@ Module exec. Section WithEnv.
         simpl in Hsat. rewrite HfO in Hsat. specialize (Hsat eq_refl).
         eassert (Hposs' : _). 2: specialize (Hsat Hposs'); clear Hposs'.
         { intros n. destruct n as [|n].
-          - left. cbv [step_state state_step]. rewrite Ef. simpl. econstructor; eauto.
+          - left. cbv [step_ostate state_step]. rewrite Ef1. simpl. econstructor; eauto.
           - destruct n as [|n].
-            + left. cbv [step_state state_step]. rewrite HgO, Ef0, Ef. constructor.
+            + left. cbv [step_ostate state_step]. rewrite HgO, Ef1, Ef2. constructor.
               econstructor; eassumption.
             + apply Hpossg. }
         destruct Hsat as [n Hsat]. destruct n as [|n].
@@ -2041,90 +2035,69 @@ Module exec. Section WithEnv.
           - destruct Hsat as [Hsat _]. congruence.
           - inversion Hsat. }
         destruct n as [|n].
-        { cbv [state_satisfies] in Hsat. rewrite Ef in Hsat. destruct Hsat as [Hsat|Hsat].
+        { cbv [state_satisfies] in Hsat. rewrite Ef1 in Hsat. destruct Hsat as [Hsat|Hsat].
           - destruct Hsat as [Hsat _]. congruence.
           - inversion Hsat. subst. inversion H0. }
         exists n. apply Hsat. }
-      rewrite Ef0 in Hind. assert (Hind' := invert_seq). specialize Hind' with (1 := Hind).
+      rewrite Ef2 in Hind. assert (Hind' := invert_seq). specialize Hind' with (1 := Hind).
       clear Hind.
       simpl in X. specialize X with (1 := Hind'). clear Hind'.
       econstructor; try eassumption. (*X is one assumption*)
       simpl. intros * [Hlt Hafter].
-      assert (Hposs' := possible_execution_exists (end_call binds rets l0, k'', t', m', st1, mc'')).
+      assert (Hposs' := possible_execution_exists (Some (end_call binds rets l0, k'', t', m', st1, mc''))).
       destruct Hposs' as [g [HgO Hgposs]].
-      assert (Hsatg := Hafter g HgO Hgposs). assert (Haftersuc := ps_suc _ _ Hgposs Hsatg).
-      assert (HaftersucO := Haftersuc O). destruct HaftersucO as [HaftersucO|HaftersucO].
-      2: { rewrite HgO in HaftersucO. destruct HaftersucO as [[HaftersucO _]|HaftersucO]; inversion HaftersucO. }
-      cbv [step_state state_step] in HaftersucO. rewrite HgO in HaftersucO. destr_sstate (g (S O)).
-      inversion HaftersucO. subst.
-      assert (Hdone := done_stable g (S O) Hgposs). rewrite Ef1 in Hdone.
-      specialize (Hdone eq_refl).
-      destruct Hsatg as [i Hsatg]. destruct i as [|i].
-      { rewrite HgO in Hsatg. destruct Hsatg as [Hsatg|Hsatg].
-        - destruct Hsatg as [Hsatg _]. simpl in Hsatg. congruence.
-        - inversion Hsatg. }
-      rewrite Hdone in Hsatg by lia. destruct Hsatg as [Hsatg|Hsatg].
-      2: { inversion Hsatg. }
-      fwd. eauto.
+      assert (Hsatg := Hafter g HgO Hgposs). assert (HgpossO := Hgposs O).
+      destruct HgpossO as [HgpossO|[HgpossO|HgpossO]].
+      2: { destruct HgpossO as [HgpossO _]. eapply satisfies_stuck_good in HgpossO; try eassumption.
+           rewrite HgO in HgpossO. simpl in HgpossO. destruct HgpossO as [HgpossO|HgpossO]; [inversion HgpossO|congruence]. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HgpossO. rewrite HgO in HgpossO.
+      destruct (g (S O)) as [g1|] eqn:Eg1; [|destruct HgpossO]. destr_sstate g1.
+      inversion HgpossO. subst. fwd. eexists. intuition eauto. eexists. intuition eauto.
+      eapply satisfies_short; eassumption.
     - destruct ext_spec_ok.
-      assert (HsucO := Hsuc O).
-      assert (stuck_enough: good_stuck (f O) -> exec (cmd.interact binds action args) k t m l mc post).
-      { clear HsucO. intros Hstuck. rewrite HfO in Hstuck. inversion Hstuck. subst.
+      assert (HpossO := Hposs O).
+      assert (stuck_enough: o1 good_stuck (f O) -> exec (cmd.interact binds action args) k t m l mc post).
+      { clear HpossO. intros Hstuck. rewrite HfO in Hstuck. inversion Hstuck. subst.
         econstructor. 3: eapply intersect. (*not H9*) all: try eassumption.
         simpl. intros * H. exfalso. apply H10. eexists (_, _, _, _, _, _).
         econstructor; eassumption. }
-      destruct HsucO as [HsucO|HsucO].
-      2: { apply stuck_enough. rewrite HfO in *.
-           destruct HsucO as [[HsucO _]|HsucO]; [discriminate HsucO|assumption]. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst. econstructor. 3: eapply intersect. all: try eassumption.
+      destruct HpossO as [HpossO|[HpossO|HpossO]].
+      2: { destruct HpossO as [HpossO _]. eapply satisfies_stuck_good in HpossO; try eassumption.
+           rewrite HfO in HpossO. simpl in HpossO. destruct HpossO as [HpossO|HpossO]; [|congruence].
+           apply stuck_enough. rewrite HfO. assumption. }
+      2: { fwd. congruence. }
+      cbv [step_ostate state_step] in HpossO. rewrite HfO in HpossO.
+      destruct (f (S O)) as [f1|] eqn:Ef1; [|destruct HpossO]. destr_sstate f1.
+      inversion HpossO. subst. econstructor. 3: eapply intersect. all: try eassumption.
       rewrite HfO in stuck_enough. simpl.
-      clear f HfO Hposs Hsatf Hsuc Ef mReceive resvals klist HsucO H16.
+      clear f HfO Hposs Hsatf Hposs Ef1 mReceive resvals klist HpossO H16.
       intros * H. eset (f1 := (_, _, _, _, _, _)).
-      assert (HpossSf := possible_execution_exists f1).
+      assert (HpossSf := possible_execution_exists (Some f1)).
       destruct HpossSf as [Sf [SfO Sfposs]].
-      eset (f := fun n => match n return sstate with
+      eset (f := fun n => match n return option sstate with
                             | O => _
                             | S n' => Sf n'
                             end).
         specialize (Hsat f eq_refl). assert (Hpossf : possible_execution f).
       { intros n. destruct n.
-        - left. cbv [step_state state_step]. simpl. rewrite SfO. econstructor; eassumption.
+        - left. cbv [step_ostate state_step]. simpl. rewrite SfO. econstructor; eassumption.
         - specialize (Sfposs n). apply Sfposs. }
       specialize (Hsat Hpossf).
-      assert (Hdone := done_stable f (S (S O)) Hpossf). Check ps_suc. 
-      assert (Hsuc := ps_suc _ _ Hpossf Hsat). assert (HsucSO := Hsuc (S O)).
-      destruct HsucSO as [HsucSO|HsucSO].
-      + cbv [step_state state_step] in HsucSO. simpl in HsucSO. rewrite SfO in HsucSO.
-        destr_sstate (Sf (S O)). simpl in HsucSO. inversion HsucSO. subst.
-        eexists. split; eauto. intros.      
-        simpl in Hdone. rewrite Ef in Hdone. specialize (Hdone eq_refl).
-        destruct Hsat as [i Hsat]. destruct i as [|i].
-        { simpl in Hsat. destruct Hsat as [Hsat|Hsat].
-          - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
-          - exfalso. inversion Hsat. subst. assert (HsucO := Hsuc O).
-            destruct HsucO as [HsucO|HsucO].
-            + apply H14. eexists. eapply HsucO.
-            + simpl in HsucO. destruct HsucO as [[HsucO _]|HsucO]; [inversion HsucO|].
-              specialize (Hpossf O). destruct Hpossf as [Hpossf|Hpossf].
-              -- eapply step_not_stuck; eassumption.
-              -- destruct Hpossf as [_ Hpossf]. simpl in Hpossf. rewrite SfO in Hpossf.
-                 Fail congruence. discriminate Hpossf. }
-        destruct i as [|i].
-        { simpl in Hsat. rewrite SfO in Hsat. destruct Hsat as [Hsat|Hsat].
-          - destruct Hsat as [Hsat _]. simpl in Hsat. congruence.
-          - exfalso. inversion Hsat. subst. apply H18. eexists (_, _, _, _, _, _). eassumption. }
-        simpl in Hsat. replace (Sf (S i)) with (f (S (S i))) in Hsat by reflexivity.
-        rewrite Hdone in Hsat by lia. destruct Hsat as [Hsat|Hsat].
-        2: { inversion Hsat. }
-        destruct Hsat as [_ Hsat]. Search map.split.
-        specialize @map.split_det with (1 := H23) (2 := H0).
-        intros. subst. apply Hsat.
-      + destruct HsucSO as [HsucSO|HsucSO].
-        { simpl in HsucSO. rewrite SfO in HsucSO. simpl in HsucSO. destruct HsucSO. congruence. }
-        simpl in HsucSO. rewrite SfO in HsucSO.
-        inversion HsucSO. subst. fwd. eexists. split; eauto. intros.
-        exfalso. apply H17. clear H17. eexists (_, _, _, _, _, _). econstructor; eassumption.
+      assert (Hdone := done_stable f (S (S O)) Hpossf). assert (HpossSO := Hpossf (S O)).
+      destruct HpossSO as [HpossSO|[HpossSO|HpossSO]].
+      2: { destruct HpossSO as [HpossSO _]. eapply satisfies_stuck_good in HpossSO; try eassumption.
+           simpl in HpossSO. rewrite SfO in HpossSO. simpl in HpossSO.
+           destruct HpossSO as [HpossSO|HpossSO]; [|congruence]. inversion HpossSO. subst.
+           fwd. eexists. split; eauto. intros.
+           exfalso. apply H17. clear H17. eexists (_, _, _, _, _, _). econstructor; eassumption. }
+      2: { fwd. simpl in HpossSOp0. rewrite SfO in HpossSOp0. congruence. }
+      cbv [step_ostate state_step] in HpossSO. simpl in HpossSO. rewrite SfO in HpossSO.
+      destruct (Sf (S O)) as [Sf1|] eqn:ESf1; [|destruct HpossSO]. destr_sstate Sf1.
+      inversion HpossSO. subst. eexists. split; eauto. intros.
+      specialize @map.split_det with (1 := H23) (2 := H0).
+      intros. subst. eapply satisfies_short; eauto.
+      instantiate (1 := (S _)). simpl. eassumption.
   Qed.
   End choice_and_middle.
   End WithDet.
