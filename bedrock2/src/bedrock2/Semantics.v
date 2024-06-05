@@ -2317,6 +2317,21 @@ Module exec. Section WithEnv.
   Proof.
     intros H. induction H; econstructor; eauto using nondet_stuck_det_stuck.
   Qed.
+
+  Lemma stuck_not_nondet_stuck_good {pick_sp : PickSp} st :
+    excluded_middle ->
+    state_stuck true st ->
+    ~state_stuck false st ->
+    good_stuck true st.
+  Proof.
+    intros em H1 H2. Search (~exists _, _). cbv [state_stuck] in H2. Search (~ ~ _).
+    apply Decidable.not_not in H2. 2: { apply em. } destruct H2 as [st' H2].
+    destr_sstate st. destr_sstate st'. subst. induction H2; intros.
+    all: try (exfalso; apply H1; eexists (_, _, _, _, _, _); econstructor; solve [eauto]).
+    - econstructor; eauto.
+    - constructor. apply IHstep. intros H'. apply H1. destruct H' as [st' H'].
+      destr_sstate st'. eexists (_, _, _, _, _, _). eapply seq_step. eassumption.
+  Qed.
  
   Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post :
     excluded_middle ->
@@ -2350,27 +2365,17 @@ Module exec. Section WithEnv.
         exists n. rewrite Efn. right. specialize (nondet n).
         apply nondet_good_stuck_det_good_stuck. assumption.
     - (*this means that f got stuck deterministically but not nondeterministically*)
-      
+      Search (~(forall _, _)). apply (naen em) in not. destruct not as [y not].
+      Search (~(_ \/ _)). apply Decidable.not_or in not. fwd. apply Decidable.not_or in notp1.
+      fwd. specialize (Hfposs y). destruct Hfposs as [Hfposs|[Hfposs|Hfposs]].
+      + exfalso. apply notp0. rewrite step_ostate_equiv in Hfposs. fwd. assumption.
+      + cbv [stuck_ostate] in Hfposs. cbv [stuck_ostate] in notp1p0. fwd.
+        assert (notp1p0' : ~o1 (state_stuck false) (f y)) by auto. clear notp1p0.
+        exists y. destruct (f y) as [fy|]; [|destruct Hfpossp0]. right.
+        apply stuck_not_nondet_stuck_good; assumption.
+      + exfalso. auto.
   Qed.
-        eapply satisfies_short; try eassumption. simpl. exists n.
-      fwd. (*does nothing?*) destruct H1 as [? H1]. subst.
-      fwd. simpl in H1. cbv [state_satisfies] in H1. fwd.
-      destruct H as [n H].
-      
-    assert (Hfnondet : forall f, possible_execution_det f -> possible_execution_nondet f). { admit. }
-    specialize (H f H0 (Hfnondet _ H1)). destruct H as [n H]. exists n.
-    destr_sstate (f n).
-    destruct H as [H|H].
-    - fwd. assert (H' : forall f s k t m l mc s' k' t' m' l' mc', possible_execution_det f ->
-                             f O = (s, k, t, m, l, mc) ->
-                             f n = (s', k', t', m', l', mc') ->
-                             exists k'', k' = k'' ++ k /\
-                                           predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (rev k'')). { admit. }
-      specialize H' with (1 := H1) (2 := H0) (3 := Ef). fwd. apply app_inv_tail in H'p0. subst.
-      specialize Hp1p1 with (1 := H'p1). left. auto.
-    - right. assert (thing : forall st, good_stuck false st -> good_stuck true st). { admit. }
-      apply thing. assumption.
-  Qed.
+        
 
 End exec.
 
