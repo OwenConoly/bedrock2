@@ -1115,9 +1115,6 @@ Module exec. Section WithEnv.
     - fwd. eapply done_stable; eassumption.
   Qed.
 
-  (*TODO (to make my proofs less long and repetitive): write a lemma that says
-    satisfies f post -> forall i, get_scmd (f i) = sskip -> post (f i).*)
-
   Fixpoint repeat_f {A: Type} (f : A -> A) x n :=
     match n with
     | O => x
@@ -1669,32 +1666,86 @@ Module exec. Section WithEnv.
   Qed.
 
   Definition successful_execution f post :=
-    forall i, step_ostate f i \/ o1 (state_satisfies post) (f i).
+    forall i, step_ostate f i \/ o1 (state_satisfies post) (f i) \/ f i = None /\ f (S i) = None.
 
+  (*it is such a pain that some of these things are stated
+    in terms of option types and some are not. I should be consistent.*)
   Lemma stuck_unique f i j :
     possible_execution f ->
     o1 state_stuck (f i) ->
     o1 state_stuck (f j) ->
     i = j.
-  Proof. Admitted.
+  Proof.
+    intros H1 H2 H3. destruct (f i) as [fi|] eqn:Efi; [|destruct H2].
+    destruct (f j) as [fj|] eqn:Efj; [|destruct H3].
+    assert (~(i < j)).
+    { intros Hlt. enough (f j = None) by congruence. eapply stuck_stable; try eassumption.
+      rewrite Efi. eassumption. }
+    assert (~ j < i).
+    { intros Hlt. enough (f i = None) by congruence. eapply stuck_stable; try eassumption.
+      rewrite Efj. eassumption. }
+    lia.
+  Qed.
+
+  (*TODO (to make my proofs less long and repetitive): write a lemma that says
+    satisfies f post -> forall i, get_scmd (f i) = sskip -> post (f i).*)
+
+  Lemma stuck_satisfies f post :
+    possible_execution f ->
+    satisfies f post ->
+    forall i,
+      o1 state_stuck (f i) ->
+      o1 (state_satisfies post) (f i).
+  Proof.
+    intros H1 H2 i H3. destruct H2 as [j H2]. destruct (f i) as [st|] eqn:Ei; [|destruct H3].
+    destr_sstate st. destruct (f j) as [st_|] eqn:Ej; [|destruct H2].
+    specialize satisfies_stuck with (1 := H2). intros H4. simpl in H3.
+    specialize stuck_unique with (1 := H1). intros unique. specialize (unique i j).
+    rewrite Ei, Ej in unique. specialize (unique ltac:(assumption) ltac:(assumption)). subst.
+    rewrite Ei in Ej. inversion Ej. subst. simpl in H2. apply H2.
+  Qed.
+
+  Lemma satisfies_short f post i k t m l mc :
+    possible_execution f ->
+    satisfies f post ->
+    f i = Some (sskip, k, t, m, l, mc) ->
+    post k t m l mc.
+  Proof.
+    intros H1 H2 H3. enough (Hsati : o1 (state_satisfies post) (f i)).
+    { rewrite H3 in Hsati. destruct Hsati as [Hsati|Hsati].
+      - fwd. assumption.
+      - inversion Hsati. }
+    apply stuck_satisfies; try assumption. rewrite H3.
+    intros [st' H']. destr_sstate st'. inversion H'.
+  Qed.
+
+  Lemma satisfies_stuck_good f i post : 
+    possible_execution f ->
+    satisfies f post ->
+    o1 state_stuck (f i) ->
+    o1 good_stuck (f i) \/ option_map get_scmd (f i) = Some sskip.
+  Proof.
+    intros H1 H2 H3. destruct H2 as [j H2]. destruct (f j) as [sj|] eqn:Ej; [|destruct H2].
+    assert (i = j).
+    { eapply stuck_unique; try eassumption. rewrite Ej. eapply satisfies_stuck; eassumption. }
+    subst. rewrite Ej in *. destruct H2 as [H2|H2].
+    - right. destr_sstate sj. fwd. reflexivity.
+    - left. assumption.
+  Qed.
   
-  Lemma ps_suc f post :
+  (*Lemma ps_suc f post :
     possible_execution f -> satisfies f post -> successful_execution f post.
   Proof.
     intros H1 H2 n. assert (H5 := H1 n). destruct H2 as [m H2]. destruct H5 as [H5|[H5|H5]].
     - left. assumption.
-    - right. apply satisfies_stuck in H2. destruct H5 as [H3 H4].
-      assert (stuck_stable1 := stuck_stable _ _ H1 H3).
-      destruct H2 as [m H2]. destruct (f m) as [fm|] eqn:Efm; [|destruct H2].
-      assert (H6 := satisfies_stuck _ _ H2).
-      destruct (f n) as [fn|]; [|destruct H3].
-      eassert (stuck_stable2 := stuck_stable _ _ H1). rewrite Efm in stuck_stable2.
-      specialize (stuck_stable2 H6).
-      specialize (stuck_stable1 (S (Nat.max n m)) ltac:(lia)).
-      specialize (stuck_stable2 (S (Nat.max n m)) ltac:(lia)).
-      rewrite stuck_stable1 in stuck_stable2. rewrite stuck_stable2 in *.
-      assumption.
-  Qed.
+    - right. left. destruct (f m) as [fm|] eqn:Efm; [|destruct H2].
+      destruct H5 as [H3 H4]. destruct (f n) as [fn|] eqn:Efn; [|destruct H3].
+      specialize satisfies_stuck with (1 := H2). intros H6.
+      specialize stuck_unique with (1 := H1). intros H7. specialize (H7 m n).
+      rewrite Efm, Efn in H7. specialize H7 with (1 := H6) (2 := H3). subst.
+      rewrite Efm in Efn. inversion Efn. subst. assumption.
+    - right. right. assumption.
+  Qed.*)
 
   Lemma weaken: forall s k t m l mc post1,
       exec s k t m l mc post1 ->
@@ -1721,7 +1772,7 @@ Module exec. Section WithEnv.
   
   Lemma step_to_exec s k t m l mc post :
     (forall (f : nat -> _),
-        f O = (inclusion s, k, t, m, l, mc) ->
+        f O = Some (inclusion s, k, t, m, l, mc) ->
         possible_execution f ->
         satisfies f post) ->
     exec s k t m l mc post.
@@ -1733,66 +1784,46 @@ Module exec. Section WithEnv.
     Unshelve. simpl. clear -em choice word_ok mem_ok ext_spec_ok. intros. destr_sstate x. subst.
     intros post Hsat.
     (* there is a possible execution *)
-    assert (Hposs := possible_execution_exists (inclusion s, k, t, m, l, mc)).
+    assert (Hposs := possible_execution_exists (Some (inclusion s, k, t, m, l, mc))).
     destruct Hposs as [f [HfO Hposs] ].
-    (* it is successful and satisfies the postcondition *)
-    assert (Hsatf := Hsat f HfO Hposs). assert (Hsuc := ps_suc _ _ Hposs Hsatf).
-    
+    assert (Hsatf := Hsat f HfO Hposs).
     destruct s.
-    - econstructor. assert (Hdone := done_stable f O Hposs). rewrite HfO in Hdone.
-      specialize (Hdone eq_refl). destruct Hsatf as [i Hsatf]. simpl in Hdone.
-      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
-      2: { inversion Hsatf. }
-      fwd. assumption.
-    - (* the 0th state is a step state *)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. simpl in HsucO.
-           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      (* find out what the 1st state is *)
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst.
-      (* show that all states after the first state are the same as the first state *)
-      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
-      specialize (Hdone eq_refl).
-      (* show that the state satisfying the postcondition is not the zeroth state *)
-      destruct Hsatf as [i Hsatf]. destruct i as [|i].
-      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
-        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
-        - inversion Hsatf. }
-      (* show that the first state satisfies the postcondition *)
-      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
-      2: { inversion Hsatf. }
-      fwd. econstructor; eassumption.
-    - (*this is identical to the previous case...*)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. simpl in HsucO.
-           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst.
-      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
-      specialize (Hdone eq_refl).
-      destruct Hsatf as [i Hsatf]. destruct i as [|i].
-      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
-        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
-        - inversion Hsatf. }
-      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
-      2: { inversion Hsatf. }
-      fwd. econstructor; eassumption.
-    - (*this is identical to the previous case...*)
-      assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
-      2: { rewrite HfO in HsucO. simpl in HsucO.
-           destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. }
-      cbv [step_state state_step] in HsucO. rewrite HfO in HsucO. destr_sstate (f (S O)).
-      inversion HsucO. subst.
-      assert (Hdone := done_stable f (S O) Hposs). rewrite Ef in Hdone.
-      specialize (Hdone eq_refl).
-      destruct Hsatf as [i Hsatf]. destruct i as [|i].
-      { rewrite HfO in Hsatf. destruct Hsatf as [Hsatf|Hsatf].
-        - destruct Hsatf as [Hsatf _]. simpl in Hsatf. congruence.
-        - inversion Hsatf. }
-      rewrite Hdone in Hsatf by lia. destruct Hsatf as [Hsatf|Hsatf].
-      2: { inversion Hsatf. }
-      fwd. econstructor; eassumption.
+    - econstructor. eapply satisfies_short; eauto.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      + cbv [step_ostate] in HpossO. rewrite HfO in HpossO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HpossO]. destr_sstate st'.
+        inversion HpossO. subst. econstructor; try eassumption.
+        eapply satisfies_short; eauto.
+      + enough (sg : o1 good_stuck (f O) \/ option_map get_scmd (f O) = Some sskip).
+        { rewrite HfO in sg. simpl in sg. destruct sg as [sg|sg]; [inversion sg|congruence]. }
+        destruct HpossO. eapply satisfies_stuck_good; eassumption.
+      + fwd. congruence.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      + cbv [step_ostate] in HpossO. rewrite HfO in HpossO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HpossO]. destr_sstate st'.
+        inversion HpossO. subst. econstructor; try eassumption.
+        eapply satisfies_short; eauto.
+      + enough (sg : o1 good_stuck (f O) \/ option_map get_scmd (f O) = Some sskip).
+        { rewrite HfO in sg. simpl in sg. destruct sg as [sg|sg]; [inversion sg|congruence]. }
+        destruct HpossO. eapply satisfies_stuck_good; eassumption.
+      + fwd. congruence.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      + cbv [step_ostate] in HpossO. rewrite HfO in HpossO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HpossO]. destr_sstate st'.
+        inversion HpossO. subst. econstructor; try eassumption.
+        eapply satisfies_short; eauto.
+      + enough (sg : o1 good_stuck (f O) \/ option_map get_scmd (f O) = Some sskip).
+        { rewrite HfO in sg. simpl in sg. destruct sg as [sg|sg]; [inversion sg|congruence]. }
+        destruct HpossO. eapply satisfies_stuck_good; eassumption.
+      + fwd. congruence.
+    - assert (HpossO := Hposs O). destruct HpossO as [HpossO|[HpossO|HpossO]].
+      + cbv [step_ostate] in HpossO. rewrite HfO in HpossO.
+        destruct (f (S O)) as [st'|] eqn:Est'; [|destruct HpossO]. destr_sstate st'.
+        inversion HpossO. subst. econstructor; try eassumption.
+        eapply satisfies_short; eauto.
+      + enough (sg : o1 good_stuck (f O)). { rewrite HfO in sg. inversion sg. }
+        destruct HpossO. eapply satisfies_stuck_good; eassumption.
+      + fwd. congruence.
     - assert (HsucO := Hsuc O). destruct HsucO as [HsucO|HsucO].
       2: { rewrite HfO in HsucO. simpl in HsucO.
            destruct HsucO as [[HsucO _]|HsucO]; inversion HsucO. subst.
