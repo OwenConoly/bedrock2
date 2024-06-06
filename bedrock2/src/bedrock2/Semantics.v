@@ -278,66 +278,6 @@ Section semantics.
           Some (v :: args, mc'', tr'')
       | _ => Some (nil, mc, tr)
     end.
-    
-    Lemma expr_to_other_trace e mc mc' k1 k1' v :
-      eval_expr e mc k1 = Some (v, mc', k1') ->
-      exists k'',
-        k1' = k'' ++ k1 /\
-          forall k2,
-          eval_expr e mc k2 = Some (v, mc', k'' ++ k2).
-    Proof.
-      revert v. revert mc. revert k1. revert k1'. revert mc'. clear.
-      induction e; intros ? ? ? ? ? H; simpl in H; try (inversion H; subst; clear H).
-      - exists nil. auto.
-      - destruct (map.get l x) as [v0|] eqn:E; [|congruence]. inversion H1; subst; clear H1.
-        exists nil. simpl. rewrite E. auto.
-      - destruct (eval_expr _ _ _) as [v0|] eqn:E1; [|congruence].
-        destruct v0. destruct p. destruct (load _ _ _) as [v0|] eqn:E2; [|congruence].
-        inversion H1; subst; clear H1. eapply IHe in E1. destruct E1 as [k'' [E1 E3] ]. subst.
-        eexists (_ :: _). intuition. simpl. rewrite E3. rewrite E2. reflexivity.
-      - destruct (eval_expr _ _ _) as [v0|] eqn:E1; [|congruence].
-        destruct v0. destruct p. destruct (load _ _ _) as [v0|] eqn:E2; [|congruence].
-        inversion H1; subst; clear H1. eapply IHe in E1. destruct E1 as [k'' [E1 E3] ]. subst.
-        eexists (_ :: _). intuition. simpl. rewrite E3. rewrite E2. reflexivity.
-      - destruct (eval_expr e1 _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
-        destruct (eval_expr e2 _ _) as [ [ [v1 mc1] p1]|] eqn:E2; [|congruence].
-        inversion H1; subst; clear H1.
-        eapply IHe1 in E1. destruct E1 as [k''1 [H1 H2] ]. eapply IHe2 in E2.
-        destruct E2 as [k''2 [H3 H4] ]. subst.
-        eexists (_ ++ _ ++ _). repeat rewrite <- (app_assoc _ _ k1). intuition.
-        simpl. rewrite H2. rewrite H4. f_equal. f_equal. repeat rewrite <- (app_assoc _ _ k2).
-        reflexivity.
-      - destruct (eval_expr e1 _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
-        eapply IHe1 in E1. destruct E1 as [k''1 [H2 H3] ]. subst. simpl.
-        destruct (word.eqb _ _) eqn:E.
-        + eapply IHe3 in H1. destruct H1 as [k''3 [H1 H2] ]. subst.
-          eexists (_ ++ _ :: _). repeat rewrite <- (app_assoc _ _ k1).
-          intuition. rewrite H3. rewrite E. rewrite H2.
-          repeat rewrite <- (app_assoc _ _ k2). reflexivity.
-        + eapply IHe2 in H1. destruct H1 as [k''2 [H1 H2] ]. subst.
-          eexists (_ ++ _ :: _). repeat rewrite <- (app_assoc _ _ k1).
-          intuition. rewrite H3. rewrite E. rewrite H2.
-          repeat rewrite <- (app_assoc _ _ k2). reflexivity.
-    Qed.
-
-    Lemma call_args_to_other_trace arges mc k1 vs mc' k1' :
-      evaluate_call_args_log arges mc k1 = Some (vs, mc', k1') ->
-      exists k'',
-        k1' = k'' ++ k1 /\
-          forall k2,
-            evaluate_call_args_log arges mc k2 = Some (vs, mc', k'' ++ k2).
-    Proof.
-      revert mc. revert k1. revert vs. revert mc'. revert k1'. induction arges; intros.
-      - cbn [evaluate_call_args_log] in H. inversion H. subst.
-        exists nil. intuition.
-      - cbn [evaluate_call_args_log] in *.
-        destruct (eval_expr _ _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
-        destruct (evaluate_call_args_log _ _ _) as [ [ [v1 mc1] p1]|] eqn:E2; [|congruence].
-        apply expr_to_other_trace in E1. apply IHarges in E2. fwd.
-        eexists (_ ++ _).
-        repeat rewrite <- (app_assoc _ _ k1). intuition. repeat rewrite <- (app_assoc _ _ k2).
-        rewrite E1p1. rewrite E2p1. reflexivity.
-    Qed.
 
     Lemma eval_expr_extends_trace :
     forall e0 mc k v mc' k',
@@ -400,6 +340,66 @@ Section semantics.
       + eapply IHargesp1. eassumption.
       + eapply E1p1. eassumption.
   Qed.
+    
+    Lemma expr_to_other_trace e mc mc' k1 k1' v :
+      eval_expr e mc k1 = Some (v, mc', k1') ->
+      exists k'',
+        k1' = k'' ++ k1 /\
+          forall k2,
+          eval_expr e mc k2 = Some (v, mc', k'' ++ k2).
+    Proof.
+      revert v. revert mc. revert k1. revert k1'. revert mc'. clear.
+      induction e; intros ? ? ? ? ? H; simpl in H; try (inversion H; subst; clear H).
+      - exists nil. auto.
+      - destruct (map.get l x) as [v0|] eqn:E; [|congruence]. inversion H1; subst; clear H1.
+        exists nil. simpl. rewrite E. auto.
+      - destruct (eval_expr _ _ _) as [v0|] eqn:E1; [|congruence].
+        destruct v0. destruct p. destruct (load _ _ _) as [v0|] eqn:E2; [|congruence].
+        inversion H1; subst; clear H1. eapply IHe in E1. destruct E1 as [k'' [E1 E3] ]. subst.
+        eexists (_ :: _). intuition. simpl. rewrite E3. rewrite E2. reflexivity.
+      - destruct (eval_expr _ _ _) as [v0|] eqn:E1; [|congruence].
+        destruct v0. destruct p. destruct (load _ _ _) as [v0|] eqn:E2; [|congruence].
+        inversion H1; subst; clear H1. eapply IHe in E1. destruct E1 as [k'' [E1 E3] ]. subst.
+        eexists (_ :: _). intuition. simpl. rewrite E3. rewrite E2. reflexivity.
+      - destruct (eval_expr e1 _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
+        destruct (eval_expr e2 _ _) as [ [ [v1 mc1] p1]|] eqn:E2; [|congruence].
+        inversion H1; subst; clear H1.
+        eapply IHe1 in E1. destruct E1 as [k''1 [H1 H2] ]. eapply IHe2 in E2.
+        destruct E2 as [k''2 [H3 H4] ]. subst.
+        eexists (_ ++ _ ++ _). repeat rewrite <- (app_assoc _ _ k1). intuition.
+        simpl. rewrite H2. rewrite H4. f_equal. f_equal. repeat rewrite <- (app_assoc _ _ k2).
+        reflexivity.
+      - destruct (eval_expr e1 _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
+        eapply IHe1 in E1. destruct E1 as [k''1 [H2 H3] ]. subst. simpl.
+        destruct (word.eqb _ _) eqn:E.
+        + eapply IHe3 in H1. destruct H1 as [k''3 [H1 H2] ]. subst.
+          eexists (_ ++ _ :: _). repeat rewrite <- (app_assoc _ _ k1).
+          intuition. rewrite H3. rewrite E. rewrite H2.
+          repeat rewrite <- (app_assoc _ _ k2). reflexivity.
+        + eapply IHe2 in H1. destruct H1 as [k''2 [H1 H2] ]. subst.
+          eexists (_ ++ _ :: _). repeat rewrite <- (app_assoc _ _ k1).
+          intuition. rewrite H3. rewrite E. rewrite H2.
+          repeat rewrite <- (app_assoc _ _ k2). reflexivity.
+    Qed.
+
+    Lemma call_args_to_other_trace arges mc k1 vs mc' k1' :
+      evaluate_call_args_log arges mc k1 = Some (vs, mc', k1') ->
+      exists k'',
+        k1' = k'' ++ k1 /\
+          forall k2,
+            evaluate_call_args_log arges mc k2 = Some (vs, mc', k'' ++ k2).
+    Proof.
+      revert mc. revert k1. revert vs. revert mc'. revert k1'. induction arges; intros.
+      - cbn [evaluate_call_args_log] in H. inversion H. subst.
+        exists nil. intuition.
+      - cbn [evaluate_call_args_log] in *.
+        destruct (eval_expr _ _ _) as [ [ [v0 mc0] p0]|] eqn:E1; [|congruence].
+        destruct (evaluate_call_args_log _ _ _) as [ [ [v1 mc1] p1]|] eqn:E2; [|congruence].
+        apply expr_to_other_trace in E1. apply IHarges in E2. fwd.
+        eexists (_ ++ _).
+        repeat rewrite <- (app_assoc _ _ k1). intuition. repeat rewrite <- (app_assoc _ _ k2).
+        rewrite E1p1. rewrite E2p1. reflexivity.
+    Qed.
   End WithMemAndLocals.
 End semantics.
 
@@ -2097,12 +2097,141 @@ Module exec. Section WithEnv.
       intros. subst. eapply satisfies_short; eauto.
       instantiate (1 := (S _)). simpl. eassumption.
   Qed.
+
+  (*how far is it, in the worst case, from adding something to the trace*) Print scmd.
+  Fixpoint size (s : scmd) :=
+    match s with
+    | sseq s1 s2 => S (size s1 + size s2)
+    | sskip => O
+    | scall _ _ _ => S (S (S (S (S O))))
+    | start_call _ _ _ _ _ => S (S O)
+    | sinteract _ _ _ => S (S O)
+    | _ => S O
+    end.
+
+  Definition get_trace (st : sstate) :=
+    let '(s, k, t, m, l, mc) := st in k.
+
+  Lemma step_decreases_size_or_lengthens_trace st st' :
+    state_step st st' ->
+    length (get_trace st) < length (get_trace st') \/ length (get_trace st) <= length (get_trace st') /\ size (get_scmd st') < size (get_scmd st).
+  Proof.
+    intros H. destr_sstate st. destr_sstate st'. subst. induction H; subst_exprs.
+    all: simpl in *; repeat rewrite app_length; lia.
+  Qed.
+
+  Definition val_def {A : Type} (default : A) (x : option A) :=
+    match x with
+    | Some x => x
+    | None => default
+    end.
+
+  Definition oget_trace (ost : option sstate) :=
+    match ost with
+    | Some st => get_trace st
+    | None => nil
+    end.
+
+  Definition oget_scmd (ost : option sstate) :=
+    match ost with
+    | Some st => get_scmd st
+    | None => sskip
+    end.
+
+  Lemma steps_decrease_size_or_lengthen_trace (f : nat -> option sstate) n m :
+    possible_execution f ->
+    length (oget_trace (f n)) < length (oget_trace (f (m + n))) \/
+      length (oget_trace (f n)) <= length (oget_trace (f (m + n))) /\
+        size (oget_scmd (f (m + n))) + m <= size (oget_scmd (f n)) \/
+      f (m + n) = None.
+  Proof.
+    intros H. induction m.
+    - simpl. lia.
+    - simpl. specialize (H (m + n)). destruct H as [H|[H|H]].
+      + cbv [step_ostate] in H. destruct (f (m + n)), (f (S (m + n))); try solve [destruct H].
+        apply step_decreases_size_or_lengthens_trace in H. simpl in *.
+        destruct IHm as [IHm|[IHm|IHm]]; try lia. congruence.
+      + destruct H as [_ H]. auto.
+      + destruct H as [_ H]. auto.
+  Qed.
+
+  Lemma trace_lengthens (f : nat -> option sstate) n :
+    possible_execution f ->
+    length (oget_trace (f n)) < length (oget_trace (f (S (size (oget_scmd (f n))) + n))) \/
+      f (S (size (oget_scmd (f n))) + n) = None.
+  Proof.
+    intros H. specialize (steps_decrease_size_or_lengthen_trace _ n (S (size (oget_scmd (f n)))) H).
+    intros H'. destruct H' as [H'|[H'|H']]; try lia. auto.
+  Qed.
+
+  (*goes far enough to add length n to the trace*)
+  Fixpoint enough_distance (f : nat -> option sstate) (distance : nat) (n : nat) :=
+    match n with
+    | O => distance
+    | S n' => enough_distance f (S (size (oget_scmd (f distance))) + distance) n'
+    end.
+
+  Lemma its_enough' f d n :
+    possible_execution f ->
+    d <= enough_distance f d n /\
+      (f (enough_distance f d n) = None \/ 
+         n + length (oget_trace (f d)) <= length (oget_trace (f (enough_distance f d n)))).
+  Proof.
+    intros H. revert d. induction n.
+    - intros. simpl. lia.
+    - intros. simpl. specialize (IHn (S (size (oget_scmd (f d)) + d))). destruct IHn as [grow IHn].
+      split; [lia|]. destruct IHn as [IHn|IHn].
+      + left. assumption.
+      + assert (longer:= trace_lengthens f d H). destruct longer as [longer|longer].
+        2: { left. eapply done_stable; try eassumption. }
+        right. simpl in *. lia.
+  Qed.
+
+  Lemma its_enough f d n :
+    possible_execution f ->
+    (f (enough_distance f d n) = None \/ 
+       n + length (oget_trace (f d)) <= length (oget_trace (f (enough_distance f d n)))).
+  Proof. intros H. eapply its_enough' in H. fwd. eauto. Qed.
+
+  Search predicts.
+  
+  Fixpoint get_long_trace f fuel :=
+    match fuel with
+    | O => oget_trace (f O)
+    | S fuel' =>
+        match (f O) with
+        | Some st => get_trace st
+        | None => get_long_trace f fuel'
+        end
+    end. Print prefix.
+
+  Lemma get_long_trace_works' f fuel :
+    possible_execution f ->
+    forall n,
+      n <= fuel ->
+      exists k'', get_long_trace f fuel = k'' ++ oget_trace (f n).
+  Proof. Admitted.
+
+  Lemma get_long_trace_works f n k :
+    possible_execution f ->
+    option_map get_trace (f n) = Some k ->
+    k = get_long_trace f (enough_distance f O (length k)).
+  Proof. Admitted.
+    
+    (*option_map get_trace (f i) = Some k ->
+    exists j, option_map get_trace (f j) = Some (get_long_trace f (enough_distance f O n)) /\
+                                             length (oget_trace (f j)) >= n.
+  Proof.
+    intros H1 H2. destruct H2 as [j H2]. assert (H3 := its_enough f O n H1). destruct H3 as [H3|H3].
+    - 
+    option_map length (option_map get_tget_long_trace f (enough_distance f (enough_distance f O (length ( *)
+  
   End choice_and_middle.
   End WithDet.
   Print possible_execution.
   Definition possible_execution_det {pick_sp : PickSp} := possible_execution true.
   Definition satisfies_det {pick_sp : PickSp} := satisfies true.
-  Definition possible_execution_nondet := possible_execution (pick_sp := fun _ => word.of_Z 0) false.
+  Definition possible_execution_nondet {pick_sp : PickSp} := possible_execution false.
   Definition satisfies_nondet {pick_sp : PickSp} := satisfies false. Check predicts.
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop.
 
@@ -2121,9 +2250,6 @@ Module exec. Section WithEnv.
     state_stuck false st -> state_stuck true st.
   Proof.
     intros H1 H2. apply H1. clear H1. fwd. exists st'.*)
-
-  Definition get_trace (st : sstate) :=
-    let '(s, k, t, m, l, mc) := st in k.
 
   Lemma predicts_trivially k :
     (forall x, ~In (consume_word x) k) ->
@@ -2153,12 +2279,6 @@ Module exec. Section WithEnv.
       + assumption.
       + rewrite fold_app. apply IHk1; assumption.
   Qed.
-
-  Definition val_def {A : Type} (default : A) (x : option A) :=
-    match x with
-    | Some x => x
-    | None => default
-    end.
 
   Lemma predicts_app_inv k1 k2 f :
     predicts f (k1 ++ k2) ->
@@ -2343,7 +2463,7 @@ Module exec. Section WithEnv.
     eexists (_, _, _, _, _, _). eapply seq_step. eassumption.
   Qed.
 
-  Lemma dont_care (pick_sp1 pick_sp2 : PickSp) st st' :
+  Lemma pick_sp_irrelevant (pick_sp1 pick_sp2 : PickSp) st st' :
     state_step (pick_sp := pick_sp1) false st st' ->
     state_step (pick_sp := pick_sp2) false st st'.
   Proof.
@@ -2351,11 +2471,11 @@ Module exec. Section WithEnv.
     congruence.
   Qed.
 
-  Lemma dont_care' (pick_sp1 pick_sp2 : PickSp) f i :
+  Lemma option_pick_sp_irrelevant (pick_sp1 pick_sp2 : PickSp) f i :
     step_ostate (pick_sp := pick_sp1) false f i ->
     step_ostate (pick_sp := pick_sp2) false f i.
   Proof.
-    cbv [step_ostate]. destruct (f i), (f (S i)); try intros []. apply dont_care. Qed.
+    cbv [step_ostate]. destruct (f i), (f (S i)); try intros []. apply pick_sp_irrelevant. Qed.
  
   Lemma nondet_to_det {pick_sp : PickSp} s k t m l mc post f :
     excluded_middle ->
@@ -2389,15 +2509,16 @@ Module exec. Section WithEnv.
       Search (~(forall _, _)). apply (naen em) in not. destruct not as [y not].
       Search (~(_ \/ _)). apply Decidable.not_or in not. fwd. apply Decidable.not_or in notp1.
       fwd. specialize (Hfposs y). destruct Hfposs as [Hfposs|[Hfposs|Hfposs]].
-      + exfalso. apply notp0. rewrite step_ostate_equiv in Hfposs. fwd.
-        eapply dont_care'. eassumption.
+      + exfalso. apply notp0. rewrite step_ostate_equiv in Hfposs. fwd. eassumption.
       + cbv [stuck_ostate] in Hfposs. cbv [stuck_ostate] in notp1p0. fwd.
-        assert (notp1p0' : ~o1 (state_stuck false) (f y)).
-        { intuition eauto 10 using dont_care'. clear notp1p0.
+        assert (notp1p0' : ~o1 (state_stuck false) (f y)) by auto. clear notp1p0.
         exists y. destruct (f y) as [fy|]; [|destruct Hfpossp0]. right.
         apply stuck_not_nondet_stuck_good; assumption.
       + exfalso. auto.
   Qed.
+  
+  (*returns n such that f n = None, or f n has a trace of length at least m*)
+  Fixpoint find_the_trace (f : nat -> option sstate) (m : nat)
 
   Lemma no_nones_steps {pick_sp : PickSp} f :
     possible_execution_nondet f ->
@@ -2415,7 +2536,7 @@ Module exec. Section WithEnv.
   (*Lemma trace_gets_longer_seq {pick_sp : PickSp} f i :
     if all executions starting with s1 and s2 eventually get a longer trace,
     then the same goes for sseq s1 s2.*)
-    
+  
 
   Lemma trace_gets_longer {pick_sp : PickSp} f i :
     possible_execution_nondet f ->
