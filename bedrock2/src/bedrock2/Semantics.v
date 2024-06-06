@@ -2194,29 +2194,99 @@ Module exec. Section WithEnv.
   Proof. intros H. eapply its_enough' in H. fwd. eauto. Qed.
 
   Search predicts.
-  
-  Fixpoint get_long_trace f fuel :=
+
+  (*returns the index of a long enough trace*)
+  Fixpoint get_long_trace (f : nat -> option sstate) fuel :=
     match fuel with
-    | O => oget_trace (f O)
+    | O => O
     | S fuel' =>
-        match (f O) with
-        | Some st => get_trace st
+        match (f fuel) with
+        | Some st => fuel
         | None => get_long_trace f fuel'
         end
     end. Print prefix.
+
+  Lemma step_extends_trace st st' :
+    state_step st st' ->
+    exists k'', get_trace st' = k'' ++ get_trace st.
+  Proof.
+    intros H. destr_sstate st. destr_sstate st'. subst. induction H; subst_exprs.
+    all: try (eexists; simpl; solve [trace_alignment]). fwd. exists k''. assumption.
+  Qed.
+
+  Lemma ostep_extends_trace st st' :
+    o2 state_step st st' ->
+    exists k'', oget_trace st' = k'' ++ oget_trace st.
+  Proof.
+    intros H. destruct st, st'; try solve [destruct H]. apply step_extends_trace. assumption.
+  Qed.
+    
+  Lemma steps_extend_trace f n1 n2 :
+    n1 <= n2 ->
+    (forall i, n1 <= i < n2 -> o2 state_step (f i) (f (S i))) ->
+    exists k'', oget_trace (f n2) = k'' ++ oget_trace (f n1).
+  Proof.
+    intros H1. replace n2 with ((n2 - n1) + n1) by lia.
+    induction (n2 - n1).
+    - intros _. exists nil. reflexivity.
+    - intros H. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
+      { intros. apply H. lia. }
+      fwd. specialize (H (n + n1) ltac:(lia)). apply ostep_extends_trace in H. fwd.
+      eexists. simpl. rewrite H. trace_alignment. eassumption.
+  Qed.
+
+  Lemma get_long_trace_small_enough f fuel :
+    possible_execution f ->
+    forall i, i < get_long_trace f fuel -> step_ostate f i.
+  Proof.
+    intros H i Hi. induction fuel.
+    - simpl in Hi. lia.
+    - simpl in Hi. destruct (f (S fuel)) eqn:EfSf.
+      + eapply step_until_stuck; eauto. rewrite EfSf. congruence.
+      + auto.
+  Qed.
+  
+  Lemma get_long_trace_big_enough f fuel :
+    possible_execution f ->
+    forall i,
+      get_long_trace f fuel < i <= fuel ->
+      f i = None.
+  Proof.
+    intros H i Hi. induction fuel.
+    - simpl in Hi. lia.
+    - simpl in Hi. destruct (f (S fuel)) eqn:EfSf.
+      + lia.
+      + assert (i = S fuel \/ i <= fuel) by lia. destruct H0; [subst; assumption|].
+        apply IHfuel. lia.
+  Qed.
 
   Lemma get_long_trace_works' f fuel :
     possible_execution f ->
     forall n,
       n <= fuel ->
-      exists k'', get_long_trace f fuel = k'' ++ oget_trace (f n).
-  Proof. Admitted.
+      exists k'', oget_trace (f (get_long_trace f fuel)) = k'' ++ oget_trace (f n).
+  Proof.
+    intros H n Hn. (*assert (H1: n = get_long_trace f fuel \/ n <> get_long_trace f fuel) by lia.
+    destruct H1 as [H1|H1]; [subst; eexists; trace_alignment|].*)
+    assert (H2: n <= get_long_trace f fuel \/ get_long_trace f fuel < n) by lia.
+    destruct H2 as [H2|H2].
+    - apply steps_extend_trace; try lia. intros i H3.
+      eapply (get_long_trace_small_enough f fuel); try assumption. lia.
+    - assert (H': f n = None).
+      { eapply get_long_trace_big_enough; eauto. }
+      eexists. rewrite H'. simpl. rewrite app_nil_r. trace_alignment.
+  Qed.
 
-  Lemma get_long_trace_works f n k :
+  Lemma get_long_trace_works f n :
     possible_execution f ->
-    option_map get_trace (f n) = Some k ->
-    k = get_long_trace f (enough_distance f O (length k)).
-  Proof. Admitted.
+    exists k'',
+    oget_trace (f (get_long_trace f (enough_distance f O (length (oget_trace (f n)))))) = k'' ++ oget_trace (f n).
+  Proof.
+    intros H. apply get_long_trace_works'; try assumption.
+    apply (its_enough f O (length (oget_trace (f n)))) in H.
+    destruct (f n) as [fn|]; [|simpl in H2; congruence].
+    destruct H1 as [H1|H1].
+    - 
     
     (*option_map get_trace (f i) = Some k ->
     exists j, option_map get_trace (f j) = Some (get_long_trace f (enough_distance f O n)) /\
@@ -2289,31 +2359,6 @@ Module exec. Section WithEnv.
     - intros f H. inversion H. subst. apply IHk1 in H4. fwd. split.
       + constructor; assumption.
       + assumption.
-  Qed.
-
-  Lemma step_extends_trace {pick_sp : PickSp} st st' :
-    state_step false st st' ->
-    exists k'', get_trace st' = k'' ++ get_trace st.
-  Proof.
-    intros H. destr_sstate st. destr_sstate st'. subst. induction H; subst_exprs.
-    all: try (eexists; simpl; solve [trace_alignment]). fwd. exists k''. assumption.
-  Qed.
-
-  Lemma ostep_extends_trace {pick_sp : PickSp} st st' :
-    o2 (state_step false) st st' ->
-    exists k'', val_def nil (option_map get_trace st') = k'' ++ val_def nil (option_map get_trace st).
-  Proof. intros H. destruct st, st'; try solve [destruct H]. apply step_extends_trace. assumption. Qed.
-    
-  Lemma steps_extend_trace {pick_sp : PickSp} f n :
-    (forall i, i < n -> o2 (state_step false) (f i) (f (S i))) ->
-    exists k'', val_def nil (option_map get_trace (f n)) = k'' ++ val_def nil (option_map get_trace (f O)).
-  Proof.
-    induction n.
-    - intros _. exists nil. reflexivity.
-    - intros H. eassert (hyp : _). 2: specialize (IHn hyp); clear hyp.
-      { intros. apply H. lia. }
-      fwd. specialize (H n ltac:(lia)). apply ostep_extends_trace in H. fwd.
-      eexists. rewrite H. trace_alignment. eassumption.
   Qed.      
     
   Lemma step_state_equiv {pick_sp : PickSp} st st' :
