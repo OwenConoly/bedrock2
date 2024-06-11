@@ -422,8 +422,8 @@ Module exec. Section WithEnv.
   Local Notation metrics := MetricLog.
 
   Section WithDet.
-    Context {pick_sp : PickSp}.
     Context (salloc_det : bool).
+    Context {pick_sp : PickSp}.
 
   Implicit Types post : trace -> io_trace -> mem -> locals -> metrics -> Prop. (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
 
@@ -2753,22 +2753,40 @@ Module exec. Section WithEnv.
     - intros. eapply nondet_to_det; eauto.
     - intros. eapply det_to_nondet; eauto.
   Qed.
+
+  Print exec.
+
+  Definition exec_det := @exec true.
+  Definition exec_nondet := @exec false.
+
+  Check exec_to_step.
+
+  Lemma exec_det_equiv_nondet s k t m l mc post :
+    excluded_middle ->
+    FunctionalChoice_on (option sstate) (option sstate) ->
+    ext_spec.ok ext_spec ->
+    word.ok word ->
+    map.ok mem ->
+    (forall pick_sp,
+        exec_nondet pick_sp s k t m l mc (fun k' t' m' l' mc' =>
+                                    exists k'',
+                                      k' = k'' ++ k /\
+                                        (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
+                                         post k' t' m' l' mc')))
+    <->
+      (forall pick_sp,
+          exec_det pick_sp s k t m l mc post).
+  Proof.
+    intros em choice ext_spec_ok word_ok mem_ok. split.
+    - intros H pick_sp. apply step_to_exec; try assumption. revert pick_sp.
+      rewrite <- det_equiv_nondet by assumption. intros pick_sp. apply exec_to_step; try assumption.
+      apply H.
+    - intros H pick_sp. apply step_to_exec; try assumption. revert pick_sp.
+      rewrite det_equiv_nondet by assumption. intros pick_sp. apply exec_to_step; try assumption.
+      apply H.
+  Qed.
     
 End exec.
-
-(*forall (f : nat -> _),
-  f O = (inclusion s, k, t, m, l, mc) ->
-  possible_execution f ->
-  satisfies f post*)
-
-Print exec.possible_execution.
-
-
-Definition possible_execution_det := 
-
-
-
-Lemma small_steps_same
 
 Lemma intersect: forall k t l m mc s post1,
       exec s k t m l mc post1 ->
