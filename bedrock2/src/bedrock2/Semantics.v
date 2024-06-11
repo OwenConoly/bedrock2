@@ -2220,7 +2220,8 @@ Module exec. Section WithEnv.
   Proof.
     intros H. destruct st, st'; try solve [destruct H]. apply step_extends_trace. assumption.
   Qed.
-    
+
+  (*should prove this as a corollary of the thing above, or get rid of it entirerly.*)
   Lemma steps_extend_trace f n1 n2 :
     n1 <= n2 ->
     (forall i, n1 <= i < n2 -> o2 state_step (f i) (f (S i))) ->
@@ -2235,7 +2236,27 @@ Module exec. Section WithEnv.
       eexists. simpl. rewrite H. trace_alignment. eassumption.
   Qed.
 
-  Lemma get_long_trace_small_enough f fuel :
+  Lemma other_steps_extend_trace f n1 n2 :
+    possible_execution f ->
+    n1 <= n2 ->
+    f n2 = None \/ exists k'', oget_trace (f n2)  = k'' ++ oget_trace (f n1).
+  Proof.
+    intros H0 H1. replace n2 with ((n2 - n1) + n1) by lia.
+    induction (n2 - n1).
+    - right. exists nil. reflexivity.
+    - fwd. specialize (H0 (n + n1)). destruct H0 as [H0|[H0|H0]]; destruct IHn as [IHn|IHn].
+      + cbv [step_ostate] in H0. rewrite IHn in H0. destruct H0.
+      + fwd. right.
+        enough (exists k''0, oget_trace (f (S n + n1)) = k''0 ++ oget_trace (f (n + n1))).
+        { fwd. eexists. rewrite H, IHn. rewrite app_assoc. reflexivity. }
+        apply ostep_extends_trace. apply H0.
+      + cbv [stuck_ostate] in H0. rewrite IHn in H0. destruct H0 as [[] _].
+      + left. cbv [stuck_ostate] in H0. fwd. assumption.
+      + fwd. left. assumption.
+      + fwd. left. assumption.
+  Qed.
+
+  (*Lemma get_long_trace_small_enough f fuel :
     possible_execution f ->
     forall i, i < get_long_trace f fuel -> step_ostate f i.
   Proof.
@@ -2258,43 +2279,56 @@ Module exec. Section WithEnv.
       + lia.
       + assert (i = S fuel \/ i <= fuel) by lia. destruct H0; [subst; assumption|].
         apply IHfuel. lia.
-  Qed.
+  Qed.*)
 
   Lemma get_long_trace_works' f fuel :
     possible_execution f ->
     forall n,
-      n <= fuel ->
+      length (oget_trace (f n)) <= length (oget_trace (f fuel)) \/ f fuel = None ->
       exists k'', oget_trace (f (get_long_trace f fuel)) = k'' ++ oget_trace (f n).
   Proof.
-    intros H n Hn. (*assert (H1: n = get_long_trace f fuel \/ n <> get_long_trace f fuel) by lia.
-    destruct H1 as [H1|H1]; [subst; eexists; trace_alignment|].*)
-    assert (H2: n <= get_long_trace f fuel \/ get_long_trace f fuel < n) by lia.
-    destruct H2 as [H2|H2].
-    - apply steps_extend_trace; try lia. intros i H3.
-      eapply (get_long_trace_small_enough f fuel); try assumption. lia.
-    - assert (H': f n = None).
-      { eapply get_long_trace_big_enough; eauto. }
-      eexists. rewrite H'. simpl. rewrite app_nil_r. trace_alignment.
+    intros H n Hn. induction fuel.
+    - simpl. Check other_steps_extend_trace. destruct Hn as [Hn|Hn].
+      + assert (Hle : O <= n) by lia. apply (other_steps_extend_trace _ _ _ H) in Hle.
+        destruct Hle as [Hle|Hle].
+        -- rewrite Hle. eexists. rewrite app_nil_r. reflexivity.
+        -- fwd. rewrite Hle in Hn. rewrite app_length in Hn. destruct k''; [|simpl in Hn; lia].
+           rewrite Hle. exists nil. reflexivity.
+      + enough (f n = None). { rewrite H0. eexists. rewrite app_nil_r. reflexivity. }
+        eapply done_stable; eauto. lia.
+    - simpl. destruct Hn as [Hn|Hn].
+      + clear IHfuel. assert (Hle: n <= S fuel \/ S fuel <= n) by lia.
+        destruct (f (S fuel)) as [fSf|] eqn:EfSf.
+        2: { destruct (oget_trace (f n)); [|simpl in Hn; lia].
+             eexists. rewrite app_nil_r. reflexivity. }
+        rewrite EfSf. destruct Hle as [Hle|Hle].
+        -- apply (other_steps_extend_trace _ _ _ H) in Hle. destruct Hle as [Hle|Hle]; [congruence|].
+           rewrite EfSf in Hle. apply Hle.
+        -- assert (Hle' := Hle). apply (other_steps_extend_trace _ _ _ H) in Hle.
+           destruct Hle as [Hle|Hle].
+           { rewrite Hle. eexists. rewrite app_nil_r. reflexivity. }
+           fwd. rewrite Hle in Hn. rewrite app_length in Hn. rewrite EfSf in Hn.
+           destruct k''; [|simpl in Hn; lia]. rewrite Hle. exists nil. rewrite EfSf. reflexivity.
+      + rewrite Hn. apply IHfuel. clear IHfuel.
+        assert (Hle : n <= fuel \/ fuel < n) by lia. destruct Hle as [Hle|Hle].
+        -- apply (other_steps_extend_trace _ _ _ H) in Hle. destruct Hle as [Hle|Hle].
+           ++ right. assumption.
+           ++ left. fwd. rewrite Hle. rewrite app_length. lia.
+        -- left. enough (H0: f n = None). { rewrite H0. simpl. lia. }
+           eapply done_stable; eauto.
   Qed.
 
   Lemma get_long_trace_works f n :
     possible_execution f ->
     exists k'',
     oget_trace (f (get_long_trace f (enough_distance f O (length (oget_trace (f n)))))) = k'' ++ oget_trace (f n).
-  Proof.
+  Proof. Check its_enough.
     intros H. apply get_long_trace_works'; try assumption.
     apply (its_enough f O (length (oget_trace (f n)))) in H.
-    destruct (f n) as [fn|]; [|simpl in H2; congruence].
-    destruct H1 as [H1|H1].
-    - 
-    
-    (*option_map get_trace (f i) = Some k ->
-    exists j, option_map get_trace (f j) = Some (get_long_trace f (enough_distance f O n)) /\
-                                             length (oget_trace (f j)) >= n.
-  Proof.
-    intros H1 H2. destruct H2 as [j H2]. assert (H3 := its_enough f O n H1). destruct H3 as [H3|H3].
-    - 
-    option_map length (option_map get_tget_long_trace f (enough_distance f (enough_distance f O (length ( *)
+    destruct H as [H|H].
+         - right. assumption.
+         - left. lia.
+  Qed.
   
   End choice_and_middle.
   End WithDet.
