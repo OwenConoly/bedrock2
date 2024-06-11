@@ -2329,6 +2329,46 @@ Module exec. Section WithEnv.
          - right. assumption.
          - left. lia.
   Qed.
+
+  Definition trace_with_length f n :=
+    rev (firstn n (rev (oget_trace (f (get_long_trace f (enough_distance f O n)))))).
+
+  Lemma trace_with_length_works f i :
+    possible_execution f ->
+    trace_with_length f (length (oget_trace (f i))) = oget_trace (f i).
+  Proof.
+    intros H. apply (get_long_trace_works f i) in H. fwd.
+    cbv [trace_with_length]. rewrite H. rewrite rev_app_distr.
+    rewrite List.firstn_app_l.
+    2: { rewrite rev_length. reflexivity. }
+    rewrite rev_involutive. reflexivity.
+  Qed.
+
+  Fixpoint predictor_of_trace (k : trace) (k' : trace) : event :=
+    match k, k' with
+    | e :: k, nil => e
+    | _ :: k, _ :: k' => predictor_of_trace k k'
+    | _, _ => leak_unit
+    end.
+
+  Lemma predictor_of_trace_works k :
+    predicts (predictor_of_trace k) k.
+  Proof.
+    induction k.
+    - constructor.
+    - constructor.
+      + reflexivity.
+      + assumption.
+  Qed.
+
+  Definition predictor_of_execution f k :=
+    predictor_of_trace (trace_with_length f (length k)) k.
+
+  Lemma predictor_of_exectution_works f k :
+    predicts (predictor_of_execution f) (oget_trace (f k)).
+  Proof.
+    cbv [predictor_of_execution]. Search predicts. eapply predicts_ext.
+    { rewrite trace_with_length_works.
   
   End choice_and_middle.
   End WithDet.
@@ -2425,8 +2465,8 @@ Module exec. Section WithEnv.
     step_ostate true f i <->
       (step_ostate false f i /\
          exists k'',
-           val_def nil (option_map get_trace (f (S i))) = k'' ++ val_def nil (option_map get_trace (f i)) /\
-             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ val_def nil (option_map get_trace (f i))))) (List.rev k'')).
+           oget_trace (f (S i)) = k'' ++ oget_trace (f i) /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ oget_trace (f i)))) (List.rev k'')).
   Proof.
     cbv [step_ostate]. split.
     - intros H.
@@ -2442,8 +2482,8 @@ Module exec. Section WithEnv.
     (forall i, i < n -> step_ostate true f i) <->
       ((forall i, i < n -> step_ostate false f i) /\
          exists k'',
-           val_def nil (option_map get_trace (f n)) = k'' ++ val_def nil (option_map get_trace (f O)) /\
-             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ val_def nil (option_map get_trace (f O))))) (rev k'')).
+           oget_trace (f n) = k'' ++ oget_trace (f O) /\
+             predicts (fun k_ => consume_word (pick_sp (rev k_ ++ oget_trace (f O)))) (rev k'')).
   Proof.
     induction n.
     - split.
@@ -2467,7 +2507,7 @@ Module exec. Section WithEnv.
               rewrite rev_app_distr. rewrite rev_involutive. repeat rewrite <- app_assoc.
               rewrite IHnp1p0. reflexivity.
       + destruct IHn as [_ IHn]. intros H. fwd.
-        assert (H' := steps_extend_trace f n).
+        assert (H' := steps_extend_trace false f O n ltac:(lia)).
         eassert (hyp : _). 2: specialize (H' hyp); clear hyp.
         { intros. apply Hp0. lia. }
         assert (extend := Hp0 n ltac:(lia)). apply ostep_extends_trace in extend.
@@ -2596,9 +2636,6 @@ Module exec. Section WithEnv.
       + exfalso. auto.
   Qed.
   
-  (*returns n such that f n = None, or f n has a trace of length at least m*)
-  Fixpoint find_the_trace (f : nat -> option sstate) (m : nat)
-
   Lemma no_nones_steps {pick_sp : PickSp} f :
     possible_execution_nondet f ->
     (forall i, f i <> None) ->
@@ -2617,7 +2654,7 @@ Module exec. Section WithEnv.
     then the same goes for sseq s1 s2.*)
   
 
-  Lemma trace_gets_longer {pick_sp : PickSp} f i :
+  (*Lemma trace_gets_longer {pick_sp : PickSp} f i :
     possible_execution_nondet f ->
     (forall j, f j <> None) ->
     exists j, length (val_def nil (option_map get_trace (f j))) > length (val_def nil (option_map get_trace (f i))).
@@ -2640,14 +2677,16 @@ Module exec. Section WithEnv.
     possible_execution_nondet f ->
     exists pick_sp',
       possible_execution_det (pick_sp := pick_sp') f.
-  Proof. Admitted.
+  Proof. Admitted.*)
 
   Lemma det_to_nondet {pick_sp  : PickSp} s k t m l mc post f :
     excluded_middle ->
     f O = Some (s, k, t, m, l, mc) ->
     possible_execution_nondet f ->
-    exists pick_sp',
-    (possible_execution_det (pick_sp := pick_sp') f ->
+    (possible_execution_det (pick_sp := (fun k => match predictor_of_execution f (rev k) with
+                                                  | consume_word w => w
+                                                  | _ => word.of_Z 0
+                                                  end)) f ->
      satisfies_det f post) ->
     satisfies_nondet f (fun k' t' m' l' mc' =>
                           exists k'',(*if I write forall k'' here, can I avoid the extends_trace lemmas?*)
@@ -2655,8 +2694,7 @@ Module exec. Section WithEnv.
                               (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
                                post k' t' m' l' mc')).
   Proof.
-    intros em HfO Hposs. specialize pick_sp_exists with (1 := Hposs). intros [pick_sp' det].
-    exists pick_sp'. intros H. specialize (H det).
+    intros em HfO Hposs. intros H. specialize (H det).
     destruct H as [n H]. exists n.
     destruct (f n) as [fn|] eqn:Efn; [|destruct H]. simpl. destr_sstate fn. simpl in H.
     specialize satisfies_stuck with (1 := H). intros Hstuck. Check step_until_stuck.
