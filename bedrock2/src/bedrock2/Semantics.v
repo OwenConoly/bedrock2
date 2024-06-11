@@ -2689,8 +2689,7 @@ Module exec. Section WithEnv.
     - auto.
   Qed.
 
-  Lemma det_to_nondet {pick_sp  : PickSp} s k t m l mc post f :
-    excluded_middle ->
+  Lemma det_to_nondet {pick_sp : PickSp} s k t m l mc post f :
     f O = Some (s, k, t, m, l, mc) ->
     possible_execution_nondet f ->
     let pick_sp' := fun k => match trace_with_length f (S (length k)) with
@@ -2705,7 +2704,7 @@ Module exec. Section WithEnv.
                               (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
                                post k' t' m' l' mc')).
   Proof.
-    intros em HfO Hposs pick_sp'. intros H. assert (Hdet := pick_sp_works _ Hposs).
+    intros HfO Hposs pick_sp'. intros H. assert (Hdet := pick_sp_works _ Hposs).
     specialize (H Hdet). destruct H as [n H]. exists n.
     destruct (f n) as [fn|] eqn:Efn; [|destruct H]. simpl. destr_sstate fn. simpl in H.
     specialize @satisfies_stuck with (1 := H). intros Hstuck. Check step_until_stuck.
@@ -2733,7 +2732,28 @@ Module exec. Section WithEnv.
         eapply pick_sp_irrelevant_state_stuck with (pick_sp1 := _). eassumption.
       -- fwd. congruence.
   Qed.
-  
+
+  Lemma det_equiv_nondet s k t m l mc post :
+    excluded_middle ->
+    (forall pick_sp f,
+        f O = Some (s, k, t, m, l, mc) ->
+        possible_execution_nondet (pick_sp := pick_sp) f ->
+        satisfies_nondet (pick_sp := pick_sp) f (fun k' t' m' l' mc' =>
+                                      exists k'',
+                                        k' = k'' ++ k /\
+                                          (predicts (fun k_ => consume_word (pick_sp (rev k_ ++ k))) (List.rev k'') ->
+                                           post k' t' m' l' mc')))
+    <->
+      (forall pick_sp f,
+          f O = Some (s, k, t, m, l, mc) ->
+          possible_execution_det (pick_sp := pick_sp) f ->
+          satisfies_det (pick_sp := pick_sp) f post).
+  Proof.
+    intros. split.
+    - intros. eapply nondet_to_det; eauto.
+    - intros. eapply det_to_nondet; eauto.
+  Qed.
+    
 End exec.
 
 (*forall (f : nat -> _),
