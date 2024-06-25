@@ -18,8 +18,6 @@ Require Import Coq.Classes.Morphisms.
   Require Import Transitive_Closure.
   Require Import Coq.Logic.ChoiceFacts.
 
-Print Memory.store.
-
 (* not sure where to put these lemmas *)
 Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
 Proof. intros. cbn. congruence. Qed.
@@ -310,7 +308,7 @@ Section semantics.
       + destruct op; simpl in H; try assumption.
         all: destruct H; [congruence|]; try assumption.
         all: destruct H; [congruence|]; assumption.
-      + Search (In _ (_ ++ _)). apply in_app_or in H0. destruct H0.
+      + apply in_app_or in H0. destruct H0.
         -- eapply IHe0_2p1. eassumption.
         -- eapply IHe0_1p1. eassumption.
     - specialize IHe0_1 with (1 := Heqo). destruct (word.eqb _ _).
@@ -548,7 +546,7 @@ Module exec. Section WithEnv.
     : exec (cmd.interact binds action arges) k t m l mc post
   .
 
-  Definition state : Type := trace * io_trace * mem * locals * metrics. Print cmd.cmd.
+  Definition state : Type := trace * io_trace * mem * locals * metrics.
   Notation ami := addMetricInstructions.
   Notation aml := addMetricLoads.
   Notation ams := addMetricStores. Check locals.
@@ -760,7 +758,7 @@ Module exec. Section WithEnv.
   Definition satisfies (f : nat -> _) post := exists i, o1 (state_satisfies post) (f i).
   
   Definition comes_right_after s1 s2 :=
-    state_step s2 s1. Check pointwise_relation. Search (relation _ -> relation _).
+    state_step s2 s1. Check pointwise_relation.
   Definition lift {A B : Type} (R : relation B) (f : A -> B) : relation A :=
     fun x y => R (f x) (f y).
   Definition lifted_comes_right_after := lift comes_right_after other_inclusion.
@@ -1133,7 +1131,7 @@ Module exec. Section WithEnv.
       - exists None. right. destruct st as [st|]; auto. left. split; [|reflexivity].
         destr_sstate st. cbv [state_stuck]. intros [st' H']. apply not. eexists (Some _).
         eassumption. }
-    destruct Hnext as [next Hnext]. Print repeat_f.
+    destruct Hnext as [next Hnext].
     exists (fun n => repeat_f next st n). split; [reflexivity|]. intros.
     apply Hnext.
   Qed.
@@ -1375,7 +1373,7 @@ Module exec. Section WithEnv.
         inversion HSO; try congruence. subst. unify_eval_exprs.
         specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Est' in IHexec.
         specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
-        specialize (IHexec Hposs). clear Hposs. Search satisfies.
+        specialize (IHexec Hposs). clear Hposs.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
       + cbv [stuck_ostate] in HSO. exfalso. destruct HSO as [HSO _]. rewrite HO in HSO.
         apply HSO. clear HSO. eexists (_, _, _, _, _, _). eapply if_true_step; eauto.
@@ -1386,7 +1384,7 @@ Module exec. Section WithEnv.
         inversion HSO; try congruence. subst. unify_eval_exprs.
         specialize (IHexec (fun i => f (1 + i))). simpl in IHexec. rewrite Est' in IHexec.
         specialize (IHexec eq_refl). assert (Hposs := possible_execution_offset _ 1%nat HS).
-        specialize (IHexec Hposs). clear Hposs. Search satisfies.
+        specialize (IHexec Hposs). clear Hposs.
         apply (satisfies_offset _ 1%nat) in IHexec; eauto.
       + cbv [stuck_ostate] in HSO. exfalso. destruct HSO as [HSO _]. rewrite HO in HSO.
         apply HSO. clear HSO. eexists (_, _, _, _, _, _). eapply if_false_step; eauto.
@@ -1544,13 +1542,11 @@ Module exec. Section WithEnv.
       destruct H2 as [_ H2]. simpl. apply H2.
   Qed.
 
-  Check Acc_union. Print inclusion.
-
   Lemma they_commute : commut _ prefix comes_right_after.
   Proof.
     cbv [commut]. intros. inversion H. subst. clear H. destr_sstate z.
     exists (sseq s s2, k0, t0, m0, l0, mc0).
-    - cbv [comes_right_after state_step]. Print step. apply seq_step. apply H0.
+    - cbv [comes_right_after state_step]. apply seq_step. apply H0.
     - constructor.
   Qed.
 
@@ -1563,7 +1559,7 @@ Module exec. Section WithEnv.
       destruct H as [x' H1' H2']. clear H0 Hzx x. exists x'.
       + assumption.
       + apply t_step. assumption.
-    - Search x. intros z' H2. specialize IHclos_trans1 with (1 := H2).
+    - intros z' H2. specialize IHclos_trans1 with (1 := H2).
       destruct IHclos_trans1. specialize IHclos_trans2 with (1 := H0).
       destruct IHclos_trans2. eexists; [eassumption|]. eapply t_trans; eassumption.
   Qed.
@@ -2098,7 +2094,7 @@ Module exec. Section WithEnv.
       instantiate (1 := (S _)). simpl. eassumption.
   Qed.
 
-  (*how far is it, in the worst case, from adding something to the trace*) Print scmd.
+  (*how far is it, in the worst case, from adding something to the trace*)
   Fixpoint size (s : scmd) :=
     match s with
     | sseq s1 s2 => S (size s1 + size s2)
@@ -2193,8 +2189,6 @@ Module exec. Section WithEnv.
        n + length (oget_trace (f d)) <= length (oget_trace (f (enough_distance f d n)))).
   Proof. intros H. eapply its_enough' in H. fwd. eauto. Qed.
 
-  Search predicts.
-
   (*returns the index of a long enough trace*)
   Fixpoint get_long_trace (f : nat -> option sstate) fuel :=
     match fuel with
@@ -2204,7 +2198,7 @@ Module exec. Section WithEnv.
         | Some st => fuel
         | None => get_long_trace f fuel'
         end
-    end. Print prefix.
+    end.
 
   Lemma step_extends_trace st st' :
     state_step st st' ->
@@ -2347,7 +2341,7 @@ Module exec. Section WithEnv.
   
   End choice_and_middle.
   End WithDet.
-  Print possible_execution.
+  
   Definition possible_execution_det {pick_sp : PickSp} := possible_execution true.
   Definition satisfies_det {pick_sp : PickSp} := satisfies true.
   Definition possible_execution_nondet {pick_sp : PickSp} := possible_execution false.
@@ -2538,7 +2532,7 @@ Module exec. Section WithEnv.
     ~state_stuck false st ->
     good_stuck true st.
   Proof.
-    intros em H1 H2. Search (~exists _, _). cbv [state_stuck] in H2. Search (~ ~ _).
+    intros em H1 H2. cbv [state_stuck] in H2.
     apply Decidable.not_not in H2. 2: { apply em. } destruct H2 as [st' H2].
     destr_sstate st. destr_sstate st'. subst. induction H2; intros.
     all: try (exfalso; apply H1; eexists (_, _, _, _, _, _); econstructor; solve [eauto]).
@@ -2606,7 +2600,7 @@ Module exec. Section WithEnv.
       subst. simpl in H. destruct H as [H|H].
       + (*both succeed*)
         fwd. assert (Hsteps : forall i, i < n -> step_ostate true f i).
-        { Search step_ostate. apply step_until_stuck; try assumption. congruence. }
+        { apply step_until_stuck; try assumption. congruence. }
         rewrite step_ostates_equiv in Hsteps. fwd.
         exists n. rewrite Efn. simpl. cbv [state_satisfies]. left. intuition.
         apply Hp1p1. rewrite HfO in Hstepsp1p1. rewrite HfO, Efn in Hstepsp1p0.
@@ -2616,8 +2610,8 @@ Module exec. Section WithEnv.
         exists n. rewrite Efn. right. specialize (nondet n).
         apply nondet_good_stuck_det_good_stuck. assumption.
     - (*this means that f got stuck deterministically but not nondeterministically*)
-      Search (~(forall _, _)). apply (naen em) in not. destruct not as [y not].
-      Search (~(_ \/ _)). apply Decidable.not_or in not. fwd. apply Decidable.not_or in notp1.
+      apply (naen em) in not. destruct not as [y not].
+      apply Decidable.not_or in not. fwd. apply Decidable.not_or in notp1.
       fwd. specialize (Hfposs y). destruct Hfposs as [Hfposs|[Hfposs|Hfposs]].
       + exfalso. apply notp0. rewrite step_ostate_equiv in Hfposs. fwd. eassumption.
       + cbv [stuck_ostate] in Hfposs. cbv [stuck_ostate] in notp1p0. fwd.
@@ -2679,11 +2673,11 @@ Module exec. Section WithEnv.
       { rewrite E. reflexivity. }
       clear E. induction Hn; econstructor; eauto.
       2: { apply IHHn. assumption. }
-      intros _. Search trace_with_length.
+      intros _.
       replace (S (length k)) with (length (oget_trace (f (S n)))).
       2: { rewrite H0. reflexivity. }
       eapply trace_with_length_works in H. rewrite H. rewrite H0. reflexivity.
-    - right. left. Search stuck_ostate. cbv [stuck_ostate] in *. fwd. intuition.
+    - right. left. cbv [stuck_ostate] in *. fwd. intuition.
       destruct (f n) as [fn|]; [|destruct Hnp0].
       apply nondet_stuck_det_stuck. eapply pick_sp_irrelevant_state_stuck. eassumption.
     - auto.
@@ -2753,8 +2747,6 @@ Module exec. Section WithEnv.
     - intros. eapply nondet_to_det; eauto.
     - intros. eapply det_to_nondet; eauto.
   Qed.
-
-  Print exec.
 
   Definition exec_det := @exec true.
   Definition exec_nondet := @exec false.
@@ -2894,7 +2886,7 @@ Lemma intersect: forall k t l m mc s post1,
       eapply weaken. 1: eapply H3; eauto. simpl. intros. fwd. eexists (_ ++ _ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
       intuition.
-    - Search evaluate_call_args_log. apply call_args_to_other_trace in H0.
+    - apply call_args_to_other_trace in H0.
       fwd. econstructor; intuition eauto. fwd. apply H3 in H0p2.
       fwd. exists retvs. intuition. exists l'. intuition. eexists (_ ++ _ :: _).
       repeat rewrite <- (app_assoc _ _ k2). repeat rewrite <- (app_assoc _ _ k).
@@ -3198,8 +3190,6 @@ Module two_execs. Section WithEnv.
     intros H. remember (l2 ++ l1) as x. replace l1 with (nil ++ l1) in H by reflexivity.
     subst. apply app_inv_tail in H. subst. reflexivity.
   Qed.
-
-  Search predicts.
       
   Lemma execs_related' pick_sp k t l m mc s post' :
     exec e s k t m l mc post' ->
