@@ -1,2 +1,0 @@
-s/From bedrock2 Require/From bedrock2A.bedrock2 Require/g
-:L; s/Import\(.*\)\sbedrock2\.\(.*\)\.$/Import\1 bedrock2A.bedrock2.\2./g; tL
