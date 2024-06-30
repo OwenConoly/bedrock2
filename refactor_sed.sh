@@ -15,4 +15,4 @@
 
 set -x
 
-find . -type f -name '*.v' -print0 | xargs -0 sed -i "$@"
+find . -type f -name '*.v' -print0 | xargs -0 sed -i -E "$@"
