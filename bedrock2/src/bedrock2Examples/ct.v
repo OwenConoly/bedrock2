@@ -18,7 +18,7 @@ Import Interface.word Coq.Lists.List List.ListNotations.
 From bedrock2 Require Import Semantics BasicC32Semantics WeakestPrecondition ProgramLogic.
 Import ProgramLogic.Coercions.
 
-Instance ctspec_of_div3329 : spec_of "div3329" :=
+#[global] Instance ctspec_of_div3329 : spec_of "div3329" :=
   fun functions => forall k, exists k_, forall t m x,
       WeakestPrecondition.call functions "div3329" k t m [x]
         (fun k' t' m' rets => exists ret, rets = [ret]
@@ -31,7 +31,7 @@ Proof.
   { (* no leakag -- 3 minutes *) cbv [k' k'0]. cbn. exact eq_refl. }
 Qed.
 
-Instance vtspec_of_div3329 : spec_of "div3329_vartime" :=
+#[global] Instance vtspec_of_div3329 : spec_of "div3329_vartime" :=
   fun functions => forall k, forall t m x,
       WeakestPrecondition.call functions "div3329_vartime" k t m [x]
         (fun k' t' m' rets => exists ret, rets = [ret]
@@ -48,7 +48,7 @@ Qed.
 Import Byte.
 Definition getchar_event c : io_event :=
   ((Interface.map.empty, "getchar", []), (Interface.map.empty, [word.of_Z (byte.unsigned c)])).
-Instance ctspec_of_getchar : spec_of "getchar" :=
+#[global] Instance ctspec_of_getchar : spec_of "getchar" :=
   fun functions => forall k, exists k_, forall t m,
       WeakestPrecondition.call functions "getchar" k t m []
         (fun k' t' m' rets => exists c, rets = [word.of_Z (byte.unsigned c)] /\ k' = k_ /\ m' = m /\
@@ -70,11 +70,11 @@ Local Infix "*" := Separation.sep : type_scope.
 
 Definition getline_io bs := getchar_event Byte.x0a :: map getchar_event (rev bs).
 
-Instance ctspec_of_getline : spec_of "getline" :=
-  fun functions => forall k, exists f, forall (dst n : word) d t m R,
+#[global] Instance ctspec_of_getline : spec_of "getline" :=
+  fun functions => exists f, forall k (dst n : word) d t m R,
   (d$@dst * R) m -> length d = n :> Z ->
       WeakestPrecondition.call functions "getline" k t m [dst; n]
-        (fun k' t' m' rets => exists bs es l, rets = [l] /\ k' = f l /\
+        (fun k' t' m' rets => exists bs es l, rets = [l] /\ k' = f k l ++ k /\
         (bs$@dst * es$@(word.add dst l) * R) m' /\
         length bs = l :> Z /\
         length bs + length es = n :> Z /\
@@ -220,6 +220,48 @@ Proof.
 (* Tue Jul  2 14:26:41 EDT 2024 *)
 Admitted.
 
+Require Import bedrock2Examples.memequal.
+
+(*TODO: take username via IO, not as argument.*)
+Definition password_checker := func! (username, password_array) ~> ret {
+                                   stackalloc 8 as x; (*password is 8 characters*)
+                                   unpack! attempt = getline(x, $8);
+                                   unpack! ret = memequal(x, password_array + username * $8, $8)
+                                 }.
+
+#[global] Instance ctspec_of_password_checker : spec_of "password_checker" :=
+  fun functions => forall pick_sp k (username password_array : word), exists k_, forall n R t m passwords,
+      length passwords = Nat.mul n 8 ->
+      word.unsigned username < n ->
+      (passwords$@password_array * R) m ->
+      WeakestPrecondition.call functions "password_checker" k t m [username; password_array]
+        (fun k' t' m' rets =>
+           exists k'', k' = k'' ++ k /\
+                         (predicts pick_sp (rev k'') -> k' = k_)).
+
+Fail Lemma password_checker_ct : program_logic_goal_for_function! password_checker. (*Why*)
+Global Instance spec_of_memequal : spec_of "memequal" := spec_of_memequal.
+
+Lemma password_checker_ct : program_logic_goal_for_function! password_checker.
+Proof.
+  repeat straightline.
+  eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
+  { apply Array.anybytes_to_array_1 in H4. destruct H4 as [bs [Hbs Hlenbs]].
+    eapply H. 2: eassumption. ecancel_assumption. }
+  repeat straightline.
+  eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
+  { eapply H0. split. { ecancel_assumption. } split.
+    { admit. } admit. }
+  repeat straightline. eexists. eexists. split; [admit|split; [admit|]].
+  repeat straightline. eexists. subst. split; [trace_alignment|].
+  intros Hpred. repeat (rewrite rev_app_distr in Hpred || cbn [rev] in Hpred).
+  repeat rewrite <- app_assoc in Hpred. cbn [List.app] in Hpred. inversion Hpred; clear Hpred; subst.
+  specialize (H14 I). instantiate (1 := match (pick_sp nil) with | consume_word _ => _ |_ => _ end). (*^we have to do this because pick_sp does not return a word. probably it should return a word.*)
+  rewrite H14. subst.
+  (*TODO: cannot prove this because we leak the length of the password that is input.
+    Should update spec to say something about IO trace.*)
+Abort.
+
 Definition maskloop := func! (a) {
   i = $0;
   while (i < $2) {
@@ -231,7 +273,7 @@ Definition maskloop := func! (a) {
 
 Require Import coqutil.Map.Interface bedrock2.Map.Separation bedrock2.Map.SeparationLogic.
 
-Instance ctspec_of_maskloop : spec_of "maskloop" :=
+#[global] Instance ctspec_of_maskloop : spec_of "maskloop" :=
   fun functions => forall k a, exists k_, forall a0 a1 R t m,
       m =* ptsto a a0 * ptsto (word.add a (word.of_Z 1)) a1 * R ->
       WeakestPrecondition.call functions "maskloop" k t m [a]
