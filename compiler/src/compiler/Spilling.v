@@ -171,10 +171,10 @@ Section Spilling.
   Definition leak_spill_bcond : trace :=
     nil.
   
-  Definition bigtuple : Type := stmt * trace * trace * event * word.
+  Definition bigtuple : Type := stmt * trace * trace * word.
   
   Definition project_tuple (tup : bigtuple) : nat * stmt :=
-    let '(s, k, sk_so_far, sallocval, fpval) := tup in (length k, s).
+    let '(s, k, sk_so_far, fpval) := tup in (length k, s).
   Definition lt_tuple (x y : bigtuple) :=
     lt_tuple' (project_tuple x) (project_tuple y).    
 
@@ -187,7 +187,7 @@ Section Spilling.
     {env: map.map String.string (list Z * list Z * stmt)}
     (e: env)
     (pick_sp : trace -> event)
-    (tup : stmt * trace * trace * event * word)
+    (tup : stmt * trace * trace * word)
     (stransform_stmt_trace : forall othertup, lt_tuple othertup tup -> trace * trace * event)
     : trace * trace * event. (*skip * sk_so_far * pick_sp output*)
     (*the continuation was accomplishing at least one thing: giving the function the choice of whether
@@ -203,43 +203,43 @@ Section Spilling.
      *)
     refine (
         match tup as x return tup = x -> _ with
-        | (s, k, sk_so_far, sallocval, fpval) =>
+        | (s, k, sk_so_far, fpval) =>
             fun _ =>
               match s as x return s = x -> _ with
               | SLoad sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
-                        ([leak_word addr], sk_so_far ++ leak_load_iarg_reg fpval y ++ [leak_word addr] ++ leak_save_ires_reg fpval x, sallocval)
-                    | _ => (nil, nil, sallocval)
+                        ([leak_word addr], sk_so_far ++ leak_load_iarg_reg fpval y ++ [leak_word addr] ++ leak_save_ires_reg fpval x, leak_unit)
+                    | _ => (nil, nil, leak_unit)
                     end
               | SStore sz x y o =>
                   fun _ =>
                     match k with
                     | leak_word addr :: k' =>
-                        ([leak_word addr], sk_so_far ++ leak_load_iarg_reg fpval x ++ leak_load_iarg_reg fpval y ++ [leak_word addr], sallocval)
-                    | _ => (nil, nil, sallocval)
+                        ([leak_word addr], sk_so_far ++ leak_load_iarg_reg fpval x ++ leak_load_iarg_reg fpval y ++ [leak_word addr], leak_unit)
+                    | _ => (nil, nil, leak_unit)
                     end
               | SInlinetable _ x _ i =>
                   fun _ =>
                     match k with
                     | leak_word i' :: k' =>
-                        ([leak_word i'], sk_so_far ++ leak_load_iarg_reg fpval i ++ [leak_word i'] ++ leak_save_ires_reg fpval x, sallocval)
-                    | _ => (nil, nil, sallocval)
+                        ([leak_word i'], sk_so_far ++ leak_load_iarg_reg fpval i ++ [leak_word i'] ++ leak_save_ires_reg fpval x, leak_unit)
+                    | _ => (nil, nil, leak_unit)
                     end
               | SStackalloc x z body =>
                   fun _ =>
                     match k as x return k = x -> _ with
                     | consume_word addr :: k' =>
                         fun _ =>
-                          let '(skip, sk_so_far', sallocval') :=
-                            stransform_stmt_trace (body, k', sk_so_far ++ consume_word addr :: leak_save_ires_reg fpval x, sallocval, fpval) _ in
-                          (consume_word addr :: skip, sk_so_far', sallocval')
+                          let '(skip, sk_so_far', sallocval) :=
+                            stransform_stmt_trace (body, k', sk_so_far ++ consume_word addr :: leak_save_ires_reg fpval x, fpval) _ in
+                          (consume_word addr :: skip, sk_so_far', sallocval)
                     | _ => fun _ => (nil, nil, pick_sp sk_so_far)
                     end eq_refl
               | SLit x _ =>
                   fun _ =>
-                    ([], sk_so_far ++ leak_save_ires_reg fpval x, sallocval)
+                    ([], sk_so_far ++ leak_save_ires_reg fpval x, leak_unit)
               | SOp x op y oz =>
                   fun _ =>
                     let newt_a' :=
@@ -271,55 +271,59 @@ Section Spilling.
                             end
                             ++ newt
                             ++ leak_save_ires_reg fpval x,
-                          sallocval)
-                    | None => (nil, nil, sallocval)
+                          leak_unit)
+                    | None => (nil, nil, leak_unit)
                     end
               | SSet x y =>
                   fun _ =>
-                    ([], sk_so_far ++ leak_load_iarg_reg fpval y ++ leak_save_ires_reg fpval x, sallocval)
+                    ([], sk_so_far ++ leak_load_iarg_reg fpval y ++ leak_save_ires_reg fpval x, leak_unit)
               | SIf c thn els =>
                   fun _ =>
                     match k as x return k = x -> _ with
                     | leak_bool b :: k' =>
                         fun _ =>
-                          let '(skip', sk_so_far', spval) :=
+                          let '(skip', sk_so_far', sallocval) :=
                             stransform_stmt_trace (if b then thn else els,
                                 k',
                                 sk_so_far ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool b],
-                                sallocval,
-                                fpval) _ in
-                          (leak_bool b :: skip', sk_so_far', spval)
-                    | _ => fun _ => (nil, nil, sallocval)
+                                fpval) _ in (leak_bool b :: skip', sk_so_far', sallocval)
+                    | _ => fun _ => (nil, nil, leak_unit)
                     end eq_refl
               | SLoop s1 c s2 =>
                   fun _ =>
-                    let '(skip, sk_so_far', sallocval') :=
-                      stransform_stmt_trace (s1, k, sk_so_far, sallocval, fpval) _ in
-                    Let_In_pf_nd (List.skipn (length skip) k)
-                      (fun k' _ =>
-                         match k' as x return k' = x -> _ with
-                         | leak_bool true :: k'' =>
-                             fun _ =>
-                               let '(skip', sk_so_far'', sallocval'') :=
-                               stransform_stmt_trace (s2, k'', sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool true], sallocval', fpval) _ in
-                               let k''' := List.skipn (length skip') k'' in
-                               let '(skip'', sk_so_far''', sallocval''') :=
-                                 stransform_stmt_trace (s, k''', sk_so_far'', sallocval'', fpval) _ in
-                                   (skip ++ leak_bool true :: skip' ++ skip'', sk_so_far'', sallocval''')
-                         | leak_bool false :: k'' =>
-                             fun _ =>
-                               (skip ++ [leak_bool false], sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool false], sallocval')
-                         | _ => fun _ => (nil, nil, sallocval')
-                         end eq_refl)
+                    match stransform_stmt_trace (s1, k, sk_so_far, fpval) _ with
+                    | (skip, sk_so_far', leak_unit) =>
+                        Let_In_pf_nd (List.skipn (length skip) k)
+                          (fun k' _ =>
+                             match k' as x return k' = x -> _ with
+                             | leak_bool true :: k'' =>
+                                 fun _ =>
+                                   match stransform_stmt_trace (s2, k'', sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool true], fpval) _ with
+                                   | (skip', sk_so_far'', leak_unit) =>
+                                       let k''' := List.skipn (length skip') k'' in
+                                       let '(skip'', sk_so_far''', sallocval) :=
+                                         stransform_stmt_trace (s, k''', sk_so_far'', fpval) _ in
+                                       (skip ++ leak_bool true :: skip' ++ skip'', sk_so_far''', sallocval)
+                                   | (_, _, sallocval) => (nil, nil, sallocval)
+                                   end
+                             | leak_bool false :: k'' =>
+                                 fun _ =>
+                                   (skip ++ [leak_bool false], sk_so_far' ++ leak_prepare_bcond fpval c ++ leak_spill_bcond ++ [leak_bool false], leak_unit)
+                             | _ => fun _ => (nil, nil, leak_unit)
+                             end eq_refl)
+                    | (_, _, sallocval) => (nil, nil, sallocval)
+                    end
               | SSeq s1 s2 =>
                   fun _ =>
-                    let '(skip, sk_so_far', sallocval') :=
-                      stransform_stmt_trace (s1, k, sk_so_far, sallocval, fpval) _ in
-                    let k' := List.skipn (length skip) k in
-                    let '(skip', sk_so_far'', sallocval'') :=
-                      stransform_stmt_trace (s2, k', sk_so_far', sallocval', fpval) _ in
-                    (skip ++ skip', sk_so_far'', sallocval'')
-              | SSkip => fun _ => ([], sk_so_far, sallocval)
+                    match stransform_stmt_trace (s1, k, sk_so_far, fpval) _ with
+                    | (skip, sk_so_far', leak_unit) =>
+                        let k' := List.skipn (length skip) k in
+                        let '(skip', sk_so_far'', sallocval) :=
+                          stransform_stmt_trace (s2, k', sk_so_far', fpval) _ in
+                        (skip ++ skip', sk_so_far'', sallocval)
+                    | (_, _, sallocval) => (nil, nil, sallocval)
+                    end
+              | SSkip => fun _ => ([], sk_so_far, leak_unit)
               | SCall resvars fname argvars =>
                   fun _ =>
                     match k as x return k = x -> _ with
@@ -329,24 +333,23 @@ Section Spilling.
                           | Some (params, rets, fbody) =>
                               let sk_before_salloc := sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_unit] in
                               let fpval' := match pick_sp sk_before_salloc with | consume_word w => w | _ => word.of_Z 0 end in
-                              let '(skip, sk_so_far', sallocval') :=
+                              let '(skip, sk_so_far', sallocval) :=
                                 stransform_stmt_trace (fbody,
                                     k',
                                     sk_before_salloc ++ consume_word fpval' :: leak_set_vars_to_reg_range fpval' params,
-                                    sallocval,
                                     fpval') _ in
                               let k'' := List.skipn (length skip) k' in
-                              (leak_unit :: skip, sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars, sallocval')
-                          | None => (nil, nil, sallocval)
+                              (leak_unit :: skip, sk_so_far' ++ leak_set_reg_range_to_vars fpval' rets ++ leak_set_vars_to_reg_range fpval resvars, sallocval)
+                          | None => (nil, nil, leak_unit)
                           end
-                    | _ => fun _ => (nil, nil, sallocval)
+                    | _ => fun _ => (nil, nil, leak_unit)
                     end eq_refl
               | SInteract resvars _ argvars =>
                   fun _ =>
                     match k with
                     | leak_list l :: k' =>
-                          ([leak_list l], sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_list l] ++ leak_set_vars_to_reg_range fpval resvars, sallocval)
-                    | _ => (nil, nil, sallocval)
+                          ([leak_list l], sk_so_far ++ leak_set_reg_range_to_vars fpval argvars ++ [leak_list l] ++ leak_set_vars_to_reg_range fpval resvars, leak_unit)
+                    | _ => (nil, nil, leak_unit)
                     end
               end eq_refl
         end%nat eq_refl).
@@ -360,11 +363,11 @@ Section Spilling.
                       let H := fresh "H" in
                       assert (H := List.skipn_length n k); subst t end.
       all: try (right; constructor; constructor).
-      all: try (left; constructor; constructor).
-    - assert (H0 := skipn_length (length skip) k). left.
-      rewrite e4 in H0. simpl in H0. Show Proof. blia.
-    - assert (H0 := skipn_length (length skip) k). left.
-      rewrite e4 in H0. simpl in H0. blia.
+      all: try (left; simpl; blia).
+    - assert (H' := skipn_length (length skip) k).
+      rewrite e5 in *. simpl in *. left. blia.
+    - assert (H' := skipn_length (length skip) k).
+      rewrite e5 in *. simpl in *. left. blia.
     - destruct (length (List.skipn (length skip) k) =? length k)%nat eqn:E.
       + apply Nat.eqb_eq in E. rewrite E. right. constructor. constructor.
       + apply Nat.eqb_neq in E. left. blia.
@@ -392,20 +395,28 @@ Section Spilling.
         assert (H : forall y p1 p2, f1 y p1 = f2 y p2) by auto. clear H0.
         assert (H': forall y p, f1 y p = f2 y p) by auto.
         cbv [stransform_stmt_trace_body]. cbv beta.
-        destruct x as [ [ [ [s k] sk_so_far] sallocval] fpval].
+        destruct x as [ [ [s k] sk_so_far] fpval].
         (*cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.*)
         Tactics.destruct_one_match. all: try reflexivity.
         { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
           rewrite H'. reflexivity. }
         { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
           rewrite H'. reflexivity. }
-        { repeat Tactics.destruct_one_match. erewrite H in E. rewrite E in E0. inversion E0. subst.
+        { Tactics.destruct_one_match. Tactics.destruct_one_match.
+          repeat Tactics.destruct_one_match; try reflexivity.
+          all: erewrite H in E; rewrite E in E0; inversion E0; subst.
+          all: try reflexivity.
           apply Let_In_pf_nd_ext. intros. Tactics.destruct_one_match; try reflexivity.
           Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
-          repeat Tactics.destruct_one_match. erewrite H in E1. Search t5. rewrite E1 in E3.
-          inversion E3. subst. erewrite H in E2. rewrite E2 in E4. inversion E4. subst. reflexivity. }
-        { repeat Tactics.destruct_one_match. Search t. erewrite H in E. Search t3. rewrite E in E1.
-          inversion E1. subst. Search t1. erewrite H in E0. Search t5. rewrite E0 in E2.
+          repeat Tactics.destruct_one_match; try reflexivity.
+          all: (erewrite H in E1; rewrite E1 in E3; inversion E3; subst) ||
+                 (erewrite H in E1; rewrite E1 in E2; inversion E2; subst).
+          all: try reflexivity.
+          erewrite H in E2. rewrite E2 in E4. inversion E4. subst. reflexivity. }
+        { repeat Tactics.destruct_one_match.
+          all: (erewrite H in E; rewrite E in E1; inversion E1; subst) ||
+                 (erewrite H in E; rewrite E in E0; inversion E0; subst; reflexivity). 
+          erewrite H in E0. Search t5. rewrite E0 in E2.
           inversion E2. subst. reflexivity. }
         { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
           Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match.
@@ -582,13 +593,12 @@ Section Spilling.
   Definition stransform_fun_trace {env : map.map string (list Z * list Z * stmt)} (e : env) (pick_sp : trace -> event) (f : list Z * list Z * stmt) (k : trace) (sk_so_far : trace) : trace * event :=
     let '(argnames, resnames, body) := f in
     let fpval := match pick_sp sk_so_far with | consume_word w => w | _ => word.of_Z 0 end in
-    let '(_, sk_so_far', sallocval') :=
+    let '(_, sk_so_far', sallocval) :=
       stransform_stmt_trace e pick_sp (body,
           k,
           sk_so_far ++ consume_word fpval :: leak_set_vars_to_reg_range fpval argnames,
-          leak_unit,
           fpval) in
-    (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, sallocval').
+    (sk_so_far' ++ leak_set_reg_range_to_vars fpval resnames, sallocval).
 
   Lemma firstn_min_absorb_length_r{A: Type}: forall (l: list A) n,
       List.firstn (Nat.min n (length l)) l = List.firstn n l.
@@ -1493,10 +1503,9 @@ Section Spilling.
                      k2' = k2'' ++ k2 /\
                      forall k20 k2''',
                        (predicts pick_sp (k20 ++ rev k2'' ++ k2''') ->
-                        (forall k1''' f,
-                            stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval, f) = f (rev k1'') (k20 ++ rev k2'')) /\
-                          (forall f,
-                              predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'')))).
+                        (forall k1''',
+                            stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval) = (rev k1'', k20 ++ rev k2'', leak_unit)) /\
+                              predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval))) (rev k1''))).
 
   Definition call_spec(e: env) '(argnames, retnames, fbody)
     (k: trace)(t: io_trace)(m: mem)(argvals: list word)
@@ -1537,14 +1546,14 @@ Section Spilling.
 
   Lemma app_one_cons {A} (x : A) (l : list A) :
     x :: l = [x] ++ l.
-  Proof. reflexivity. Qed. Check stransform_fun_trace.
+  Proof. reflexivity. Qed.
 
   Lemma fold_app : (fix app (l m0 : list event) {struct l} : list event :=
                       match l with
                       | [] => m0
                       | a1 :: l1 => a1 :: app l1 m0
                       end) = @List.app event.
-  Proof. reflexivity. Qed. Print stransform_fun_trace.
+  Proof. reflexivity. Qed.
 
   Lemma predicts_app k1 k2 f :
     predicts f k1 ->
@@ -1715,10 +1724,38 @@ Section Spilling.
       simpl in H. inversion H. subst. specialize (H4 I).
       cbv [stransform_fun_trace]. rewrite H4. simpl.
       specialize (future []). rewrite app_nil_r in future. split.
-      { rewrite future. repeat rewrite <- app_assoc. reflexivity. }
-      apply current. }
-     Unshelve.
-    all: try assumption.
+      { simpl in future. simpl.
+        replace (stransform_stmt_trace e1 pick_sp
+                   (body1, rev k1'', consume_word a :: leak_set_vars_to_reg_range a argnames1, a)) with
+          (rev k1'', consume_word a :: leak_set_vars_to_reg_range a argnames1 ++ rev k2'', leak_unit).
+        (*^does nothing...*)
+        replace (stransform_stmt_trace _ pick_sp
+                   (body1, rev k1'', consume_word a :: leak_set_vars_to_reg_range a argnames1, a)) with
+          (rev k1'', consume_word a :: leak_set_vars_to_reg_range a argnames1 ++ rev k2'', leak_unit).
+        (*^does what I want*)
+        simpl. repeat rewrite <- app_assoc. reflexivity. }
+      eapply predicts_ext. 2: eapply current. intros. simpl. clear.
+      remember (stransform_stmt_trace _ _ _) as x. destruct x as [[x1 x2] x3]. reflexivity. }
+      Unshelve.
+      all: try assumption.
+  Qed.
+
+  Lemma simplify_snd {A B C D E : Type} (x : A * B * C) (f1 : A -> B -> C -> D) (f2 : A -> B -> C -> E) :
+    snd (let '(thing1, thing2, sallocval) := x in (f1 thing1 thing2 sallocval, f2 thing1 thing2 sallocval, sallocval)) = snd x.
+  Proof. destruct x as [[x1 x2] x3]. reflexivity. Qed.
+
+  Print predicts.
+  Print need_to_predict.
+  Lemma predicts_ext_strong f k g :
+    (forall k', need_to_predict (f k') -> f k' = g k') ->
+    predicts f k ->
+    predicts g k.
+  Proof.
+    intros H1 H2. revert H1. revert g. induction H2.
+    - intros g0 Hfg0. econstructor.
+      + intros H'. specialize (H H'). rewrite <- H in *. apply Hfg0 in H'. auto.
+      + apply IHpredicts. intros. apply Hfg0. assumption.
+    - intros. constructor.
   Qed.
   
   Lemma spilling_correct : forall
@@ -1746,11 +1783,10 @@ Section Spilling.
                      k2' = k2'' ++ k2 /\
                      forall k20 k2''',
                        (predicts pick_sp (k20 ++ rev k2'' ++ k2''') ->
-                        (forall k1''' f,
-                            stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval, f) =
-                              f (rev k1'') (k20 ++ rev k2'')) /\
-                          (forall f,
-                              predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval, (f k)))) (rev k1'')))).
+                        (forall k1''',
+                            stransform_stmt_trace e1 pick_sp (s1, rev k1'' ++ k1''', k20, fpval) =
+                              (rev k1'', k20 ++ rev k2'', leak_unit)) /\
+                          predicts (fun k => snd (stransform_stmt_trace e1 pick_sp (s1, k, k20, fpval))) (rev k1''))).
   Proof.
     intros e1 e2 Ev. intros s1 k1 t1 m1 l1 mc1 post.
     induction 1; intros; cbn [spill_stmt valid_vars_src Forall_vars_stmt] in *; fwd.
@@ -2055,7 +2091,7 @@ Section Spilling.
         intros. econstructor; [intros []|]. 
         clear future. eapply predicts_ext; try eapply current. intros. simpl. symmetry.
         rewrite stransform_stmt_trace_step. simpl. rewrite H. rewrite H3'.
-        repeat rewrite <- app_assoc. reflexivity. }
+        repeat rewrite <- app_assoc. rewrite simplify_snd. reflexivity. }     
                  
     - (* exec.load *)
       eapply exec.seq_cps.
@@ -2174,7 +2210,7 @@ Section Spilling.
       { intros. rewrite stransform_stmt_trace_step. simpl. reflexivity. }
       constructor.
       { intros _. rewrite H9'. reflexivity. }
-      eapply current.
+      eapply predicts_ext. 2: eapply current. intros. simpl. rewrite simplify_snd. reflexivity.
       
     - (* exec.lit *)
       eapply exec.seq_cps. eapply exec.lit.
@@ -2275,10 +2311,10 @@ Section Spilling.
         split.
         { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
           cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc in *.
-          apply future. }
+          rewrite future. reflexivity. }
         intros. constructor; [intros []|]. eapply predicts_ext. 2: eapply current.
         intros. simpl. symmetry. rewrite stransform_stmt_trace_step. simpl.
-        repeat rewrite <- app_assoc. reflexivity.
+        repeat rewrite <- app_assoc. rewrite simplify_snd. reflexivity.
         
       + eapply exec.seq_cps. eapply load_iarg_reg_correct; (blia || eassumption || idtac).
         clear mc2 H2. intros.
@@ -2300,9 +2336,10 @@ Section Spilling.
         split.
         { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
           cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc in *.
-          apply future. }
+          rewrite future. reflexivity. }
         intros. constructor; [intros []|]. eapply predicts_ext. 2: eapply current.
-        intros. simpl. symmetry. rewrite stransform_stmt_trace_step. reflexivity.    
+        intros. simpl. symmetry. rewrite stransform_stmt_trace_step. simpl. rewrite simplify_snd.
+        reflexivity.    
         
     - (* exec.if_false *)
       unfold prepare_bcond. destr cond; cbn [ForallVars_bcond eval_bcond spill_bcond] in *; fwd.
@@ -2329,10 +2366,10 @@ Section Spilling.
         split.
         { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
           cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc in *.
-          apply future. }
+          rewrite future. reflexivity. }
         intros. constructor; [intros []|]. eapply predicts_ext. 2: eapply current.
         simpl. intros. symmetry. rewrite stransform_stmt_trace_step.
-        simpl. repeat rewrite <- app_assoc. reflexivity.
+        simpl. repeat rewrite <- app_assoc. rewrite simplify_snd. reflexivity.
         
       + eapply exec.seq_cps. eapply load_iarg_reg_correct; (blia || eassumption || idtac).
         clear mc2 H2. intros.
@@ -2354,9 +2391,10 @@ Section Spilling.
         split.
         { intros. rewrite stransform_stmt_trace_step. cbn [stransform_stmt_trace_body].
         cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc in *.
-        apply future. }
+        rewrite future. reflexivity. }
         intros. constructor; [intros []|]. eapply predicts_ext. 2: eapply current.
-        intros. simpl. symmetry. rewrite stransform_stmt_trace_step. reflexivity.
+        intros. simpl. symmetry. rewrite stransform_stmt_trace_step. simpl. rewrite simplify_snd.
+        reflexivity.
           
     - (* exec.loop *)
       rename IHexec into IH1, H3 into IH2, H5 into IH12.
@@ -2392,8 +2430,11 @@ Section Spilling.
             rewrite List.skipn_app_r by reflexivity. simpl. cbn [Let_In_pf_nd].
             repeat rewrite <- app_assoc. reflexivity. }
           intros. apply predicts_app.
-          { eapply predicts_ext. 2: eapply current1.
-            intros. simpl. symmetry. rewrite stransform_stmt_trace_step. simpl. reflexivity. }
+          { eapply predicts_ext_strong. (*needing to do this because no continuation, interestingly*)
+            2: eapply current1. intros. simpl. symmetry. rewrite stransform_stmt_trace_step. simpl.
+            simpl in H6. remember (stransform_stmt_trace _ _ _) as thing.
+            destruct thing as [thing1 thing2]. destruct thing2; try solve [destruct H6].
+            destruct thing1; reflexivity. }
           constructor; [intros []|]. constructor.
         
         * eapply exec.weaken. 1: eapply IH2.
@@ -2425,15 +2466,22 @@ Section Spilling.
                   rewrite List.skipn_app_r by reflexivity. simpl. cbn [Let_In_pf_nd].
                   repeat rewrite <- app_assoc in *. rewrite future2. clear future2.
                   rewrite List.skipn_app_r by reflexivity. rewrite future3. reflexivity. }
-                intros. eapply predicts_ext. 2: eapply predicts_app; [eapply current1|].
-                { intros. symmetry. rewrite stransform_stmt_trace_step. reflexivity. }
-                constructor; [intros []|]. eapply predicts_ext. 2: eapply predicts_app; [eapply current2|].
-                { intros. symmetry. rewrite future1. rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
-                  cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc.
-                  reflexivity. }
-                eapply predicts_ext. 2: eapply current3.
-                intros. simpl. symmetry. rewrite future2. simpl. rewrite List.skipn_app_r by reflexivity.
-                repeat rewrite <- app_assoc. reflexivity.
+                intros. eapply predicts_app.
+                { eapply predicts_ext_strong. 2: eapply current1.
+                  intros. symmetry. rewrite stransform_stmt_trace_step. simpl.
+                  simpl in H5. destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+                  destruct thing3; reflexivity || destruct H5. }
+                constructor; [intros []|]. eapply predicts_app.
+                { eapply predicts_ext_strong. 2: eapply current2. simpl. symmetry.
+                  rewrite stransform_stmt_trace_step. simpl. rewrite future1.
+                  rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
+                  repeat rewrite <- app_assoc in *.
+                  destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+                  destruct thing3; reflexivity || destruct H5. }
+                eapply predicts_ext. 2: eapply current3. symmetry. rewrite stransform_stmt_trace_step.
+                simpl. rewrite future1. rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
+                repeat rewrite <- app_assoc in *. rewrite future2. rewrite simplify_snd.
+                rewrite List.skipn_app_r by reflexivity. reflexivity.
                 
       + specialize H0 with (1 := H3p1). cbn in H0. fwd.
         eapply exec.weaken. {
@@ -2457,8 +2505,10 @@ Section Spilling.
             rewrite List.skipn_app_r by reflexivity. simpl. cbn [Let_In_pf_nd].
             repeat rewrite <- app_assoc. reflexivity. }
           intros. apply predicts_app.
-          { eapply predicts_ext. 2: eapply current1. intros. symmetry. simpl.
-            rewrite stransform_stmt_trace_step. reflexivity. }
+          { eapply predicts_ext_strong. 2: eapply current1. intros. symmetry.
+            rewrite stransform_stmt_trace_step. simpl. simpl in H6.
+            destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+            destruct thing3; reflexivity || destruct H6. }
           constructor; [intros []|constructor].
 
         * eapply exec.weaken. 1: eapply IH2.
@@ -2490,15 +2540,22 @@ Section Spilling.
                   rewrite List.skipn_app_r by reflexivity. simpl. cbn [Let_In_pf_nd].
                   repeat rewrite <- app_assoc in *. rewrite future2. clear future2.
                   rewrite List.skipn_app_r by reflexivity. rewrite future3. reflexivity. }
-                intros. eapply predicts_ext. 2: eapply predicts_app; [eapply current1|].
-                { intros. symmetry. rewrite stransform_stmt_trace_step. reflexivity. }
-                constructor; [intros []|]. eapply predicts_ext. 2: eapply predicts_app; [eapply current2|].
-                { intros. symmetry. rewrite future1. rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
-                  cbv [leak_prepare_bcond leak_spill_bcond]. simpl. repeat rewrite <- app_assoc.
-                  reflexivity. }
-                eapply predicts_ext. 2: eapply current3.
-                intros. simpl. symmetry. rewrite future2. simpl. rewrite List.skipn_app_r by reflexivity.
-                repeat rewrite <- app_assoc. reflexivity.
+                intros. eapply predicts_app.
+                { eapply predicts_ext_strong. 2: eapply current1.
+                  intros. symmetry. rewrite stransform_stmt_trace_step. simpl.
+                  simpl in H5. destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+                  destruct thing3; reflexivity || destruct H5. }
+                constructor; [intros []|]. eapply predicts_app.
+                { eapply predicts_ext_strong. 2: eapply current2. simpl. symmetry.
+                  rewrite stransform_stmt_trace_step. simpl. rewrite future1.
+                  rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
+                  repeat rewrite <- app_assoc in *.
+                  destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+                  destruct thing3; reflexivity || destruct H5. }
+                eapply predicts_ext. 2: eapply current3. symmetry. rewrite stransform_stmt_trace_step.
+                simpl. rewrite future1. rewrite List.skipn_app_r by reflexivity. cbn [Let_In_pf_nd].
+                repeat rewrite <- app_assoc in *. rewrite future2. rewrite simplify_snd.
+                rewrite List.skipn_app_r by reflexivity. reflexivity.
 
     - (* exec.seq *)
       cbn in *. fwd.
@@ -2523,9 +2580,13 @@ Section Spilling.
              rewrite List.skipn_app_r by reflexivity. rewrite future2. reflexivity. }
            intros. eapply predicts_ext.
            { intros. rewrite stransform_stmt_trace_step. simpl. reflexivity. }
-           apply predicts_app; [apply current1|]. eapply predicts_ext. 2: eapply current2.
+           apply predicts_app.
+           { eapply predicts_ext_strong. 2: eapply current1. intros ? Hneed. simpl in Hneed.
+             simpl. destruct (stransform_stmt_trace _ _ _) as [[thing1 thing2] thing3].
+             destruct thing3; reflexivity || destruct Hneed. }
+           eapply predicts_ext. 2: eapply current2.
            intros. simpl. symmetry. rewrite future1. rewrite List.skipn_app_r by reflexivity.
-           reflexivity.
+           rewrite simplify_snd. reflexivity.
            
     - (* exec.skip *)
       eapply exec.skip. do 7 eexists. repeat (split; [eauto|]). 1: instantiate (1 := nil).
