@@ -68,7 +68,10 @@ Local Notation "xs $@ a" := (Array.array Separation.ptsto (word.of_Z 1) a xs) (a
 Local Infix "*" := Separation.sep.
 Local Infix "*" := Separation.sep : type_scope.
 
-Definition getline_io bs := getchar_event Byte.x0a :: map getchar_event (rev bs).
+Definition getline_io n bs :=
+  let chars := map getchar_event (rev bs) in
+  let newline := if n =? length bs then nil else [getchar_event Byte.x0a] in
+  newline ++ chars.
 
 #[global] Instance ctspec_of_getline : spec_of "getline" :=
   fun functions => exists f, forall k (dst n : word) d t m R,
@@ -78,8 +81,7 @@ Definition getline_io bs := getchar_event Byte.x0a :: map getchar_event (rev bs)
         (bs$@dst * es$@(word.add dst l) * R) m' /\
         length bs = l :> Z /\
         length bs + length es = n :> Z /\
-        (* TODO: handle case where buffer is full and final newline is not read. possibly just as an error. *)
-        t' = getline_io bs ++ t).
+        t' = getline_io n bs ++ t).
 
 (* Mon Jul  1 14:24:28 EDT 2024 *)
 
@@ -95,19 +97,19 @@ Proof.
     (HList.polymorphic_list.cons (_ -> Prop)
     HList.polymorphic_list.nil))
     ["dst";"n";"i";"c"])
-    (fun (v:nat) es R k t m  dst_ n_ i c => PrimitivePair.pair.mk (
+    (fun (v:Z) es R k t m  dst_ n_ i c => PrimitivePair.pair.mk (
       n_ = n /\ dst_ = dst /\ v = i :> Z /\
-      (* TODO: i <= n *)
+      i <= n /\
       (es$@(word.add dst i) * R) m /\ length es = word.sub n i :> Z
     )
     (fun                K T M DST N I C => DST = dst /\
       exists bs ES, (bs$@(word.add dst i) * ES$@(word.add dst I) * R) M /\ I = N /\
       length bs = word.sub I i :> Z /\
       length ES = word.sub n I :> Z /\
-      (* TODO: N <= n *)
-      T = getline_io bs ++ t
+      i <= N <= n /\
+      T = getline_io (n-i) bs ++ t
     ))
-    (fun i j : nat => j < i <= n)%Z
+    (fun i j => j < i <= n)
     _ _ _ _ _ _ _);
     cbn [HList.hlist.foralls HList.tuple.foralls
          HList.hlist.existss HList.tuple.existss
@@ -117,12 +119,15 @@ Proof.
          HList.polymorphic_list.repeat HList.polymorphic_list.length
          PrimitivePair.pair._1 PrimitivePair.pair._2] in *;
     repeat straightline.
-    { eapply (Wf.measure_wf (Z.gt_wf _) Z.of_nat). }
-    { split.
-      { instantiate (1:=O). subst v. rewrite word.unsigned_of_Z. exact eq_refl. }
-      { subst v; rewrite word.add_0_r; split; [ecancel_assumption|]. rewrite word.sub_0_r; auto. } }
+    { eapply Z.gt_wf. }
+    { split. { subst v. rewrite word.unsigned_of_Z_0. blia. }
+      subst v; rewrite word.add_0_r; split; [ecancel_assumption|]. rewrite word.sub_0_r; auto. }
 
     { let e := open_constr:(_) in specialize (H e); destruct H.
+      pose proof word.unsigned_range n.
+      pose proof word.unsigned_range x3 as Hx3.
+      subst br. rewrite unsigned_ltu in H2; case Z.ltb eqn:? in H2; 
+          rewrite ?word.unsigned_of_Z_1, ?word.unsigned_of_Z_0, ?word.unsigned_sub_nowrap  in *; try blia; [].
       eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
       { refine (H _ _). }
       repeat straightline.
@@ -132,25 +137,24 @@ Proof.
       { left; repeat straightline.
         { subst br'. rewrite unsigned_ltu, Z.ltb_irrefl; trivial. }
         eexists _, _; repeat straightline.
-        eapply word.if_nonzero, word.eqb_true in H3.
+        eapply word.if_nonzero, word.eqb_true in H4.
         instantiate (1:=nil); cbn [Array.array]; split.
         { ecancel_assumption. }
-        { cbv [getline_io map rev List.app].
+        { 
           split; trivial.
-          split.
-          { admit. }
-          split; trivial.
+          split. { rewrite word.unsigned_sub_nowrap; simpl length; blia. }
+          split. { rewrite word.unsigned_sub_nowrap; blia. }
+          split. { blia. }
+          cbv [getline_io]. cbn [map rev List.app length]. case (Z.eqb_spec (n-x3) 0%nat) as []; try blia.
+          rewrite app_nil_r. subst a0. simpl.
           eapply f_equal2; f_equal; trivial.
-          change 10 with (byte.unsigned Byte.x0a) in H3.
+          progress change 10 with (byte.unsigned Byte.x0a) in H4.
           pose proof byte.unsigned_range x2.
           pose proof byte.unsigned_range Byte.x0a.
-          eapply word.of_Z_inj_small, byte.unsigned_inj in H3; trivial; blia. } }
+          eapply word.of_Z_inj_small, byte.unsigned_inj in H4; trivial; blia. } }
 
       (* store *)
-      destruct x as [|x_0 x].
-      { cbn [length] in *.
-        assert (n = x3) as -> by (revert H3; admit).
-        subst br. rewrite unsigned_ltu, Z.ltb_irrefl in H2; case H2; exact eq_refl. }
+      destruct x as [|x_0 x]. { cbn [length] in *; blia. }
       cbn [Array.array] in *.
       repeat straightline.
       right; repeat straightline.
@@ -158,14 +162,19 @@ Proof.
       { instantiate (1:=x).
         subst v3.
         rewrite word.add_assoc.
-        split.
-        { instantiate (1:=S v1). admit. }
+        split. { rewrite word.unsigned_add_nowrap; rewrite ?word.unsigned_of_Z_1; try blia. }
         split; [ecancel_assumption|].
         cbn [length] in *.
-        (* Require Import ZnWords. ZnWords. *)
-        admit. }
+        pose proof word.unsigned_of_Z_1.
+        pose proof word.unsigned_add_nowrap x3 (word.of_Z 1).
+        pose proof word.unsigned_sub_nowrap n (add x3 (of_Z 1)).
+        blia. }
       { split.
-        { admit. }
+        { subst  v3.
+          pose proof word.unsigned_of_Z_1.
+          pose proof word.unsigned_add_nowrap x3 (word.of_Z 1).
+          pose proof word.unsigned_sub_nowrap n (add x3 (of_Z 1)).
+          blia. }
         repeat straightline.
         (* subroutine return *)
         subst a.
@@ -175,37 +184,52 @@ Proof.
         rename x11 into es.
         rename x6 into I.
         rename x3 into _i.
-        rewrite word.add_assoc in H9.
+        rewrite word.add_assoc in H10.
 
         eexists (byte.of_Z v2::bs), (es).
         cbn ["$@" "++"].
         split. { ecancel_assumption. }
         split; trivial.
-        split.
-        { cbn [length]. rewrite Nat2Z.inj_succ, H11. admit. }
+        split. { cbn [length]. rewrite Nat2Z.inj_succ, H15.
+          pose proof word.unsigned_of_Z_1.
+          pose proof word.unsigned_add_nowrap _i (of_Z 1) ltac:(blia).
+          rewrite 2 word.unsigned_sub_nowrap; blia. }
         split; trivial.
-        subst T a0. cbn. rewrite map_app; cbn.
-        repeat rewrite <-?app_comm_cons, <-?app_assoc; f_equal.
+        split. {
+          pose proof word.unsigned_of_Z_1.
+          pose proof word.unsigned_add_nowrap _i (of_Z 1) ltac:(blia).
+          blia. }
+        subst T a0.
+        cbv [getline_io]; cbn [rev List.map].
+        repeat rewrite ?map_app, <-?app_comm_cons, <-?app_assoc; f_equal.
+        { pose proof word.unsigned_of_Z_1 as H_1.
+          rewrite (word.unsigned_add_nowrap _i (of_Z 1) ltac:(blia)), H_1; cbn [length].
+          case Z.eqb eqn:? at 1; case Z.eqb eqn:? at 1; trivial; try blia.
+          { (* WHY manual? does zify do a bad job here? *) eapply Z.eqb_neq in Heqb1. blia. }
+          { (* WHY manual? does zify do a bad job here? *) eapply Z.eqb_eq in Heqb1. blia. } }
         f_equal.
+        cbn [map List.app].
         f_equal.
         f_equal.
         subst v2.
-        rewrite word.unsigned_of_Z_nowrap, byte.of_Z_unsigned by admit; trivial. } }
+        pose proof byte.unsigned_range x2.
+        rewrite word.unsigned_of_Z_nowrap, byte.of_Z_unsigned; trivial; blia. } }
 
     { (* buffer full *)
-      replace x3 with n in * by admit.
+      replace x3 with n in *; cycle 1.
+      { subst br; rewrite unsigned_ltu in *; eapply word.if_zero, Z.ltb_nlt in H2.
+        apply word.unsigned_inj. blia. }
       exists x, nil; cbn [Array.array].
       split. { ecancel_assumption. }
       split. { trivial. }
       split. { trivial. }
-      assert (length x = O) by admit.
-      split. { admit. }
+      rewrite word.unsigned_sub_nowrap, Z.sub_diag in H7 by blia.
+      split. { rewrite word.unsigned_sub_nowrap, Z.sub_diag by blia; trivial. }
+      split. { blia. }
       destruct x; cbn [length] in *; try blia; cbn.
+      rewrite Z.sub_diag; reflexivity. }
 
-      admit. (* <==== TODO: this one is false: if the buffer is full then the I/O trace does not end with newline *)
-    }
-
-    split. { admit. (* leakage *) }
+    split. { (* leakage *) admit. }
     subst v.
     rewrite word.add_0_r in *.
     split.
@@ -213,8 +237,9 @@ Proof.
     split.
     { rewrite H5. rewrite word.sub_0_r. trivial. }
     split.
-    { rewrite H5, H6, word.sub_0_r. admit. }
+    { rewrite H5, H6, word.sub_0_r, word.unsigned_sub_nowrap; blia. }
     subst t0.
+    rewrite word.unsigned_of_Z_0, Z.sub_0_r.
     trivial.
 
 (* Tue Jul  2 14:26:41 EDT 2024 *)
