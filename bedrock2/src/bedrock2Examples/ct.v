@@ -51,7 +51,7 @@ Definition getchar_event c : io_event :=
 #[global] Instance ctspec_of_getchar : spec_of "getchar" :=
   fun functions => exists f, forall k t m,
       WeakestPrecondition.call functions "getchar" k t m []
-        (fun k' t' m' rets => exists c, rets = [word.of_Z (byte.unsigned c)] /\ k' = f k /\ m' = m /\
+        (fun k' t' m' rets => exists c, rets = [word.of_Z (byte.unsigned c)] /\ k' = f ++ k /\ m' = m /\
         t' = cons (getchar_event c) t ).
 
 Definition getline := func! (dst, n) ~> n {
@@ -73,18 +73,18 @@ Definition getline_io n bs :=
   let newline := if n =? length bs then nil else [getchar_event Byte.x0a] in
   newline ++ chars.
 
-Fixpoint getline_leakage f dst n (bs : nat) (i : word) k :=
-  if i =? n then leak_bool false :: k else
+Fixpoint getline_leakage f dst n (bs : nat) (i : word) :=
+  if i =? n then leak_bool false :: nil else
   match bs with
-  | S bs => getline_leakage f dst n bs (add i (of_Z 1)) (leak_word (add dst i) :: leak_bool false :: f (leak_unit :: leak_bool true :: k))
-  | O => leak_bool false :: leak_bool true :: f (leak_unit :: leak_bool true :: k)
+  | S bs => getline_leakage f dst n bs (add i (of_Z 1)) ++ (leak_word (add dst i) :: leak_bool false :: f ++ leak_unit :: leak_bool true :: nil)
+  | O => leak_bool false :: leak_bool true :: f ++ leak_unit :: leak_bool true :: nil
   end.
 
 #[global] Instance ctspec_of_getline : spec_of "getline" :=
   fun functions => exists f, forall k (dst n : word) d t m R,
   (d$@dst * R) m -> length d = n :> Z ->
       WeakestPrecondition.call functions "getline" k t m [dst; n]
-        (fun k' t' m' rets => exists bs es l, rets = [l] /\ k' = f dst n l k /\
+        (fun k' t' m' rets => exists bs es l, rets = [l] /\ k' = f dst n l ++ k /\
         (bs$@dst * es$@(word.add dst l) * R) m' /\
         length bs = l :> Z /\
         length bs + length es = n :> Z /\
@@ -117,7 +117,7 @@ Proof.
       length ES = word.sub n I :> Z /\
       i <= N <= n /\
       T = getline_io (n-i) bs ++ t /\
-      K = getline_leakage f dst n (length bs) i k
+      K = getline_leakage f dst n (length bs) i ++ k
     ))
     (fun i j => j < i <= n)
     _ _ _ _ _ _ _);
@@ -165,7 +165,7 @@ Proof.
             eapply word.of_Z_inj_small, byte.unsigned_inj in H4; trivial; blia. }
           (* leakage *)
           subst k'. subst k'''; subst a. cbn [getline_leakage leak_binop "++" length].
-          rewrite (proj2 (Z.eqb_neq _ _)) by blia; trivial. } }
+          rewrite (proj2 (Z.eqb_neq _ _)) by blia; trivial. simpl. rewrite <- app_assoc. reflexivity. } }
 
       (* store *)
       destruct x as [|x_0 x]. { cbn [length] in *; blia. }
@@ -231,7 +231,8 @@ Proof.
           rewrite word.unsigned_of_Z_nowrap, byte.of_Z_unsigned; trivial; blia. }
         (* leakage *)
         subst K k'0 k'' k' a1; cbn [getline_leakage leak_binop length].
-        rewrite (proj2 (Z.eqb_neq _ _)) by blia; trivial. } }
+        rewrite (proj2 (Z.eqb_neq _ _)) by blia; trivial.
+        repeat (simpl || rewrite <- app_assoc). reflexivity. } }
 
     { (* buffer full *)
       replace x3 with n in *; cycle 1.
@@ -269,22 +270,27 @@ Qed.
 
 Require Import bedrock2Examples.memequal.
 
-(*TODO: take username via IO, not as argument.*)
-Definition password_checker := func! (username, password_array) ~> ret {
+Definition password_checker := func! (password) ~> ret {
                                    stackalloc 8 as x; (*password is 8 characters*)
                                    unpack! attempt = getline(x, $8);
-                                   unpack! ret = memequal(x, password_array + username * $8, $8)
+                                   unpack! ret = memequal(x, password, $8)
                                  }.
+Print getline_io.
 
 #[global] Instance ctspec_of_password_checker : spec_of "password_checker" :=
-  fun functions => forall pick_sp k (username password_array : word), exists k_, forall n R t m passwords,
-      length passwords = Nat.mul n 8 ->
-      word.unsigned username < n ->
-      (passwords$@password_array * R) m ->
-      WeakestPrecondition.call functions "password_checker" k t m [username; password_array]
+  fun functions => exists f, forall pick_sp k (username password_addr : word), forall R t m password,
+      length password = 8 :> Z ->
+      (password$@password_addr * R) m ->
+      WeakestPrecondition.call functions "password_checker" k t m [password_addr]
         (fun k' t' m' rets =>
-           exists k'', k' = k'' ++ k /\
-                         (predicts pick_sp (rev k'') -> k' = k_)).
+           exists bs ret (l : word),
+             rets = [ret (*bs =? password*)] /\
+               length bs = l :> Z /\
+               (password$@password_addr * R) m' /\
+               t' = getline_io 8 bs ++ t /\
+               (exists k'',
+                   k' = k'' ++ k /\ (predicts pick_sp (rev k'') ->
+                                     k'' = f pick_sp password_addr l))).
 
 Fail Lemma password_checker_ct : program_logic_goal_for_function! password_checker. (*Why*)
 Global Instance spec_of_memequal : spec_of "memequal" := spec_of_memequal.
@@ -293,20 +299,28 @@ Lemma password_checker_ct : program_logic_goal_for_function! password_checker.
 Proof.
   repeat straightline.
   eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
-  { apply Array.anybytes_to_array_1 in H4. destruct H4 as [bs [Hbs Hlenbs]].
-    eapply H. 2: eassumption. ecancel_assumption. }
+  { eapply H. 2: eassumption. ecancel_assumption. }
   repeat straightline.
   eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
-  { eapply H0. split. { ecancel_assumption. } split.
-    { admit. } admit. }
-  repeat straightline. eexists. eexists. split; [admit|split; [admit|]].
-  repeat straightline. eexists. subst. split; [trace_alignment|].
+  { eapply H0. split.
+    { (*this does the wrong thing; we want (x++x0)$@a, not x$@a.*) ecancel_assumption. } split.
+    { ecancel_assumption. }
+    split.
+    { (*not true.*) admit. }
+    { rewrite H1. reflexivity. } }
+  repeat straightline. eexists. eexists. split; [admit|]. split; [admit|].
+  repeat straightline. split; [eassumption|]. split; [admit|].
+  split.
+  { subst a1. reflexivity. }
+  subst a0. eexists. split; [trace_alignment|].
   intros Hpred. repeat (rewrite rev_app_distr in Hpred || cbn [rev] in Hpred).
   repeat rewrite <- app_assoc in Hpred. cbn [List.app] in Hpred. inversion Hpred; clear Hpred; subst.
-  specialize (H14 I). instantiate (1 := match (pick_sp nil) with | consume_word _ => _ |_ => _ end). (*^we have to do this because pick_sp does not return a word. probably it should return a word.*)
-  rewrite H14. subst.
-  (*TODO: cannot prove this because we leak the length of the password that is input.
-    Should update spec to say something about IO trace.*)
+  specialize (H13 I).
+  instantiate (1 := fun pick_sp _ _ => match (pick_sp nil) with | consume_word _ => _ |_ => _ end).
+  (*^we have to do this because pick_sp does not return a word. probably it should return a word.*)
+  simpl. rewrite H13. reflexivity.
+  Unshelve.
+  all: assumption || exact nil.
 Abort.
 
 Definition maskloop := func! (a) {
