@@ -32,6 +32,30 @@ Section WithArguments1.
     | |- _ => fail
     end.
 
+  (*copied from ListSet.v*)
+  Section ListSetStuff.
+    Context {E: Type}.
+    Context {eeq: E -> E -> bool}.
+    Context {eeq_spec: EqDecider eeq}.
+    Lemma In_list_diff_spec:
+      forall (l1 l2: list E) (x: E),
+        In x (list_diff eeq l1 l2) <-> In x l1 /\ (~ In x l2).
+    Proof.
+      intros. split.
+      - eapply invert_In_list_diff.
+      - intros. destr H. eauto 2 using In_list_diff.
+    Qed.
+    
+    Lemma of_list_list_diff: forall (l1 l2: list E),
+        of_list (list_diff eeq l1 l2) = diff (of_list l1) (of_list l2).
+    Proof.
+      intros.
+      extensionality e. apply propositional_extensionality.
+      unfold of_list, diff, elem_of. Search list_diff.
+      apply In_list_diff_spec.
+    Qed.
+  End ListSetStuff.
+
   Ltac listset_to_set :=
     match goal with
     | H: context[of_list (ListSet.list_union _ _ _)] |- _ => rewrite ListSet.of_list_list_union in H
