@@ -54,6 +54,56 @@ Section WithArguments1.
       unfold of_list, diff, elem_of. Search list_diff.
       apply In_list_diff_spec.
     Qed.
+
+    Lemma subset_of_list_removeb:
+      forall (l: list E) s,
+        PropSet.subset (PropSet.of_list (List.removeb eeq s l))
+          (PropSet.of_list (l)).
+    Proof.
+      intros. rewrite of_list_removeb.
+      unfold PropSet.subset.
+      intros.
+      unfold PropSet.elem_of in H.
+      unfold PropSet.diff in H.
+      destr H.
+      eapply H.
+    Qed.
+    
+    Lemma subset_of_list_split_union:
+      forall s1 s1' s2 s2',
+        subset (of_list s1) (of_list s1')
+        -> subset (of_list s2) (of_list s2')
+        -> subset (of_list (list_union eeq s1 s2)) (of_list (list_union eeq s1' s2')).
+    Proof.
+      intros. repeat rewrite of_list_list_union.
+      eapply subset_union_l.
+      - eapply subset_union_rl. assumption.
+      - eapply subset_union_rr. assumption.
+    Qed.
+
+    Lemma subset_of_list_union:
+      forall s1a s1b s2,
+        subset (of_list s1a) (of_list s2) ->
+        subset (of_list s1b) (of_list s2) ->
+        subset (of_list (list_union eeq s1a s1b)) (of_list s2).
+    Proof.
+      intros. rewrite of_list_list_union.
+      eapply subset_union_l; assumption.
+    Qed.
+
+    Lemma subset_of_list_diff:
+      forall  l' (l: list E),
+        PropSet.subset (PropSet.of_list (list_diff eeq l l'))
+          (PropSet.of_list l).
+    Proof.
+      intros.
+      unfold subset.
+      intros.
+      unfold elem_of in *.
+      unfold of_list in *.
+      eapply In_list_diff_weaken.
+      eapply H.
+    Qed.
   End ListSetStuff.
 
   Section PropSetStuff.
@@ -89,7 +139,24 @@ Section WithArguments1.
         { exfalso. inversion H2. }
     Qed.
   End PropSetStuff.
+
+  Section ListStuff.
+    Local Set Default Proof Using "All".
+    Context {A : Type}. (* maximally inserted to make sure aeqb_dec is inferred *)
+    Context {aeqb : A -> A -> bool} {aeqb_dec: EqDecider aeqb}.
     
+    Lemma find_eqb:
+      forall (l: list A) s s',
+        find (aeqb s) l = Some s' -> s = s'.
+    Proof.
+      induction l; simpl in *.
+      - intros.
+        inversion H.
+      - intros. destr (aeqb s a).
+        + inversion H. reflexivity.
+        + eauto.
+    Qed.
+  End ListStuff.
 
   Ltac listset_to_set :=
     match goal with
@@ -291,7 +358,7 @@ Section WithArguments1.
         * inversion E.
         * destr (find (eqb x0) l).
           -- pose proof E1 as E1'.
-             eapply List.find_eqb in E1.
+             eapply (*List.*)find_eqb in E1.
              rewrite <- E1 in E1'.
              eapply find_some.
              eapply E1'.
