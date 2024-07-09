@@ -147,6 +147,63 @@ Section WithArguments1.
           * reflexivity.
           * reflexivity.
     Qed.
+
+    Lemma agree_on_cons:
+      forall (k: var) ks (m1 m2: stateMap),
+        map.agree_on (PropSet.of_list (k :: ks)) m1 m2 ->
+        map.agree_on (PropSet.of_list ks) m1 m2 /\
+          map.get m1 k = map.get m2 k.
+    Proof.
+      intros.
+      unfold map.agree_on, PropSet.of_list, PropSet.elem_of in *.
+      split.
+      - intros. eauto using List.in_cons.
+      - intros. eauto using List.in_eq.
+    Qed.
+    
+    Lemma agree_on_getmany:
+      forall ks (m1 m2: stateMap),
+        map.agree_on (PropSet.of_list ks) m1 m2 ->
+        map.getmany_of_list m1 ks =
+          map.getmany_of_list m2 ks.
+    Proof.
+      intros.
+      induction ks.
+      - simpl. reflexivity.
+      - simpl.
+        eapply agree_on_cons in H.
+        destr H.
+        eapply IHks in H.
+        unfold getmany_of_list in *.
+        simpl.
+        rewrite H, H0.
+        reflexivity.
+    Qed.
+
+    Lemma agree_on_refl: forall k (m: stateMap),
+        map.agree_on k m m.
+    Proof. t. Qed.
+
+    Lemma agree_on_find:
+      forall s l (m1 m2: stateMap),
+        map.agree_on (PropSet.of_list (if (List.find (var_eqb s) l)
+                                       then l
+                                       else s :: l)) m1 m2
+        -> map.agree_on (PropSet.of_list l) m1 m2 /\ map.get m1 s = map.get m2 s.
+    Proof.
+      intros.
+      destr (List.find (var_eqb s) l).
+      - split.
+        + eassumption. 
+        + eapply List.find_some in E.
+          unfold map.agree_on, elem_of, singleton_set in *.
+          intros. destr E.
+          unfold PropSet.of_list in H.
+          destr (var_eqb s v).
+          2: { exfalso; inversion H1. }
+          eauto.
+      - eauto using agree_on_cons. 
+    Qed.
   End MapEautoStuff.
     
   Lemma agree_on_put_existsb_false:
@@ -237,11 +294,11 @@ Section WithArguments1.
   Lemma dce_correct_aux :
     forall eH eL,
       dce_functions eH = Success eL ->
-      forall sH t m mcH lH postH,
-        exec eH sH t m lH mcH postH ->
-        forall used_after lL mcL,
+      forall sH k t m mcH lH postH,
+        exec eH sH k t m lH mcH postH ->
+        forall used_after kL lL mcL,
           map.agree_on (of_list (live sH used_after)) lH lL ->
-          exec eL (dce sH used_after) t m lL mcL (compile_post used_after postH).
+          exec eL (dce sH used_after) kL t m lL mcL (compile_post used_after postH).
   Proof.
     induction 2;
       match goal with
@@ -265,7 +322,7 @@ Section WithArguments1.
         * eapply H5.
         * intros.
           unfold compile_post.
-          exists l'. eexists. split.
+          eexists. exists l'. eexists. split.
           -- agree_on_solve. repeat listset_to_set.
              subset_union_solve.
           -- eauto.
@@ -291,7 +348,7 @@ Section WithArguments1.
           -- eapply H6p1p0.
           -- listset_to_set. agree_on_solve.
         * eapply H6p1p1.
-        * do 2 eexists. split; [ | eassumption ].
+        * do 3 eexists. split; [ | eassumption ].
           agree_on_solve.
           repeat listset_to_set.
           subset_union_solve.
@@ -302,12 +359,12 @@ Section WithArguments1.
         * rewrite <- H3p1. eassumption. 
         * eauto.
         * unfold compile_post.
-          exists (map.put l x v); eexists; split; [ | eassumption ].
+          eexists. exists (map.put l x v); eexists; split; [ | eassumption ].
           repeat listset_to_set.
           agree_on_solve.
       + eapply @exec.skip.
         * unfold compile_post.
-          exists (map.put l x v); eexists; split; [ | eassumption ].
+          eexists. exists (map.put l x v); eexists; split; [ | eassumption ].
           repeat listset_to_set.
           agree_on_solve.
     - intros. repeat listset_to_set.
@@ -319,17 +376,17 @@ Section WithArguments1.
       + erewrite <- H4p0; eauto.
         unfold elem_of; destr (a =? v)%string; [ eapply in_eq | eapply in_cons, in_eq ].
       + eassumption.
-      + unfold compile_post. exists l; eexists; split; eassumption.
+      + unfold compile_post. eexists. exists l; eexists; split; eassumption.
     - intros.
       eapply agree_on_find in H4; fwd.
       destr (existsb (eqb x) used_after); fwd.
       + eapply @exec.inlinetable; eauto.
         * rewrite <- H4p1. eassumption. 
-        * unfold compile_post; do 2 eexists; split ; [ | eassumption ].
+        * unfold compile_post; do 3 eexists; split ; [ | eassumption ].
           repeat listset_to_set; agree_on_solve.
       + eapply @exec.skip; eauto.
         unfold compile_post.
-        do 2 eexists; split; [ | eassumption ].
+        do 3 eexists; split; [ | eassumption ].
         repeat listset_to_set; agree_on_solve.
     - intros.
       repeat listset_to_set.
@@ -344,17 +401,17 @@ Section WithArguments1.
             ++ eassumption.
             ++ split.
                ** eassumption.
-               ** do 2 eexists; split; [ eassumption | eapply H6p1p2 ].
+               ** do 3 eexists; split; [ eassumption | eapply H6p1p2 ].
     - intros. destr (existsb (eqb x) used_after).
       + eapply @exec.lit.
         unfold compile_post.
         repeat listset_to_set.
-        do 2 eexists; split; [ | eassumption ].
+        do 3 eexists; split; [ | eassumption ].
         agree_on_solve.
       + eapply @exec.skip.
         unfold compile_post.
         repeat listset_to_set.
-        do 2 eexists; split; [ | eassumption ].
+        do 3 eexists; split; [ | eassumption ].
         agree_on_solve.
     - destr z.
       + intros. repeat listset_to_set.
@@ -372,11 +429,11 @@ Section WithArguments1.
              ++ eapply in_eq.
              ++ eapply in_cons, in_eq.
           -- unfold compile_post.
-             do 2 eexists; split; [ | eassumption ].
+             do 3 eexists; split; [ | eassumption ].
              agree_on_solve.
         * eapply @exec.skip.
           unfold compile_post.
-          do 2 eexists; split; [ | eassumption ].
+          do 3 eexists; split; [ | eassumption ].
           agree_on_solve.
       + intros.
         eapply agree_on_find in H3; fwd. 
@@ -384,11 +441,11 @@ Section WithArguments1.
         * eapply @exec.op.
           -- rewrite <- H3p1. eassumption. 
           -- simpl. constructor.
-          -- unfold compile_post. simpl in *. inversion H1. fwd.  do 2 eexists; split; [ | eassumption ].
+          -- unfold compile_post. simpl in *. inversion H1. fwd.  do 3 eexists; split; [ | eassumption ].
              repeat listset_to_set.
              agree_on_solve.
         * eapply @exec.skip. unfold compile_post.
-          do 2 eexists; split ; [ | eassumption ].
+          do 3 eexists; split ; [ | eassumption ].
           repeat listset_to_set.
           agree_on_solve.
     - intros.
@@ -397,11 +454,11 @@ Section WithArguments1.
       destr (existsb (eqb x) used_after).
       { eapply @exec.set.
         - rewrite <- H2p1; eassumption. 
-        - unfold compile_post. do 2 eexists; split; [ | eassumption ].
+        - unfold compile_post. do 3 eexists; split; [ | eassumption ].
           agree_on_solve.
       }
       { eapply @exec.skip.
-        - unfold compile_post. do 2 eexists; split; [ | eassumption ].
+        - unfold compile_post. do 3 eexists; split; [ | eassumption ].
           agree_on_solve.
       }
     - intros.
@@ -450,7 +507,8 @@ Section WithArguments1.
         unfold compile_post in *.
         repeat destr H4.
         eapply H2 in H8.
-        - exists x.
+        - eexists.
+          exists x0.
           eexists.
           split.
           + repeat listset_to_set.
@@ -493,9 +551,9 @@ Section WithArguments1.
           -- eassumption.
           -- eassumption.
         * unfold compile_post. intros. fwd.
-          do 2 eexists; split; eassumption.
+          do 3 eexists; split; eassumption.
     - intros.
       eapply @exec.skip.
-      unfold compile_post. do 2 eexists; split; eassumption.
+      unfold compile_post. do 3 eexists; split; eassumption.
   Qed.
 End WithArguments1.

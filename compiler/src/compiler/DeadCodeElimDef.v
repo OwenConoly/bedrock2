@@ -684,14 +684,14 @@ Section WithArguments1.
 
   Definition compile_post
     used_after
-    (postH: Semantics.trace -> mem -> locals -> MetricLog -> Prop)
+    (postH: Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop)
     :
-    Semantics.trace -> mem -> locals -> MetricLog -> Prop
+    Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop
     :=
-    (fun t' m' lL' mcL' =>
-       exists lH' mcH',
+    (fun k' t' m' lL' mcL' =>
+       exists kH' lH' mcH',
          map.agree_on (PropSet.of_list used_after) lH' lL'
-         /\ postH t' m' lH' mcH').
+         /\ postH kH' t' m' lH' mcH').
 
   Lemma agree_on_eval_bcond:
     forall cond (m1 m2: locals),
