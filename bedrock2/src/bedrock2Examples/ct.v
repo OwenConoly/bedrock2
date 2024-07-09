@@ -272,8 +272,9 @@ Require Import bedrock2Examples.memequal.
 
 Definition password_checker := func! (password) ~> ret {
                                    stackalloc 8 as x; (*password is 8 characters*)
-                                   unpack! attempt = getline(x, $8);
-                                   unpack! ret = memequal(x, password, $8)
+                                   unpack! n = getline(x, $8);
+                                   unpack! ok = memequal(x, password, $8);
+                                   ret = (n == $8) & ok
                                  }.
 Print getline_io.
 
@@ -285,12 +286,13 @@ Print getline_io.
         (fun k' t' m' rets =>
            exists bs ret (l : word),
              rets = [ret (*bs =? password*)] /\
-               length bs = l :> Z /\
                (password$@password_addr * R) m' /\
                t' = getline_io 8 bs ++ t /\
+               length bs = l :> Z /\
                (exists k'',
                    k' = k'' ++ k /\ (predicts pick_sp (rev k'') ->
-                                     k'' = f pick_sp password_addr l))).
+                                     k'' = f pick_sp password_addr l)) /\
+               (word.unsigned ret = 1 <-> bs = password)).
 
 Fail Lemma password_checker_ct : program_logic_goal_for_function! password_checker. (*Why*)
 Global Instance spec_of_memequal : spec_of "memequal" := spec_of_memequal.
@@ -301,27 +303,42 @@ Proof.
   eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
   { eapply H. 2: eassumption. ecancel_assumption. }
   repeat straightline.
+  seprewrite_in_by @Array.bytearray_index_merge H9 ltac:(blia).
   eapply WeakestPreconditionProperties.Proper_call; repeat intro; cycle 1.
   { eapply H0. split.
-    { (*this does the wrong thing; we want (x++x0)$@a, not x$@a.*) ecancel_assumption. } split.
+    { ecancel_assumption. } split.
     { ecancel_assumption. }
     split.
-    { (*not true.*) admit. }
+    { rewrite ?app_length; blia. }
     { rewrite H1. reflexivity. } }
-  repeat straightline. eexists. eexists. split; [admit|]. split; [admit|].
-  repeat straightline. split; [eassumption|]. split; [admit|].
-  split.
-  { subst a1. reflexivity. }
-  subst a0. eexists. split; [trace_alignment|].
-  intros Hpred. repeat (rewrite rev_app_distr in Hpred || cbn [rev] in Hpred).
-  repeat rewrite <- app_assoc in Hpred. cbn [List.app] in Hpred. inversion Hpred; clear Hpred; subst.
-  specialize (H13 I).
-  instantiate (1 := fun pick_sp _ _ => match (pick_sp nil) with | consume_word _ => _ |_ => _ end).
-  (*^we have to do this because pick_sp does not return a word. probably it should return a word.*)
-  simpl. rewrite H13. reflexivity.
+  assert (length ((x ++ x0)) = 8%nat).
+  { rewrite ?app_length. rewrite word.unsigned_of_Z_nowrap in H11; blia. }
+  repeat straightline.
+  split. { ecancel_assumption. }
+  split. { exact eq_refl. }
+  split. { eassumption. }
+  split. { (* leakage *)
+    subst a0. eexists. split; [trace_alignment|].
+    intros Hpred. repeat (rewrite rev_app_distr in Hpred || cbn [rev] in Hpred).
+    repeat rewrite <- app_assoc in Hpred. cbn [List.app] in Hpred. inversion Hpred; clear Hpred; subst.
+    specialize (H17 I).
+    instantiate (1 := fun pick_sp _ _ => match (pick_sp nil) with | consume_word _ => _ |_ => _ end).
+    (*^we have to do this because pick_sp does not return a word. probably it should return a word.*)
+    simpl. rewrite H17. reflexivity. }
+  { (* functional correctness *)
+    subst v.
+    destruct (word.eqb_spec x1 (of_Z 8)) as [->|?]; cycle 1.
+    { rewrite word.unsigned_and_nowrap, word.unsigned_of_Z_0, Z.land_0_l; split; try discriminate.
+      intros X%(f_equal (@length _)). case H13; clear H13; apply word.unsigned_inj.
+      rewrite <-H10, X, word.unsigned_of_Z_nowrap; blia. }
+    rewrite word.unsigned_and_nowrap, word.unsigned_of_Z_1.
+    destruct x0; cycle 1.
+    { cbn [length] in *. rewrite word.unsigned_of_Z_nowrap in H10, H11; blia. }
+    { rewrite ?app_nil_r in *. rewrite <-H16.
+      case H15 as [->|]; intuition try congruence. rewrite H15. trivial. } }
   Unshelve.
   all: assumption || exact nil.
-Abort.
+Qed.
 
 Definition maskloop := func! (a) {
   i = $0;
