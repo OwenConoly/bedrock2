@@ -656,7 +656,7 @@ Section WithArguments1.
                           | None => (nil, nil)
                           end
                     | _ => fun _ => (nil, nil)
-                    end _
+                    end eq_refl
               | SLoad _ x _ _ =>
                   fun _ =>
                     match kH with
@@ -691,7 +691,7 @@ Section WithArguments1.
                           let '(skip, kL) := dtransform_stmt_trace (kH', body, u) _ in
                           (consume_word addr :: skip, consume_word addr :: kL)
                     | _ => fun _ => (nil, nil)
-                    end _
+                    end eq_refl
               | SLit x _ =>
                   fun _ => (nil, nil)
               | SOp x op _ _ =>
@@ -748,7 +748,7 @@ Section WithArguments1.
                          | leak_bool false :: kH'' =>
                              fun _ => (skip1 ++ [leak_bool false], kL1 ++ [leak_bool false])
                          | _ => fun _ => (nil, nil)
-                         end _)
+                         end eq_refl)
               | SSeq s1 s2 =>
                   fun _ =>
                     let '(skip1, kL1) := dtransform_stmt_trace (kH, s1, live s2 u) _ in
@@ -756,9 +756,64 @@ Section WithArguments1.
                     let '(skip2, kL2) := dtransform_stmt_trace (kH', s2, u) _ in
                     (skip1 ++ skip2, kL1 ++ kL2)
               | SSkip => fun _ => (nil, nil)
-              end _
-        end _).
-    
+              end eq_refl
+        end eq_refl).
+    Proof.
+      all: cbv [lt_tuple project_tuple].
+      all: subst.
+      all: repeat match goal with
+             | t := List.skipn ?n ?k |- _ =>
+                      let H := fresh "H" in
+                      assert (H := List.skipn_length n k); subst t end.
+      all: try (right; constructor; constructor).
+      all: try (left; simpl; blia).
+    - assert (H' := skipn_length (length skip1) kH).
+      rewrite e4 in *. simpl in *. left. blia.
+    - assert (H' := skipn_length (length skip1) kH).
+      rewrite e4 in *. simpl in *. left. blia.
+    - destruct (length (List.skipn (length skip1) kH) =? length kH)%nat eqn:E.
+      + apply Nat.eqb_eq in E. rewrite E. right. constructor. constructor.
+      + apply Nat.eqb_neq in E. left. blia.
+    Defined.
+
+    Definition dtransform_stmt_trace e :=
+      my_Fix _ _ lt_tuple_wf _ (dtransform_stmt_trace_body e).
+
+    Lemma fix_step e tup : dtransform_stmt_trace e tup = dtransform_stmt_trace_body e tup (fun y _ => dtransform_stmt_trace e y).
+    Proof.
+      cbv [dtransform_stmt_trace].
+      apply (@my_Fix_eq _ _ lt_tuple_wf _ (dtransform_stmt_trace_body e) eq eq).
+      { intros. clear tup. subst. rename x2 into x.
+        assert (H : forall y p1 p2, f1 y p1 = f2 y p2) by auto. clear H0.
+        assert (H': forall y p, f1 y p = f2 y p) by auto.
+        cbv [dtransform_stmt_trace_body]. cbv beta.
+        destruct x as [ [k s] u].
+        (*cbv [Equiv] in H. destruct H as [H1 H2]. injection H1. intros. subst. clear H1.*)
+        Tactics.destruct_one_match. all: try reflexivity.
+        { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
+          rewrite H'. reflexivity. }
+        { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
+          rewrite H'. reflexivity. }
+        { Tactics.destruct_one_match. Tactics.destruct_one_match.
+          repeat Tactics.destruct_one_match; try reflexivity.
+          all: erewrite H in E; rewrite E in E0; inversion E0; subst.
+          all: try reflexivity.
+          apply Let_In_pf_nd_ext. intros. Tactics.destruct_one_match; try reflexivity.
+          Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
+          repeat Tactics.destruct_one_match; try reflexivity.
+          all: (erewrite H in E1; rewrite E1 in E3; inversion E3; subst) ||
+                 (erewrite H in E1; rewrite E1 in E2; inversion E2; subst).
+          apply H. }
+        { repeat Tactics.destruct_one_match.
+          all: (erewrite H in E; rewrite E in E1; inversion E1; subst) ||
+                 (erewrite H in E; rewrite E in E0; inversion E0; subst; reflexivity). 
+          erewrite H in E0. Search t5. rewrite E0 in E2.
+          inversion E2. subst. reflexivity. }
+        { Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match; try reflexivity.
+          Tactics.destruct_one_match; try reflexivity. Tactics.destruct_one_match.
+          Tactics.destruct_one_match. erewrite H. reflexivity. } }
+      { reflexivity. }
+    Qed.
   
   Fixpoint dce(s: stmt var)(u: list var)  : stmt var :=
     match s with
@@ -827,18 +882,20 @@ Section WithArguments1.
 
   Definition dce_functions : env -> result env :=
     map.try_map_values dce_function.
-
+  Check  dtransform_stmt_trace. Print tuple.
 
   Definition compile_post
-    used_after
+    e s kH kL used_after
     (postH: Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop)
     :
     Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop
     :=
     (fun k' t' m' lL' mcL' =>
-       exists kH' lH' mcH',
-         map.agree_on (PropSet.of_list used_after) lH' lL'
-         /\ postH kH' t' m' lH' mcH').
+       exists kH'' kL'' lH' mcH',
+         map.agree_on (PropSet.of_list used_after) lH' lL' /\
+           k' = kL'' ++ kL /\
+           dtransform_stmt_trace e (rev kH'', s, used_after) = (rev kH'', rev kL'') /\
+           postH (kH'' ++ kH) t' m' lH' mcH').
 
   Lemma agree_on_eval_bcond:
     forall cond (m1 m2: locals),
