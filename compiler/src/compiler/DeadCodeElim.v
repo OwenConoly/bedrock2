@@ -514,7 +514,8 @@ Section WithArguments1.
       rename H6 into IH12.
       rename H4 into IH2.
       cbn - [live] in IH12.
-      eapply @exec.loop with (mid2 := compile_post (live (SLoop body1 cond body2) used_after) mid2).
+      eapply @exec.loop_cps.
+      eapply exec.weaken.
       { eapply IH1.
         eapply agree_on_subset.
         - let Heq := fresh in
@@ -522,57 +523,69 @@ Section WithArguments1.
           eapply H4.
         - eapply H7.
       }
+      Check exec.loop.
+      intros.
+      assert (eval_bcond l' cond <> None).
       { intros.
         unfold compile_post in *.
-        repeat destr H4.
-        eapply H1 in H6.
+        fwd.
+        eapply H1 in H4p1.
         erewrite agree_on_eval_bcond; [ eassumption | ].
         eapply agree_on_comm.
-        repeat listset_to_set.
-        eapply agree_on_union in H4.
+        repeat listset_to_set. Check agree_on_union.
+        apply agree_on_union in H4p0.
         fwd.
-        eapply agree_on_subset; [ | eapply H4p1 ].
+        eapply agree_on_subset; [ | eapply H4p0p1 ].
         subset_union_solve.
       }
+      destruct (eval_bcond l' cond) eqn:E; try congruence. exists b.
+      split; [reflexivity|]. split.
       { intros.
         unfold compile_post in *.
-        repeat destr H4.
-        eapply H2 in H8.
-        - eexists.
-          exists x0.
+        fwd.
+        eapply H2 in H4p1.
+        - do 3 eexists.
+          exists lH'.
           eexists.
-          split.
+          ssplit; try eassumption; trace_alignment.
           + repeat listset_to_set.
-            eapply agree_on_subset; [ | eapply H4 ].
+            eapply agree_on_subset; [ | eapply H4p0 ].
             subset_union_solve.
-          + eapply H8.
-        - erewrite agree_on_eval_bcond; [ eassumption | ].
+          + intros. repeat rewrite app_nil_r. rewrite fix_step. simpl.
+            rewrite <- app_assoc. rewrite H4p4. rewrite List.skipn_app_r by reflexivity.
+            reflexivity.
+        - subst. erewrite agree_on_eval_bcond; [ eassumption | ].
           repeat listset_to_set.
-          eapply agree_on_subset; [ | eapply H4 ].
+          eapply agree_on_subset; [ | eapply H4p0 ].
           subset_union_solve.
       }
-      {
+      { Print exec.loop.
         intros.
         unfold compile_post in *.
-        repeat destr H4.
-        eapply IH2.
-        - eapply H8.
-        - erewrite agree_on_eval_bcond; [ eassumption | ].
-          repeat listset_to_set.
-          eapply agree_on_subset; [ | eapply H4 ].
-          subset_union_solve.
-        - repeat listset_to_set.
-          eapply agree_on_subset; [ | eapply H4 ].
-          subset_union_solve.
-      }
-      {
-        intros.
-        unfold compile_post in *.
-        repeat destr H4.
-        eapply IH12.
-        - eapply H6.
-        - eapply H4.
-      }
+        fwd.
+        eapply exec.weaken.
+        { eapply IH2.
+          - eapply H4p1.
+          - subst. erewrite agree_on_eval_bcond; [ eassumption | ].
+            repeat listset_to_set.
+            eapply agree_on_subset; [ | eapply H4p0 ].
+            subset_union_solve.
+          - repeat listset_to_set.
+            eapply agree_on_subset; [ | eapply H4p0 ].
+            subset_union_solve.
+        }
+        cbv beta. intros. fwd.
+        eapply exec.weaken.
+        { eapply IH12.
+          - eapply H4p3.
+          - eapply H4p2. }
+        cbv beta. intros. fwd. do 5 eexists. ssplit; try eapply H4p6; trace_alignment.
+        1: assumption.
+        intros. repeat rewrite app_nil_r. repeat rewrite rev_app_distr. cbn [rev].
+        rewrite fix_step. cbn [dtransform_stmt_trace_body]. repeat rewrite <- app_assoc.
+        rewrite H4p4. rewrite List.skipn_app_r by reflexivity.
+        cbn [List.app RecurseWithFun.Let_In_pf_nd]. rewrite H4p7.
+        rewrite List.skipn_app_r by reflexivity. simpl. rewrite H4p10. reflexivity. }
     - intros.
       eapply @exec.seq.
       + eapply IHexec. eassumption.
@@ -582,9 +595,13 @@ Section WithArguments1.
           -- eassumption.
           -- eassumption.
         * unfold compile_post. intros. fwd.
-          do 3 eexists; split; eassumption.
+          do 5 eexists; ssplit; try eassumption; trace_alignment.
+          intros. repeat rewrite app_nil_r. repeat rewrite rev_app_distr.
+          repeat rewrite <- app_assoc. rewrite fix_step. simpl. rewrite H4p4.
+          rewrite List.skipn_app_r by reflexivity. rewrite H4p7. reflexivity.
     - intros.
       eapply @exec.skip.
-      unfold compile_post. do 3 eexists; split; eassumption.
+      unfold compile_post. do 5 eexists; ssplit; try eassumption; trace_alignment.
+      intros. rewrite fix_step. reflexivity.
   Qed.
 End WithArguments1.

@@ -744,7 +744,8 @@ Section WithArguments1.
                              fun _ =>
                                let '(skip2, kL2) := dtransform_stmt_trace (kH'', s2, live_before) _ in
                                let kH''' := List.skipn (length skip2) kH'' in
-                               dtransform_stmt_trace (kH''', s, u) _
+                               let (skip3, kL3) := dtransform_stmt_trace (kH''', s, u) _ in
+                               (skip1 ++ [leak_bool true] ++ skip2 ++ skip3, kL1 ++ [leak_bool true] ++ kL2 ++ kL3)
                          | leak_bool false :: kH'' =>
                              fun _ => (skip1 ++ [leak_bool false], kL1 ++ [leak_bool false])
                          | _ => fun _ => (nil, nil)
@@ -803,7 +804,7 @@ Section WithArguments1.
           repeat Tactics.destruct_one_match; try reflexivity.
           all: (erewrite H in E1; rewrite E1 in E3; inversion E3; subst) ||
                  (erewrite H in E1; rewrite E1 in E2; inversion E2; subst).
-          apply H. }
+          erewrite H in E2. rewrite E2 in E4. inversion E4. subst. reflexivity. }
         { repeat Tactics.destruct_one_match.
           all: (erewrite H in E; rewrite E in E1; inversion E1; subst) ||
                  (erewrite H in E; rewrite E in E0; inversion E0; subst; reflexivity). 
