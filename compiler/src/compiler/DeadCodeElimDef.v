@@ -1,6 +1,7 @@
 Require Import compiler.FlatImp.
 Require Import Coq.Lists.List. Import ListNotations.
 Require Import bedrock2.Syntax.
+Require Import bedrock2.Semantics.
 Require Import coqutil.Tactics.fwd.
 Require Import String.
 Require Import coqutil.Map.MapEauto.
@@ -612,6 +613,152 @@ Section WithArguments1.
        repeat rewrite of_list_list_union.
        subset_union_solve.
   Qed.
+
+  Require Import compiler.RecurseWithFun.
+  Require Import Coq.Init.Wf Wellfounded.
+  Notation trace := Semantics.trace.
+  Definition tuple : Type := trace * stmt var * list var.
+  Definition project_tuple (tup : tuple) :=
+    let '(kH, s, u) := tup in (length kH, s).
+  Definition lt_tuple (x y : tuple) :=
+    lt_tuple' (project_tuple x) (project_tuple y).
+
+  Lemma lt_tuple_wf : well_founded lt_tuple.
+  Proof.
+    cbv [lt_tuple]. apply wf_inverse_image. apply lt_tuple'_wf.
+  Defined.
+
+  Definition dtransform_stmt_trace_body
+    (e: env)
+    (tup : trace * stmt var * list var)
+    (dtransform_stmt_trace : forall othertup, lt_tuple othertup tup -> trace * trace)
+    : trace * trace. (*skipH * kL*)
+    refine (
+        match tup as x return tup = x -> _ with
+        | (kH, s, u) =>
+            fun _ =>
+              match s as x return s = x -> _ with
+              | SInteract _ _ _ =>
+                  fun _ =>
+                    match kH with
+                    | leak_list l :: kH' => ([leak_list l], [leak_list l])
+                    | _ => (nil, nil)
+                    end
+              | SCall _ fname _ =>
+                  fun _ =>
+                    match kH as x return kH = x -> _ with
+                    | leak_unit :: kH' =>
+                        fun _ =>
+                          match @map.get _ _ env e fname with
+                          | Some (params, rets, fbody) =>
+                              let '(skip, kL) := dtransform_stmt_trace (kH', fbody, rets) _ in
+                              (leak_unit :: skip, leak_unit :: kL)
+                          | None => (nil, nil)
+                          end
+                    | _ => fun _ => (nil, nil)
+                    end _
+              | SLoad _ x _ _ =>
+                  fun _ =>
+                    match kH with
+                    | leak_word addr :: kH' =>
+                        if (existsb (eqb x) u) then
+                          ([leak_word addr], [leak_word addr])
+                        else
+                          ([leak_word addr], nil)
+                    | _ => (nil, nil)
+                    end
+              | SStore _ _ _ _ =>
+                  fun _ =>
+                    match kH with
+                    | leak_word addr :: kH' => ([leak_word addr], [leak_word addr])
+                    | _ => (nil, nil)
+                    end
+              | SInlinetable _ x _ _ =>
+                  fun _ =>
+                    match kH with
+                    | leak_word i :: kH' =>
+                        if (existsb (eqb x) u) then
+                          ([leak_word i], [leak_word i])
+                        else
+                          ([leak_word i], nil)
+                    | _ => (nil, nil)
+                    end
+              | SStackalloc x n body =>
+                  fun _ =>
+                    match kH as x return kH = x -> _ with
+                    | consume_word addr :: kH' =>
+                        fun _ =>
+                          let '(skip, kL) := dtransform_stmt_trace (kH', body, u) _ in
+                          (consume_word addr :: skip, consume_word addr :: kL)
+                    | _ => fun _ => (nil, nil)
+                    end _
+              | SLit x _ =>
+                  fun _ => (nil, nil)
+              | SOp x op _ _ =>
+                  fun _ =>
+                    (*copied from spilling.
+                      I should do a leak_list for ops (or just make every op leak two words)
+                      so I don't have to deal with this nonsense*)
+                    let skip :=
+                      match op with
+                      | Syntax.bopname.divu
+                      | Syntax.bopname.remu =>
+                          match kH with
+                          | leak_word x1 :: leak_word x2 :: k' => [leak_word x1; leak_word x2]
+                          | _ => nil
+                          end
+                      | Syntax.bopname.slu
+                      | Syntax.bopname.sru
+                      | Syntax.bopname.srs =>
+                          match kH with
+                          | leak_word x2 :: kH' => [leak_word x2]
+                          | _ => nil
+                          end
+                      | _ => nil
+                      end
+                    in
+                    if (existsb (eqb x) u) then
+                      (skip, skip)
+                    else
+                      (skip, nil)
+              | SSet _ _ => fun _ => (nil, nil)
+              | SIf _ thn els =>
+                  fun _ =>
+                    match kH as x return kH = x -> _ with
+                    | leak_bool b :: kH' =>
+                        fun _ =>
+                          let '(skip, kL) := dtransform_stmt_trace (kH', if b then thn else els, u) _ in
+                          (leak_bool b :: skip, leak_bool b :: kL)
+                    | _ => fun _ => (nil, nil)
+                    end eq_refl
+              | SLoop s1 c s2 =>
+                  fun _ =>
+                    let live_before := live (SLoop s1 c s2) u in
+                    let (skip1, kL1) := dtransform_stmt_trace (kH, s1, (list_union String.eqb
+                                                                          (live s2 live_before)
+                                                                          (list_union eqb (accessed_vars_bcond c) u))) _ in
+                    Let_In_pf_nd (List.skipn (length skip1) kH)
+                      (fun kH' _ =>
+                         match kH' as x return kH' = x -> _ with
+                         | leak_bool true :: kH'' =>
+                             fun _ =>
+                               let '(skip2, kL2) := dtransform_stmt_trace (kH'', s2, live_before) _ in
+                               let kH''' := List.skipn (length skip2) kH'' in
+                               dtransform_stmt_trace (kH''', s, u) _
+                         | leak_bool false :: kH'' =>
+                             fun _ => (skip1 ++ [leak_bool false], kL1 ++ [leak_bool false])
+                         | _ => fun _ => (nil, nil)
+                         end _)
+              | SSeq s1 s2 =>
+                  fun _ =>
+                    let '(skip1, kL1) := dtransform_stmt_trace (kH, s1, live s2 u) _ in
+                    let kH' := List.skipn (length skip1) kH in
+                    let '(skip2, kL2) := dtransform_stmt_trace (kH', s2, u) _ in
+                    (skip1 ++ skip2, kL1 ++ kL2)
+              | SSkip => fun _ => (nil, nil)
+              end _
+        end _).
+    
   
   Fixpoint dce(s: stmt var)(u: list var)  : stmt var :=
     match s with

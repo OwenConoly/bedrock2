@@ -64,9 +64,9 @@ Require Import Coq.Init.Wf Relation_Operators Wellfounded.
 Require Import riscv.Utility.Utility.
 
 Section WithWord.
-  Context {width} {BW: Bitwidth width} {word: word.word width}.
+  Context {var : Type} {width} {BW: Bitwidth width} {word: word.word width}.
   
-  Definition lt_tuple' : nat * stmt Z -> nat * stmt Z -> Prop := slexprod _ _ lt stmt_lt.
+  Definition lt_tuple' : nat * stmt var -> nat * stmt var -> Prop := slexprod _ _ lt stmt_lt.
   
   Lemma lt_tuple'_wf : well_founded lt_tuple'.
   Proof.
