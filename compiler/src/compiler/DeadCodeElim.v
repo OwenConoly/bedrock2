@@ -22,7 +22,133 @@ Section WithArguments1.
   Context {mem: map.map word (Init.Byte.byte : Type) } {mem_ok : map.ok mem } .
   Context {locals: map.map string word } {locals_ok : map.ok locals }.
   Context {ext_spec : Semantics.ExtSpec } {ext_spec_ok: Semantics.ext_spec.ok ext_spec } .
-   
+
+  Section MapEautoStuff.
+    Local Set Default Proof Using "All".
+    Import Interface.map.
+    Context {var: Type}. (* variable name (key) *)
+    Context {var_eqb: var -> var -> bool}.
+    Context {var_eqb_spec: EqDecider var_eqb}.
+    Context {val: Type}. (* value *)
+    
+    Context {stateMap: map.map var val}.
+    Context {stateMapSpecs: map.ok stateMap}.
+    Notation state := (@map.rep var val).
+    Local Hint Mode map.map - - : typeclass_instances.
+
+    Ltac t := map_solver stateMapSpecs.
+
+    Lemma agree_on_not_in:
+      forall keySet (m: stateMap) x,
+        List.existsb (var_eqb x) keySet = false ->
+        forall y,
+          map.agree_on (PropSet.of_list keySet) (map.put m x y) m.
+    Proof.
+      intros.
+      unfold map.agree_on.
+      intros.
+      rewrite map.get_put_dec.
+      destr (var_eqb x k).
+      - unfold elem_of in H0. apply (*PropSet.*)existsb_of_list in H0. exfalso. rewrite H in H0. discriminate.
+      - reflexivity.
+    Qed.
+
+    Lemma agree_on_put_not_in :
+      forall x l (m1 m2: stateMap),
+        map.agree_on (PropSet.of_list l) m1 m2
+        -> List.existsb (var_eqb x) l = false
+        -> forall v,
+            map.agree_on (PropSet.of_list l) (map.put m1 x v) m2.
+    Proof.
+      intros.
+      unfold map.agree_on.
+      intros.
+      erewrite agree_on_not_in.
+      - rewrite H.
+        + reflexivity.
+        + assumption.
+      - eassumption.
+      - eassumption.
+    Qed.
+
+    Lemma agree_on_subset:
+      forall ks ks' (m1 m2: stateMap),
+        subset ks' ks ->
+        map.agree_on ks m1 m2 ->
+        map.agree_on ks' m1 m2.
+    Proof. t. Qed.
+
+    Lemma agree_on_diff_put:
+      forall a r s (mH mL: stateMap),
+        map.agree_on (diff (PropSet.of_list s) (singleton_set a)) mH mL ->
+        map.agree_on (PropSet.of_list s) (map.put mH a r) (map.put mL a r).
+    Proof.
+      intros. t.
+    Qed.
+
+    Lemma agree_on_comm :
+      forall ks (m1 m2: stateMap),
+        map.agree_on ks m1 m2 ->
+        map.agree_on ks m2 m1.
+    Proof. t. Qed.
+    
+    Lemma agree_on_union:
+      forall s0 s1 (m0 m1: stateMap),
+        map.agree_on (union s0 s1) m0 m1
+        <-> map.agree_on s0 m0 m1 /\ map.agree_on s1 m0 m1.
+    Proof.
+      intros. unfold iff; split; intros; t.
+    Qed.
+
+    Lemma agree_on_put:
+      forall a r s (mH mL: stateMap) mH' mL',
+        map.agree_on s mH mL ->
+        map.put mH a r = mH' ->
+        map.put mL a r = mL' ->
+        map.agree_on (union s (singleton_set a)) mH' mL'.
+    Proof.
+      intros.
+      rewrite <- H0, <- H1. 
+      t.
+    Qed.
+
+    Lemma agree_on_putmany_of_list_zip:
+      forall lk0 lv s (mH mL: stateMap) mH' mL',
+        map.agree_on s mH mL ->
+        map.putmany_of_list_zip lk0 lv mH = Some mH' ->
+        map.putmany_of_list_zip lk0 lv mL = Some mL' ->
+        map.agree_on (union s (PropSet.of_list lk0)) mH' mL'.
+    Proof.
+      induction lk0.
+      - intros. simpl in *.
+        destr lv; [ | discriminate ].
+        inversion H0. inversion H1.
+        rewrite <- H3, <- H4.
+        eapply agree_on_union.
+        split.
+        + t.
+        + unfold agree_on, PropSet.of_list, elem_of.
+          intros.
+          exfalso; eapply List.in_nil.
+          eassumption.
+      - intros.
+        destr lv; [ discriminate | ].
+        simpl in *.
+        cut (map.agree_on (union s (singleton_set a))
+               (map.put mH a v) (map.put mL a v)).
+        + intros.
+          eapply IHlk0 in H2.
+          2-3: eassumption.
+          eapply agree_on_subset.
+          2: eassumption.
+          set_solver_generic var.
+        + eapply agree_on_put.
+          * eassumption.
+          * reflexivity.
+          * reflexivity.
+    Qed.
+  End MapEautoStuff.
+    
   Lemma agree_on_put_existsb_false:
     forall used_after x (l: locals) lL,
       map.agree_on (diff (of_list used_after) (singleton_set x)) l lL

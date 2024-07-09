@@ -104,6 +104,30 @@ Section WithArguments1.
       eapply In_list_diff_weaken.
       eapply H.
     Qed.
+
+    Lemma sameset_union_diff_of_list:
+      forall (l1 l2: list E),
+        sameset (union (of_list l1) (of_list l2)) (union (diff (of_list l1) (of_list l2)) (of_list l2)).
+    Proof.
+      intros.
+      unfold sameset, of_list, subset, union, diff, elem_of.
+      assert (forall x, In x l2 \/ ~ (In x l2)).
+      { intros. eapply ListDec.In_decidable. unfold ListDec.decidable_eq.
+        intros. destr (eeq x0 y).
+        - unfold Decidable.decidable. left. reflexivity.
+        - unfold Decidable.decidable. right. eassumption.
+      }
+      split; intros; unfold elem_of in *.
+      - destr H0.
+        + specialize (H x).
+          destr H.
+          * right. assumption.
+          * left. split; assumption.
+        + right. assumption.
+      - destr H0.
+        + destr H0. left. assumption.
+        + right. assumption.
+    Qed.
   End ListSetStuff.
 
   Section PropSetStuff.
@@ -137,6 +161,21 @@ Section WithArguments1.
           + eauto.
         }
         { exfalso. inversion H2. }
+    Qed.
+
+    Lemma existsb_of_list :
+      forall k keySet,
+        List.existsb (aeqb k) keySet = true <-> k \in PropSet.of_list keySet.
+    Proof.
+      intros; unfold iff; split.
+      - intros. eapply List.existsb_exists in H.
+        do 2 destr H. destr (aeqb k x).
+        2: { exfalso. inversion H0. }
+        eauto.
+      - intros. eapply List.existsb_exists.
+        exists k; simpl; split.
+        + unfold elem_of, PropSet.of_list in *; eauto.
+        + destr (aeqb k k); eauto.
     Qed.
   End PropSetStuff.
 
