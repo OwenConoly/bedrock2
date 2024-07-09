@@ -891,11 +891,12 @@ Section WithArguments1.
     Semantics.trace -> Semantics.io_trace -> mem -> locals -> MetricLog -> Prop
     :=
     (fun k' t' m' lL' mcL' =>
-       exists kH'' kL'' lH' mcH',
+       exists kH' kH'' kL'' lH' mcH',
          map.agree_on (PropSet.of_list used_after) lH' lL' /\
+           postH kH' t' m' lH' mcH' /\
            k' = kL'' ++ kL /\
-           dtransform_stmt_trace e (rev kH'', s, used_after) = (rev kH'', rev kL'') /\
-           postH (kH'' ++ kH) t' m' lH' mcH').
+           kH' = kH'' ++ kH /\
+           (forall kH''', dtransform_stmt_trace e (rev kH'' ++ kH''', s, used_after) = (rev kH'', rev kL''))).
 
   Lemma agree_on_eval_bcond:
     forall cond (m1 m2: locals),

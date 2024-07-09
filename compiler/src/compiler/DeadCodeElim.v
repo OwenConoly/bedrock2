@@ -1,6 +1,7 @@
 Require Import compiler.FlatImp.
 Require Import Coq.Lists.List. Import ListNotations.
 Require Import bedrock2.Syntax.
+Require Import bedrock2.ProgramLogic.
 Require Import coqutil.Tactics.fwd.
 Require Import String.
 Require Import coqutil.Map.MapEauto.
@@ -290,15 +291,16 @@ Section WithArguments1.
         rewrite ListSet.of_list_removeb
     end.
 
+  Print compile_post.
 
   Lemma dce_correct_aux :
     forall eH eL,
       dce_functions eH = Success eL ->
-      forall sH k t m mcH lH postH,
-        exec eH sH k t m lH mcH postH ->
+      forall sH kH t m mcH lH postH,
+        exec eH sH kH t m lH mcH postH ->
         forall used_after kL lL mcL,
           map.agree_on (of_list (live sH used_after)) lH lL ->
-          exec eL (dce sH used_after) kL t m lL mcL (compile_post used_after postH).
+          exec eL (dce sH used_after) kL t m lL mcL (compile_post eH sH kH kL used_after postH).
   Proof.
     induction 2;
       match goal with
@@ -322,10 +324,13 @@ Section WithArguments1.
         * eapply H5.
         * intros.
           unfold compile_post.
-          eexists. exists l'. eexists. split.
+          do 3 eexists. exists l'. eexists. ssplit.
           -- agree_on_solve. repeat listset_to_set.
              subset_union_solve.
           -- eauto.
+          -- trace_alignment.
+          -- trace_alignment.
+          -- intros. simpl. rewrite fix_step. reflexivity.
     - intros.
       eapply @exec.call; try solve [ eassumption ].
       + unfold dce_functions, dce_function  in *.
@@ -348,10 +353,12 @@ Section WithArguments1.
           -- eapply H6p1p0.
           -- listset_to_set. agree_on_solve.
         * eapply H6p1p1.
-        * do 3 eexists. split; [ | eassumption ].
-          agree_on_solve.
-          repeat listset_to_set.
-          subset_union_solve.
+        * do 5 eexists. ssplit; try eassumption; trace_alignment.
+          -- agree_on_solve. repeat listset_to_set. subset_union_solve.
+          -- intros. rewrite fix_step. simpl.
+             repeat rewrite rev_app_distr. repeat rewrite <- app_assoc. simpl.
+             rewrite H0. rewrite H6p4. reflexivity.
+             
     - intros.
       eapply agree_on_find in H3; fwd. 
       destr (existsb (eqb x) used_after); fwd.
@@ -359,14 +366,14 @@ Section WithArguments1.
         * rewrite <- H3p1. eassumption. 
         * eauto.
         * unfold compile_post.
-          eexists. exists (map.put l x v); eexists; split; [ | eassumption ].
-          repeat listset_to_set.
-          agree_on_solve.
+          do 3 eexists. exists (map.put l x v); eexists; ssplit; try eassumption; trace_alignment.
+          -- repeat listset_to_set. agree_on_solve.
+          -- intros. simpl. rewrite fix_step. simpl. rewrite E. reflexivity.
       + eapply @exec.skip.
         * unfold compile_post.
-          eexists. exists (map.put l x v); eexists; split; [ | eassumption ].
-          repeat listset_to_set.
-          agree_on_solve.
+          do 3 eexists. exists (map.put l x v); eexists; ssplit; try eassumption; trace_alignment.
+          -- repeat listset_to_set. agree_on_solve.
+          -- intros. simpl. rewrite fix_step. simpl. rewrite E. reflexivity.
     - intros. repeat listset_to_set.
       eapply agree_on_union in H4; fwd.
       all: try solve [ eauto using String.eqb_spec ].
@@ -376,18 +383,22 @@ Section WithArguments1.
       + erewrite <- H4p0; eauto.
         unfold elem_of; destr (a =? v)%string; [ eapply in_eq | eapply in_cons, in_eq ].
       + eassumption.
-      + unfold compile_post. eexists. exists l; eexists; split; eassumption.
+      + unfold compile_post. do 3 eexists.
+        exists l; eexists; ssplit; try eassumption; trace_alignment.
+        intros. rewrite fix_step. reflexivity.
     - intros.
       eapply agree_on_find in H4; fwd.
       destr (existsb (eqb x) used_after); fwd.
       + eapply @exec.inlinetable; eauto.
         * rewrite <- H4p1. eassumption. 
-        * unfold compile_post; do 3 eexists; split ; [ | eassumption ].
-          repeat listset_to_set; agree_on_solve.
+        * unfold compile_post; do 5 eexists; ssplit; try eassumption; trace_alignment.
+          -- repeat listset_to_set; agree_on_solve.
+          -- intros. rewrite fix_step. simpl. rewrite E. reflexivity.
       + eapply @exec.skip; eauto.
         unfold compile_post.
-        do 3 eexists; split; [ | eassumption ].
-        repeat listset_to_set; agree_on_solve.
+        do 5 eexists; ssplit; try eassumption; trace_alignment.
+        -- repeat listset_to_set; agree_on_solve.
+        -- intros. rewrite fix_step. simpl. rewrite E. reflexivity.
     - intros.
       repeat listset_to_set.
       eapply @exec.stackalloc.
@@ -401,18 +412,23 @@ Section WithArguments1.
             ++ eassumption.
             ++ split.
                ** eassumption.
-               ** do 3 eexists; split; [ eassumption | eapply H6p1p2 ].
+               ** do 5 eexists; ssplit; try eassumption; trace_alignment.
+                  intros. rewrite rev_app_distr. rewrite <- app_assoc.
+                  rewrite fix_step. simpl. rewrite H6p4. rewrite rev_app_distr.
+                  reflexivity.
     - intros. destr (existsb (eqb x) used_after).
       + eapply @exec.lit.
         unfold compile_post.
         repeat listset_to_set.
-        do 3 eexists; split; [ | eassumption ].
-        agree_on_solve.
+        do 5 eexists; ssplit; try eassumption; trace_alignment.
+        -- agree_on_solve.
+        -- intros. rewrite fix_step. reflexivity.
       + eapply @exec.skip.
         unfold compile_post.
         repeat listset_to_set.
-        do 3 eexists; split; [ | eassumption ].
-        agree_on_solve.
+        do 5 eexists; ssplit; try eassumption; trace_alignment.
+        -- agree_on_solve.
+        -- intros. rewrite fix_step. reflexivity.
     - destr z.
       + intros. repeat listset_to_set.
         eapply agree_on_union in H3; try solve [ eauto using String.eqb_spec ].
@@ -429,37 +445,46 @@ Section WithArguments1.
              ++ eapply in_eq.
              ++ eapply in_cons, in_eq.
           -- unfold compile_post.
-             do 3 eexists; split; [ | eassumption ].
-             agree_on_solve.
+             do 5 eexists; ssplit; try eassumption; trace_alignment.
+             ++ agree_on_solve.
+             ++ intros. rewrite fix_step. simpl. rewrite E. rewrite app_nil_r.
+                destruct op; reflexivity.
         * eapply @exec.skip.
           unfold compile_post.
-          do 3 eexists; split; [ | eassumption ].
-          agree_on_solve.
+          do 5 eexists; ssplit; try eassumption; trace_alignment.
+          -- agree_on_solve.
+          -- intros. rewrite fix_step. simpl. rewrite E. rewrite app_nil_r.
+             destruct op; reflexivity.
       + intros.
         eapply agree_on_find in H3; fwd. 
         destr (existsb (eqb x) used_after).
         * eapply @exec.op.
           -- rewrite <- H3p1. eassumption. 
           -- simpl. constructor.
-          -- unfold compile_post. simpl in *. inversion H1. fwd.  do 3 eexists; split; [ | eassumption ].
-             repeat listset_to_set.
-             agree_on_solve.
+          -- unfold compile_post. simpl in *. inversion H1. fwd.
+             do 5 eexists; ssplit; try eassumption; trace_alignment.
+             ++ repeat listset_to_set. agree_on_solve.
+             ++ intros. rewrite fix_step. simpl. rewrite E. rewrite app_nil_r. 
+                destruct op; reflexivity.
         * eapply @exec.skip. unfold compile_post.
-          do 3 eexists; split ; [ | eassumption ].
-          repeat listset_to_set.
-          agree_on_solve.
+          do 5 eexists; ssplit; try eassumption; trace_alignment.
+          -- repeat listset_to_set. agree_on_solve.
+          -- intros. rewrite app_nil_r. rewrite fix_step. simpl. rewrite E.
+             destruct op; reflexivity.
     - intros.
       eapply agree_on_find in H2; fwd.
       repeat listset_to_set.
       destr (existsb (eqb x) used_after).
       { eapply @exec.set.
         - rewrite <- H2p1; eassumption. 
-        - unfold compile_post. do 3 eexists; split; [ | eassumption ].
-          agree_on_solve.
+        - unfold compile_post. do 5 eexists; ssplit; try eassumption; trace_alignment.
+          + agree_on_solve.
+          + intros. rewrite fix_step. reflexivity.
       }
       { eapply @exec.skip.
-        - unfold compile_post. do 3 eexists; split; [ | eassumption ].
-          agree_on_solve.
+        - unfold compile_post. do 5 eexists; ssplit; try eassumption; trace_alignment.
+          + agree_on_solve.
+          + intros. rewrite fix_step. reflexivity.
       }
     - intros.
       repeat listset_to_set.
@@ -468,7 +493,10 @@ Section WithArguments1.
       eapply @exec.if_true.
       + erewrite agree_on_eval_bcond; [ eassumption | ].
         pose agree_on_comm; eauto.
-      + eauto.
+      + eapply exec.weaken; [eauto|]. intros. unfold compile_post in *.
+        fwd. do 5 eexists; ssplit; try eassumption; trace_alignment.
+        intros. repeat rewrite rev_app_distr. rewrite <- app_assoc. rewrite fix_step.
+        simpl. rewrite H2p5. reflexivity.
     - intros.
       repeat listset_to_set.
       eapply agree_on_union in H2; fwd.
@@ -476,7 +504,10 @@ Section WithArguments1.
       eapply @exec.if_false.
       + erewrite agree_on_eval_bcond; [ eassumption | ].
         pose agree_on_comm; eauto.
-      + eauto.
+      + eapply exec.weaken; [eauto|]. intros. unfold compile_post in *.
+        fwd. do 5 eexists; ssplit; try eassumption; trace_alignment.
+        intros. repeat rewrite rev_app_distr. rewrite <- app_assoc. rewrite fix_step.
+        simpl. rewrite H2p5. reflexivity.
     - intros.
       cbn - [live].
       rename IHexec into IH1.
