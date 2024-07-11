@@ -340,6 +340,44 @@ Proof.
   all: assumption || exact nil.
 Qed.
 
+Definition output_event x : io_event :=
+  ((Interface.map.empty, "output", [x]), (Interface.map.empty, [])).
+#[global] Instance ctspec_of_output : spec_of "output" :=
+  fun functions => exists f, forall k t m x,
+      WeakestPrecondition.call functions "output" k t m [x]
+        (fun k' t' m' rets => rets = [] /\ k' = f ++ k /\ m' = m /\
+        t' = cons (output_event x) t ).
+
+Definition getprime_event p : io_event :=
+  ((Interface.map.empty, "getprime", []), (Interface.map.empty, [p])).
+#[global] Instance ctspec_of_getprime : spec_of "getprime" :=
+  fun functions => exists f, forall k t m,
+      WeakestPrecondition.call functions "getprime" k t m []
+        (fun k' t' m' rets => exists p, rets = [p] /\ k' = f ++ k /\ m' = m /\
+        t' = cons (getprime_event p) t ).
+
+Definition semiprime := func! () ~> (p, q) {
+  unpack! p = getprime();
+  unpack! q = getprime();
+  n = p * q;
+  output(n)
+}.
+
+#[global] Instance ctspec_of_semiprime : spec_of "semiprime" :=
+  fun functions => exists f, forall t m k,
+      WeakestPrecondition.call functions "semiprime" k t m []
+      (fun k' t' m' rets => exists p q, rets = [p;q] /\ k' = f ++ k /\ m' = m
+        /\ t' = [output_event (word.mul p q); getprime_event q; getprime_event p]++t).
+
+Lemma semiprime_ct : program_logic_goal_for_function! semiprime.
+Proof.
+  repeat straightline.
+  eapply WeakestPreconditionProperties.Proper_call; repeat intro; [|eapply H]; repeat straightline.
+  eapply WeakestPreconditionProperties.Proper_call; repeat intro; [|eapply H]; repeat straightline.
+  eapply WeakestPreconditionProperties.Proper_call; repeat intro; [|eapply H1]; repeat straightline.
+  Tactics.ssplit; trivial; trace_alignment.
+Qed.
+
 Definition maskloop := func! (a) {
   i = $0;
   while (i < $2) {
@@ -350,6 +388,7 @@ Definition maskloop := func! (a) {
 }.
 
 Require Import coqutil.Map.Interface bedrock2.Map.Separation bedrock2.Map.SeparationLogic.
+
 
 #[global] Instance ctspec_of_maskloop : spec_of "maskloop" :=
   fun functions => forall k a, exists k_, forall a0 a1 R t m,
