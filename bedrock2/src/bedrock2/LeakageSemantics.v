@@ -123,13 +123,28 @@ End semantics.
 Module exec. Section WithParams.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
-  Context {ext_spec: ExtSpec} {pick_sp: PickSp}.
+  Context {ext_spec: ExtSpec}.
   Section WithEnv.
   Context (e: env).
 
-  Implicit Types post : leakage -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
-  Inductive exec: cmd -> leakage -> trace -> mem -> locals ->
-                  (leakage -> trace -> mem -> locals -> Prop) -> Prop :=
+  Definition trace_tree : Type. Admitted.
+
+  Definition offset_of_index := (nat -> option (trace_tree -> word)).
+  (*given index of a currently-live stackalloc address (most recent one is zeroth),
+    provide a function that takes the trace tree so far (i.e., literally any info
+    about what has been going on _except_ for the stackalloc addresses)
+    and yields an offset from the address*)
+
+  Definition stackalloc_base_of_index := (nat -> option word).
+
+  Definition ran_out_of_mem := bool.
+  (*when this flag is true, we don't require loads to return the correct thing.
+    (oof this means no loads in the expression evaluator, but whatever)*)
+
+  Implicit Types post : stackalloc_base_of_index -> ran_out_of_mem -> offset_of_index -> leakage -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  
+  Inductive exec: cmd -> ran_out_of_mem -> offset_of_index -> leakage -> trace -> mem -> locals ->
+                  (ran_out_of_mem -> offset_of_index -> leakage -> trace -> mem -> locals -> Prop) -> Prop :=
   | skip: forall k t m l post,
       post k t m l ->
       exec cmd.skip k t m l post
@@ -140,19 +155,19 @@ Module exec. Section WithParams.
   | unset: forall x k t m l post,
       post k t m (map.remove l x) ->
       exec (cmd.unset x) k t m l post
-  | store: forall sz ea ev k t m l post a k' v k'' m',
+  | store: forall sz ea ev k t m l post a k' v k'' m' i,
       eval_expr m l ea k = Some (a, k') ->
+      (forall tree : trace_tree, path k tree -> a = (ooi : offset_of_index) i tree + (sboi : stackalloc_base_of_index) i) ->
       eval_expr m l ev k' = Some (v, k'') ->
       store sz m a v = Some m' ->
       post (leak_word a :: k'') t m' l ->
       exec (cmd.store sz ea ev) k t m l post
   | stackalloc: forall x n body k t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (forall mStack mCombined,
-        let a := pick_sp k in
+      (exists (f : offset_of_index) (*this comes before a!*), forall a mStack mCombined,
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body (leak_unit :: k) t mCombined (map.put l x a)
+        exec body f (leak_unit :: k) t mCombined (map.put l x a)
           (fun k' t' mCombined' l' =>
             exists mSmall' mStack',
               anybytes a n mStack' /\
