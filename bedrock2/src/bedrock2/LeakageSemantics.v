@@ -370,3 +370,227 @@ Section WithParams.
     - eapply exec.extend_env; eassumption.
   Qed.
 End WithParams.
+
+Module otherexec. Section WithParams.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {locals: map.map String.string word}.
+  Context {ext_spec: ExtSpec}.
+  Section WithEnv.
+  Context (e: env).
+
+  Implicit Types post : leakage -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  Inductive exec: cmd -> leakage -> trace -> mem -> locals ->
+                  (leakage -> trace -> mem -> locals -> Prop) -> Prop :=
+  | skip: forall k t m l post,
+      post k t m l ->
+      exec cmd.skip k t m l post
+  | set: forall x e k t m l post v k',
+      eval_expr m l e k = Some (v, k') ->
+      post k' t m (map.put l x v) ->
+      exec (cmd.set x e) k t m l post
+  | unset: forall x k t m l post,
+      post k t m (map.remove l x) ->
+      exec (cmd.unset x) k t m l post
+  | store: forall sz ea ev k t m l post a k' v k'' m',
+      eval_expr m l ea k = Some (a, k') ->
+      eval_expr m l ev k' = Some (v, k'') ->
+      store sz m a v = Some m' ->
+      post (leak_word a :: k'') t m' l ->
+      exec (cmd.store sz ea ev) k t m l post
+  | stackalloc: forall x n body k t mSmall l post,
+      Z.modulo n (bytes_per_word width) = 0 ->
+      (forall a mStack mCombined,
+        anybytes a n mStack ->
+        map.split mCombined mSmall mStack ->
+        exec body (leak_unit :: k) t mCombined (map.put l x a)
+          (fun k' t' mCombined' l' =>
+            exists mSmall' mStack',
+              anybytes a n mStack' /\
+              map.split mCombined' mSmall' mStack' /\
+              post k' t' mSmall' l')) ->
+      exec (cmd.stackalloc x n body) k t mSmall l post
+  | if_true: forall k t m l e c1 c2 post v k',
+      eval_expr m l e k = Some (v, k') ->
+      word.unsigned v <> 0 ->
+      exec c1 (leak_bool true :: k') t m l post ->
+      exec (cmd.cond e c1 c2) k t m l post
+  | if_false: forall e c1 c2 k t m l post v k',
+      eval_expr m l e k = Some (v, k') ->
+      word.unsigned v = 0 ->
+      exec c2 (leak_bool false :: k') t m l post ->
+      exec (cmd.cond e c1 c2) k t m l post
+  | seq: forall c1 c2 k t m l post mid,
+      exec c1 k t m l mid ->
+      (forall k' t' m' l', mid k' t' m' l' -> exec c2 k' t' m' l' post) ->
+      exec (cmd.seq c1 c2) k t m l post
+  | while_false: forall e c k t m l post v k',
+      eval_expr m l e k = Some (v, k') ->
+      word.unsigned v = 0 ->
+      post (leak_bool false :: k') t m l ->
+      exec (cmd.while e c) k t m l post
+  | while_true: forall e c k t m l post v k' mid,
+      eval_expr m l e k = Some (v, k') ->
+      word.unsigned v <> 0 ->
+      exec c (leak_bool true :: k') t m l mid ->
+      (forall k'' t' m' l', mid k'' t' m' l' -> exec (cmd.while e c) k'' t' m' l' post) ->
+      exec (cmd.while e c) k t m l post
+  | call: forall binds fname arges k t m l post params rets fbody args k' lf mid,
+      map.get e fname = Some (params, rets, fbody) ->
+      eval_call_args m l arges k = Some (args, k') ->
+      map.of_list_zip params args = Some lf ->
+      exec fbody (leak_unit :: k') t m lf mid ->
+      (forall k'' t' m' st1, mid k'' t' m' st1 ->
+          exists retvs, map.getmany_of_list st1 rets = Some retvs /\
+          exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
+          post k'' t' m' l') ->
+      exec (cmd.call binds fname arges) k t m l post
+  | interact: forall binds action arges args k' k t m l post mKeep mGive mid,
+      map.split m mKeep mGive ->
+      eval_call_args m l arges k = Some (args, k') ->
+      ext_spec t mGive action args mid ->
+      (forall mReceive resvals klist, mid mReceive resvals klist ->
+          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
+          forall m', map.split m' mKeep mReceive ->
+          post (leak_list klist :: k') (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) k t m l post.
+
+  Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
+
+  Lemma interact_cps: forall binds action arges args k' k t m l post mKeep mGive,
+      map.split m mKeep mGive ->
+      eval_call_args m l arges k = Some (args, k') ->
+      ext_spec t mGive action args (fun mReceive resvals klist =>
+          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
+          forall m', map.split m' mKeep mReceive ->
+          post (leak_list klist :: k') (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) k t m l post.
+  Proof. intros. eauto using interact. Qed.
+
+  Lemma seq_cps: forall c1 c2 k t m l post,
+      exec c1 k t m l (fun k' t' m' l' => exec c2 k' t' m' l' post) ->
+      exec (cmd.seq c1 c2) k t m l post.
+  Proof. intros. eauto using seq. Qed.
+
+  Lemma weaken: forall k t l m s post1,
+      exec s k t m l post1 ->
+      forall post2,
+        (forall k' t' m' l', post1 k' t' m' l' -> post2 k' t' m' l') ->
+        exec s k t m l post2.
+  Proof.
+    induction 1; intros; try solve [econstructor; eauto].
+    - eapply stackalloc. 1: assumption.
+      intros.
+      eapply H1; eauto.
+      intros. fwd. eauto 10.
+    - eapply call.
+      4: eapply IHexec.
+      all: eauto.
+      intros.
+      edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
+      eauto 10.
+    - eapply interact; try eassumption.
+      intros.
+      edestruct H2 as (? & ? & ?); [eassumption|].
+      eauto 10.
+  Qed.
+
+  Lemma intersect: forall k t l m s post1,
+      exec s k t m l post1 ->
+      forall post2,
+        exec s k t m l post2 ->
+        exec s k t m l (fun k' t' m' l' => post1 k' t' m' l' /\ post2 k' t' m' l').
+  Proof.
+    induction 1;
+      intros;
+      match goal with
+      | H: exec _ _ _ _ _ _ |- _ => inversion H; subst; clear H
+      end;
+      try match goal with
+      | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ =>
+        replace x2 with x1 in * by congruence;
+          replace y2 with y1 in * by congruence;
+          replace z2 with z1 in * by congruence;
+          clear x2 y2 z2 H2
+      end;
+      repeat match goal with
+             | H1: ?e = Some (?v1, ?k1), H2: ?e = Some (?v2, ?k2) |- _ =>
+                 replace v2 with v1 in * by congruence;
+                 replace k2 with k1 in * by congruence;
+                 clear H2
+             end;
+      repeat match goal with
+             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
+               replace v2 with v1 in * by congruence; clear H2
+             end;
+      try solve [econstructor; eauto | exfalso; congruence].
+
+    - econstructor. 1: eassumption.
+      intros.
+      rename H0 into Ex1, H12 into Ex2.
+      eapply weaken. 1: eapply H1. 1,2: eassumption.
+      1: eapply Ex2. 1,2: eassumption.
+      cbv beta.
+      intros. fwd.
+      lazymatch goal with
+      | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
+        specialize @map.split_diff with (4 := A) (5 := B) as P
+      end.
+      edestruct P; try typeclasses eauto. 2: subst; eauto 10.
+      eapply anybytes_unique_domain; eassumption.
+    - econstructor.
+      + eapply IHexec. exact H5. (* not H *)
+      + simpl. intros *. intros [? ?]. eauto.
+    - eapply while_true. 1, 2: eassumption.
+      + eapply IHexec. exact H9. (* not H1 *)
+      + simpl. intros *. intros [? ?]. eauto.
+    - eapply call. 1, 2, 3: eassumption.
+      + eapply IHexec. exact H16. (* not H2 *)
+      + simpl. intros *. intros [? ?].
+        edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
+        edestruct H17 as (? & ? & ? & ? & ?); [eassumption|].
+        repeat match goal with
+               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
+                 replace v2 with v1 in * by congruence; clear H2
+               end.
+        eauto 10.
+    - pose proof ext_spec.mGive_unique as P.
+      specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H14).
+      subst mGive0.
+      destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _).
+      subst mKeep0.
+      eapply interact. 1,2: eassumption.
+      + eapply ext_spec.intersect; [ exact H1 | exact H14 ].
+      + simpl. intros *. intros [? ?].
+        edestruct H2 as (? & ? & ?); [eassumption|].
+        edestruct H15 as (? & ? & ?); [eassumption|].
+        repeat match goal with
+               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
+                 replace v2 with v1 in * by congruence; clear H2
+               end.
+        eauto 10.
+  Qed.
+
+  End WithEnv.
+
+  Lemma extend_env: forall e1 e2,
+      map.extends e2 e1 ->
+      forall c k t m l post,
+      exec e1 c k t m l post ->
+      exec e2 c k t m l post.
+  Proof. induction 2; try solve [econstructor; eauto]. Qed.
+
+  End WithParams.
+End otherexec. Notation otherexec := otherexec.exec.
+
+Section HardToProve.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {locals: map.map String.string word}.
+  Context {ext_spec: ExtSpec}.
+
+  (*only difference between exec and otherexec is that exec has pick_sp for stackalloc,
+    while otherexec does the nondeterministic thing*)
+  Lemma forall_into_inductive e s k t m l post :
+    (forall pick_sp : PickSp, exec (pick_sp := pick_sp) e s k t m l post) ->
+    otherexec e s k t m l post.
+  Proof. Abort.
+End HardToProve.
