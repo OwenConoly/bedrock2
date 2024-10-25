@@ -73,7 +73,7 @@ Section VarName.
     | SLoad sz x a offset =>
         (SLoad sz (x, S (getnat count x)) (a, getnat count a) offset, inc count x)
     | SStore sz x a offset =>
-        (SStore sz (x, S (getnat count x)) (a, getnat count a) offset, inc count x)
+        (SStore sz (x, getnat count x) (a, getnat count a) offset, count)
     | SInlinetable sz x t i =>
         (SInlinetable sz (x, S (getnat count x)) t (i, getnat count i), inc count x)
     | SStackalloc x nbytes body => (SSkip, map.empty)
@@ -89,7 +89,7 @@ Section VarName.
         let (s1', count') := ssa' count s1 in
         let (s2', count'') := ssa' count' s2 in
         (SSeq s1' s2', count'')
-    | SSkip => (SSkip, map.empty)
+    | SSkip => (SSkip, count)
     | SCall binds f args => (SSkip, map.empty)
     | SInteract binds a args => (SSkip, map.empty)
     end.
@@ -99,6 +99,7 @@ Section VarName.
   Context (stmt_to_label : map.map (stmt (varname * nat)) (varname * nat)).
   Context (label_to_label : map.map (varname * nat) (varname * nat)).
   Context (label_to_stmt : map.map (varname * nat) (stmt (varname * nat))).
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   (*when we get to *)
   Definition get_default {A B : Type} {mt} m x d :=
     match @map.get A B mt m x with
@@ -111,7 +112,7 @@ Section VarName.
     - "z" := "x" + "y" = "ry" = "y" + "x"
     That is, two operations are the same if they're the same.
     I should actually implement this rather than just pretending that it works.
-   *)
+   *) Print operand. Search bopname.
   Fixpoint lvn (names : stmt_to_label) (values : label_to_stmt)
     (aliases : label_to_label) (s : stmt (varname * nat)) :=
     match s with
@@ -151,5 +152,41 @@ Section VarName.
         | None => (SLit x v, map.put names (SLit x v) x, map.put values x (SLit x v), aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
-    | _ => (SSkip, map.empty, map.empty, map.empty)
+    | SOp x op y z =>
+        let y := get_default aliases y y in
+        let z := match z with
+                 | Var z => Var (get_default aliases z z)
+                 | Const z => Const z
+                 end in
+        (*this would be the place to put multiply-by-zero stuff and so on.
+          for now it's just simple constant folding.*)
+        let simplified :=
+          match map.get values y with
+          | Some (SLit _ c1) =>
+              match z with
+              | Const c2 => SLit x (word.unsigned (interp_binop op (word.of_Z c1) (word.of_Z c2)))(*TODO: wouldn't have to deal with word-to-nat conversions if i would add a word literal construct*)
+              | Var z =>
+                  match map.get values z with
+                  | Some (SLit _ c2) => SLit x (word.unsigned (interp_binop op (word.of_Z c1) (word.of_Z c2)))
+                  | _ => SOp x op y (Var z)
+                  end
+              end
+          | _ => SOp x op y z
+          end in
+        match map.get names simplified with
+        | None => (simplified, map.put names simplified x, map.put values x simplified, aliases)
+        | Some x' => (SSkip, names, values, map.put aliases x x')
+        end
+    | SSet x y =>
+        let y := get_default aliases y y in
+        (SSkip, names, values, map.put aliases x y)
+    | SIf cond bThen bElse => (SSkip, map.empty, map.empty, map.empty)
+    | SLoop body1 cond body2 => (SSkip, map.empty, map.empty, map.empty)
+    | SSeq s1 s2 =>
+        let '(s1', names', values', aliases') := lvn names values aliases s1 in
+        let '(s2', names'', values'', aliases'') := lvn names' values' aliases' s2 in
+        (SSeq s1' s2', names'', values'', aliases'')
+    | SSkip => (SSkip, names, values, aliases)
+    | SCall binds f args => (SSkip, map.empty, map.empty, map.empty)
+    | SInteract binds a args => (SSkip, map.empty, map.empty, map.empty)
     end.
