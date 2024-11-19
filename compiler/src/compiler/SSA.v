@@ -106,13 +106,113 @@ Section VarName.
     | Some y => y
     | None => d
     end.
+
+  Search (map.map _ _).
+  Print SortedListString.map.
+  Check SortedList.map.
+  Print SortedList.parameters.
+  Print SortedList.eqb. (**)
+  Require Import coqutil.Map.SortedList.
+  
+
+  Print SortedList.eqb.
+  Print stmt.
+  (*if i were not lazy, this would be the lt operation for an r-value type
+    i'd've denfined.*)
+  Search (access_size -> access_size -> _).
+  Print access_size.access_size_beq.
+  Require Import coqutil.Map.SortedListZ.
+  Print access_size. Search SortedList.parameters.strict_order.
+
+  Definition as_to_Z (x : access_size) :=
+    match x with
+    | access_size.one => 0
+    | access_size.two => 1
+    | access_size.four => 2
+    | access_size.word => 3
+    end.
+
+  Check SOp.
+  Inductive rhs_op :=
+  | RLoad | RStore | RInlinetable | RLit | ROp | RSet.
+
+  Definition rhs : Type := rhs_op * option access_size * option varname (*rs1*) * option Z (*imm*) * option (list byte) * option bopname * option (@operand varname).
+
+  Definition rhs_of_stmt (s : stmt varname) : rhs :=
+    match s with
+    | SLoad sz x a offset => (RLoad, Some sz, Some a, Some offset, None, None, None)
+    | SStore sz x a offset => (RStore, Some sz, Some a, Some offset, None, None, None)
+    | SInlinetable sz x t i => (RInlinetable, Some sz, Some i, None, Some t, None, None)
+    | SLit x v => (RLit, None, None, Some v, None, None, None)
+    | SOp x op y z => (ROp, None, Some y, None, None, Some op, Some z)
+    | SSet x y => (RSet, None, Some y, None, None, None, None)
+    | _ => (RSet, None, None, None, None, None, None)
+    end.
+
+  Definition rhstype_to_Z (x : rhs_op) : Z :=
+    match x with
+    | RLoad => 0
+    | RStore => 1
+    | RInlinetable => 2
+    | RLit => 3
+    | ROp => 4
+    | RSet => 5
+    end.
+
+  Definition bopname_to_Z (x : bopname) : Z :=
+    match x with
+    | bopname.add => 0
+    | bopname.sub => 1
+    | bopname.mul => 2
+    | bopname.mulhuu => 3
+    | bopname.divu => 4
+    | bopname.remu => 5
+    | bopname.and => 6
+    | bopname.or => 7
+    | bopname.xor => 8
+    | bopname.sru => 9
+    | bopname.slu => 10
+    | bopname.srs => 11
+    | bopname.lts => 12
+    | bopname.ltu => 13
+    | bopname.eq => 14
+    end.
+
+  Print operand.
+  Require Import coqutil.Map.SortedList.
+  Import SortedList.parameters.
+  Context (lt_varname : varname -> varname -> bool).
+  Context (lt_varname_strict : strict_order lt_varname).
+  
+  Definition operand_to_tuple (x : (@operand varname)) :=
+    match x with
+    | Var x => (0, Some x, None)
+    | Const y => (1, None, Some y)
+    end.
+  
+  Check (lexicog4 (lexicog4 (lift2 rhstype_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
+
+  (*I suspect I should be able to make coq do this, given with_bot, lift2, Z.lt, etc.*)
+  Definition rhslt : rhs -> rhs -> bool :=
+    lexicog4 (lexicog4 (lift2 rhstype_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb)))).
+
+  Lemma rhslt_strict : strict_order rhslt.
+  Proof.
+    repeat (apply lexicog_strict || apply lt_varname_strict || apply lexicog4_strict || apply lexicog3_strict || apply Z_strict_order || apply with_bot_strict || match goal with | |- strict_order (lift2 _ _) => apply lift2_strict end).
+    - intros. destruct x, y; simpl in H; reflexivity || congruence.
+    - intros. destruct x, y; simpl in H; reflexivity || congruence.
+    - exact byte.unsigned_inj.
+    - intros. destruct x, y; simpl in H; reflexivity || congruence.
+    - intros. destruct x, y; simpl in H; reflexivity || congruence.
+  Qed.
+  
   (*Note: I treat names as if it is magical in certain ways.
     The domain is actually statements mod some equivalence relation, wheere for example:
     - SLit "1" 1 = SLit "2" 1
     - "z" := "x" + "y" = "ry" = "y" + "x"
     That is, two operations are the same if they're the same.
     I should actually implement this rather than just pretending that it works.
-   *) Print operand. Search bopname.
+   *)
   Fixpoint lvn (names : stmt_to_label) (values : label_to_stmt)
     (aliases : label_to_label) (s : stmt (varname * nat)) :=
     match s with
