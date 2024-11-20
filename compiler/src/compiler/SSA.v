@@ -226,6 +226,143 @@ Section VarName.
 
   Definition ssa := ssa' map.empty.
 
+  Fixpoint is_simple (s : stmt varname) :=
+    match s with
+    | SLoad _ _ _ _ => true
+    | SStore _ _ _ _ => true
+    | SInlinetable _ _ _ _ => true
+    | SStackalloc _ _ _ => false
+    | SLit _ _ => true
+    | SOp _ _ _ _ => true
+    | SSet _ _ => true
+    | SIf _ _ _ => false
+    | SLoop _ _ _ => false
+    | SSeq s1 s2 => is_simple s1 && is_simple s2
+    | SSkip => true
+    | SCall _ _ _ => false
+    | SInteract _ _ _ => false
+    end.
+
+  Check exec.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte} {localsH: map.map varname word} {envH: map.map String.string (list varname * list varname * stmt varname)}.
+  Context {localsL : map.map (varname * nat) word} {envL: map.map String.string (list (varname * nat) * list (varname * nat) * stmt (varname * nat))}.
+  Context {localsH_ok : map.ok localsH} {localsL_ok : map.ok localsL}.
+  Context {ext_spec: ExtSpec}. Print EqDecider.
+  Context {eqd : forall x y : varname, _} {HED : EqDecider eqd}.
+  Context {eqd' : forall x y : varname * nat, _} {HED' : EqDecider eqd'}.
+  Context (phase : compphase) (isRegH : varname -> bool) (isRegL : varname * nat -> bool).
+  Check exec phase isRegH.
+  Check @exec.
+  Notation execH := (@exec varname _ _ _ _ _ _ _ phase isRegH).
+  Notation execL := (@exec (varname * nat)  _ _ _ _ _ _ _ phase isRegL).
+  Check execH. Check execL.
+  Check map.fold. Check map.put.
+  Check exec.
+   
+  Print map.fold_spec.
+  Definition compile_locals (count : varname_to_nat) (lH : localsH) : localsL :=
+    map.fold (fun lH k v => map.put lH (k, getnat count k) v) map.empty lH.
+
+  Search map.map.
+  Check map.map_ext.
+  
+  Lemma compile_locals_spec count lH :
+    forall k n v, map.get (compile_locals count lH) (k, n) = Some v <->
+               n = getnat count k /\ map.get lH k = Some v.
+  Proof.
+    cbv [compile_locals]. apply map.fold_spec.
+    - intros. split.
+      + intros H. rewrite map.get_empty in H. discriminate H.
+      + intros [_ H]. rewrite map.get_empty in H. discriminate H.
+    - intros. rewrite map.get_put_dec. Tactics.destruct_one_match; intros.
+    + inversion E. subst. clear E. split.
+      -- intros H1. inversion H1. subst. clear H1. split; [reflexivity|].
+         apply map.get_put_same.
+      -- intros [H1 H2]. rewrite map.get_put_same in H2. apply H2.
+    + split.
+      -- intros H1. apply H0 in H1. destruct H1 as [? H1]. subst. rewrite map.get_put_diff by congruence.
+         auto.
+      -- intros [H1 H2]. subst. assert (k0 <> k).
+         { intros no. subst. apply E. reflexivity. }
+         apply H0. split; auto. rewrite map.get_put_diff in H2 by assumption. assumption.
+  Qed.
+
+  Lemma compile_locals_spec' count lH :
+    forall k n, map.get (compile_locals count lH) (k, n) =
+             if (Nat.eqb n (getnat count k)) then map.get lH k else None.
+  Proof.
+    intros. destruct (map.get _ _) eqn:E.
+    - apply compile_locals_spec in E. destruct E. subst. rewrite Nat.eqb_refl. symmetry. assumption.
+    - destruct (Nat.eqb _ _) eqn:En.
+      + destruct (map.get lH k) eqn:Eget.
+        -- rewrite <- E. apply compile_locals_spec. apply Nat.eqb_eq in En. auto.
+        -- reflexivity.
+      + reflexivity.
+  Qed.
+
+  Lemma compile_locals_spec'' count lH k :
+    map.get (compile_locals count lH) (k, getnat count k) = map.get lH k.
+  Proof. rewrite compile_locals_spec'. rewrite Nat.eqb_refl. reflexivity. Qed.
+
+  Lemma compile_locals_spec''' count lH k v :
+    map.get lH k = Some v ->
+    map.get (compile_locals count lH) (k, getnat count k) = Some v.
+  Proof. rewrite compile_locals_spec''. auto. Qed.
+                                                             
+  
+  Lemma getnat_inc_same count k : getnat (inc count k) k = S (getnat count k).
+  Proof. cbv [getnat inc get]. rewrite map.get_put_same. reflexivity. Qed.
+
+  Lemma getnat_inc_diff count k k' : k' <> k -> getnat (inc count k) k' = getnat count k'.
+  Proof.
+    intros. cbv [getnat inc get]. rewrite map.get_put_diff by assumption. reflexivity.
+  Qed.
+  
+  Lemma compile_locals_inc count k v lH lL :
+    map.extends lL (compile_locals count lH) ->
+    map.extends (map.put lL (k, S (getnat count k)) v)
+    (compile_locals (inc count k) (map.put lH k v)).
+  Proof.
+    cbv [map.extends]. intros H x w. rewrite map.get_put_dec. Tactics.destruct_one_match.
+    - rewrite compile_locals_spec'. rewrite getnat_inc_same. rewrite Nat.eqb_refl.
+      rewrite map.get_put_same. auto.
+    - destruct x as [k' n]. intros. erewrite H; [reflexivity|].
+      rewrite compile_locals_spec' in *.
+      destruct (Nat.eqb _ _) eqn:E'; [apply Nat.eqb_eq in E' | apply Nat.eqb_neq in E']; subst.
+      + assert (k' <> k).
+        { intros ?. subst. rewrite getnat_inc_same in E. auto. }
+        rewrite map.get_put_diff in H0 by assumption.
+        rewrite getnat_inc_diff by assumption. rewrite Nat.eqb_refl. auto.
+      + congruence.
+  Qed.
+
+  Require Import coqutil.Tactics.fwd.
+  
+  Lemma ssa_works eH eL s t m lH mcH post :
+    is_simple s = true ->
+    execH eH s t m lH mcH post ->
+    forall lL mcL count,
+    map.extends lL (compile_locals count lH) ->
+    execL eL (fst (ssa' count s)) t m lL mcL
+      (fun t' m' lL' mc' =>
+         exists lH' mcH',
+           post t' m' lH' mcH' /\
+      (*lL' = compile_locals (snd (ssa' count s)) lH'*)
+      (*^not true; compile_locals doesn't keep old/intermediate values*)
+             map.extends lL' (compile_locals (snd (ssa' count s)) lH')).
+  Proof.
+    intros Hsimple Hexec. induction Hexec; intros lL mcL count; try discriminate Hsimple; intros Hext; try (econstructor; eauto using compile_locals_spec'''); try (do 2 eexists; split; [eassumption|]); simpl; try apply compile_locals_inc; try assumption.
+    - intros no. inversion no. subst. apply H. reflexivity.
+    - cbv [exec.lookup_op_locals] in *.
+      cbv [label_operand]. destruct z; eauto using compile_locals_spec'''.
+    - simpl in Hsimple. apply andb_prop in Hsimple. destruct Hsimple as [Hsimple1 Hsimple2].
+      rewrite Hsimple1, Hsimple2 in *. clear Hsimple1 Hsimple2. simpl.
+      specialize (IHHexec eq_refl lL mcL count ltac:(assumption)).
+      destruct (ssa' count s1) as [s1' count'].
+      specialize H0 with (count := count').
+      destruct (ssa' count' s2) as [s2' count'']. simpl in *.
+      econstructor; [eassumption|]. simpl. intros. fwd. eapply H0; eauto.
+  Qed.
   
   (*when we get to *)
   Definition get_default {A B : Type} {mt} m x d :=
@@ -239,7 +376,6 @@ Section VarName.
   Print parameters. Check rhslt. Check lexicog2.
 
   
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   
   (*Note: I treat names as if it is magical in certain ways.
     The domain is actually statements mod some equivalence relation, wheere for example:
@@ -327,6 +463,8 @@ Section VarName.
     end.
 
   Definition lvn := lvn' map.empty map.empty map.empty.
+
+  
 End VarName.
 
 Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
