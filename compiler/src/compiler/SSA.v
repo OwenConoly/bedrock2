@@ -21,109 +21,16 @@ Local Hint Mode Word.Interface.word - : typeclass_instances.
 Require Import compiler.FlatImp.
 Print stmt.
 
+Require Import coqutil.Map.SortedList.
+Require Import coqutil.Map.SortedListZ.
+Import SortedList.parameters.
 (*
   Definition env: map.map String.string Syntax.func := SortedListString.map _.
 #[export] Instance env_ok: map.ok env := SortedListString.ok _.
+ *)
 
-*)
-
-Section VarName.
-  Context (varname : Type) {natmap : map.map varname nat}.
-  
-  (*
-      Inductive stmt: Type :=
-    | SLoad(sz: Syntax.access_size)(x: varname)(a: varname)(offset: Z)
-    | SStore(sz: Syntax.access_size)(a: varname)(v: varname)(offset: Z)
-    | SInlinetable(sz: Syntax.access_size)(x: varname)(t: list Byte.byte)(i: varname)
-    | SStackalloc(x : varname)(nbytes: Z)(body: stmt)
-    | SLit(x: varname)(v: Z)
-    | SOp(x: varname)(op: bopname)(y: varname)(z: operand)
-    | SSet(x y: varname)
-    | SIf(cond: bcond)(bThen bElse: stmt)
-    | SLoop(body1: stmt)(cond: bcond)(body2: stmt)
-    | SSeq(s1 s2: stmt)
-    | SSkip
-    | SCall(binds: list varname)(f: String.string)(args: list varname)
-    | SInteract(binds: list varname)(a: String.string)(args: list varname).
-
-   *)
-  Check map.map. Print map.map. Search (map.map). Check map.put. Check map.rep.
-  Print map.map. Search map.put. Check map.update. Print map.update. Search map.update.
-  Check @map.get.
-  Existing Instance natmap.
-  Definition get := @map.get _ _ natmap.
-  Definition getnat (count : map.rep) (x : varname) :=
-    match get count x with
-    | Some n => n
-    | None => O
-    end.
-  Definition inc (count : map.rep) (x : varname) :=
-    map.put count x (getnat count x).
-  Print operand.
-  Definition label_operand (x : @operand varname) (count : map.rep) :
-    @operand (varname * nat) :=
-    match x with
-    | Var x => Var (x, getnat count x)
-    | Const x => Const x
-    end.
-                     
-  Fixpoint ssa' (count : map.rep) (s : stmt varname) :
-    stmt (varname * nat) * natmap :=
-    match s with
-    | SLoad sz x a offset =>
-        (SLoad sz (x, S (getnat count x)) (a, getnat count a) offset, inc count x)
-    | SStore sz x a offset =>
-        (SStore sz (x, getnat count x) (a, getnat count a) offset, count)
-    | SInlinetable sz x t i =>
-        (SInlinetable sz (x, S (getnat count x)) t (i, getnat count i), inc count x)
-    | SStackalloc x nbytes body => (SSkip, map.empty)
-    | SLit x v =>
-        (SLit (x, S (getnat count x)) v, inc count x)
-    | SOp x op y z =>
-        (SOp (x, S (getnat count x)) op (y, getnat count y) (label_operand z count), inc count x)
-    | SSet x y =>
-        (SSet (x, S (getnat count x)) (y, getnat count y), inc count x)
-    | SIf cond bThen bElse => (SSkip, map.empty)
-    | SLoop body1 cond body2 => (SSkip, map.empty)
-    | SSeq s1 s2 =>
-        let (s1', count') := ssa' count s1 in
-        let (s2', count'') := ssa' count' s2 in
-        (SSeq s1' s2', count'')
-    | SSkip => (SSkip, count)
-    | SCall binds f args => (SSkip, map.empty)
-    | SInteract binds a args => (SSkip, map.empty)
-    end.
-
-  Definition ssa := ssa' map.empty.
-
-  Context (stmt_to_label : map.map (stmt (varname * nat)) (varname * nat)).
-  Context (label_to_label : map.map (varname * nat) (varname * nat)).
-  Context (label_to_stmt : map.map (varname * nat) (stmt (varname * nat))).
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
-  (*when we get to *)
-  Definition get_default {A B : Type} {mt} m x d :=
-    match @map.get A B mt m x with
-    | Some y => y
-    | None => d
-    end.
-
-  Search (map.map _ _).
-  Print SortedListString.map.
-  Check SortedList.map.
-  Print SortedList.parameters.
-  Print SortedList.eqb. (**)
-  Require Import coqutil.Map.SortedList.
-  
-
-  Print SortedList.eqb.
-  Print stmt.
-  (*if i were not lazy, this would be the lt operation for an r-value type
-    i'd've denfined.*)
-  Search (access_size -> access_size -> _).
-  Print access_size.access_size_beq.
-  Require Import coqutil.Map.SortedListZ.
-  Print access_size. Search SortedList.parameters.strict_order.
-
+Section RHS.
+  Context {varname : Type}.
   Definition as_to_Z (x : access_size) :=
     match x with
     | access_size.one => 0
@@ -179,8 +86,6 @@ Section VarName.
     end.
 
   Print operand.
-  Require Import coqutil.Map.SortedList.
-  Import SortedList.parameters.
   Context (lt_varname : varname -> varname -> bool).
   Context (lt_varname_strict : strict_order lt_varname).
   
@@ -197,7 +102,7 @@ Section VarName.
     lexicog4 (lexicog4 (lift2 rhstype_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb)))).
 
   Lemma rhslt_strict : strict_order rhslt.
-  Proof.
+  Proof. Check Z_strict_order.
     repeat (apply lexicog_strict || apply lt_varname_strict || apply lexicog4_strict || apply lexicog3_strict || apply Z_strict_order || apply with_bot_strict || match goal with | |- strict_order (lift2 _ _) => apply lift2_strict end).
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
@@ -205,6 +110,136 @@ Section VarName.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
   Qed.
+End RHS.
+  
+Section VarName.
+  Context (varname : Type).
+  Context (varname_lt : varname -> varname -> bool).
+  Context (varname_lt_strict : strict_order varname_lt).
+
+  Definition label_lt := lexicog2 varname_lt (lift2 Z.of_nat Z.ltb).
+
+  Lemma label_lt_strict : strict_order label_lt.
+  Proof. 
+    apply lexicog2_strict.
+    1: apply varname_lt_strict. apply lift2_strict. 1: apply Z_strict_order.
+    Search (forall x y : nat, Z.of_nat x = Z.of_nat y -> x = y). exact Nat2Z.inj.
+  Qed.
+    
+  Definition rhs_to_label_parameters : parameters :=
+    {| key := rhs;
+      ltb := rhslt label_lt;
+      value := varname * nat|}.
+
+  Definition rhslabel_strict :
+    strict_order rhs_to_label_parameters.(ltb).
+  Proof.
+    apply rhslt_strict. apply label_lt_strict.
+  Defined.
+
+  Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
+
+  Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
+
+  Definition label_to_label_parameters : parameters :=
+    {| key := varname * nat;
+      value := varname * nat;
+      ltb := label_lt |}.
+
+  Definition label_to_label := SortedList.map label_to_label_parameters label_lt_strict.
+
+  Definition label_to_stmt_parameters : parameters :=
+    {| key := varname * nat;
+      value := stmt (varname * nat);
+      ltb := label_lt |}.
+
+  Definition label_to_stmt := SortedList.map label_to_stmt_parameters label_lt_strict.
+
+  Definition varname_to_nat_parameters : parameters :=
+    {| key := varname;
+      value := nat;
+      ltb := varname_lt |}.
+
+  Definition varname_to_nat := SortedList.map varname_to_nat_parameters varname_lt_strict.
+  
+  
+  (*
+      Inductive stmt: Type :=
+    | SLoad(sz: Syntax.access_size)(x: varname)(a: varname)(offset: Z)
+    | SStore(sz: Syntax.access_size)(a: varname)(v: varname)(offset: Z)
+    | SInlinetable(sz: Syntax.access_size)(x: varname)(t: list Byte.byte)(i: varname)
+    | SStackalloc(x : varname)(nbytes: Z)(body: stmt)
+    | SLit(x: varname)(v: Z)
+    | SOp(x: varname)(op: bopname)(y: varname)(z: operand)
+    | SSet(x y: varname)
+    | SIf(cond: bcond)(bThen bElse: stmt)
+    | SLoop(body1: stmt)(cond: bcond)(body2: stmt)
+    | SSeq(s1 s2: stmt)
+    | SSkip
+    | SCall(binds: list varname)(f: String.string)(args: list varname)
+    | SInteract(binds: list varname)(a: String.string)(args: list varname).
+
+   *)
+  Existing Instance varname_to_nat.
+  Definition get := @map.get _ _ varname_to_nat.
+  Definition getnat (count : map.rep) (x : varname) :=
+    match get count x with
+    | Some n => n
+    | None => O
+    end.
+  Definition inc (count : map.rep) (x : varname) :=
+    map.put count x (S (getnat count x)).
+  Print operand.
+  Definition label_operand (x : @operand varname) (count : map.rep) :
+    @operand (varname * nat) :=
+    match x with
+    | Var x => Var (x, getnat count x)
+    | Const x => Const x
+    end.
+                     
+  Fixpoint ssa' (count : map.rep) (s : stmt varname) :
+    stmt (varname * nat) * varname_to_nat :=
+    match s with
+    | SLoad sz x a offset =>
+        (SLoad sz (x, S (getnat count x)) (a, getnat count a) offset, inc count x)
+    | SStore sz x a offset =>
+        (SStore sz (x, getnat count x) (a, getnat count a) offset, count)
+    | SInlinetable sz x t i =>
+        (SInlinetable sz (x, S (getnat count x)) t (i, getnat count i), inc count x)
+    | SStackalloc x nbytes body => (SSkip, map.empty)
+    | SLit x v =>
+        (SLit (x, S (getnat count x)) v, inc count x)
+    | SOp x op y z =>
+        (SOp (x, S (getnat count x)) op (y, getnat count y) (label_operand z count), inc count x)
+    | SSet x y =>
+        (SSet (x, S (getnat count x)) (y, getnat count y), inc count x)
+    | SIf cond bThen bElse => (SSkip, map.empty)
+    | SLoop body1 cond body2 => (SSkip, map.empty)
+    | SSeq s1 s2 =>
+        let (s1', count') := ssa' count s1 in
+        let (s2', count'') := ssa' count' s2 in
+        (SSeq s1' s2', count'')
+    | SSkip => (SSkip, count)
+    | SCall binds f args => (SSkip, map.empty)
+    | SInteract binds a args => (SSkip, map.empty)
+    end.
+
+  Definition ssa := ssa' map.empty.
+
+  
+  (*when we get to *)
+  Definition get_default {A B : Type} {mt} m x d :=
+    match @map.get A B mt m x with
+    | Some y => y
+    | None => d
+    end.
+  Print SortedList.map.
+
+  Print parameters.Build_parameters.
+  Print parameters. Check rhslt. Check lexicog2.
+
+  
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   
   (*Note: I treat names as if it is magical in certain ways.
     The domain is actually statements mod some equivalence relation, wheere for example:
@@ -213,7 +248,7 @@ Section VarName.
     That is, two operations are the same if they're the same.
     I should actually implement this rather than just pretending that it works.
    *)
-  Fixpoint lvn (names : stmt_to_label) (values : label_to_stmt)
+  Fixpoint lvn' (names : rhs_to_label) (values : label_to_stmt)
     (aliases : label_to_label) (s : stmt (varname * nat)) :=
     match s with
     | SLoad sz x a offset =>
@@ -242,14 +277,14 @@ Section VarName.
         (*check if we've seen this before:
           - if so, update aliases appropriately, and skip
           - otherwise, add to list of names, and don't skip *)
-        match map.get names simplified with
-        | None => (simplified, map.put names simplified x, map.put values x simplified, aliases)
+        match map.get names (rhs_of_stmt simplified) with
+        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x simplified, aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SStackalloc x nbytes body => (SSkip, map.empty, map.empty, map.empty)
     | SLit x v =>
-        match map.get names (SLit x v) with
-        | None => (SLit x v, map.put names (SLit x v) x, map.put values x (SLit x v), aliases)
+        match map.get names (rhs_of_stmt (SLit x v)) with
+        | None => (SLit x v, map.put names (rhs_of_stmt (SLit x v)) x, map.put values x (SLit x v), aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SOp x op y z =>
@@ -273,8 +308,8 @@ Section VarName.
               end
           | _ => SOp x op y z
           end in
-        match map.get names simplified with
-        | None => (simplified, map.put names simplified x, map.put values x simplified, aliases)
+        match map.get names (rhs_of_stmt simplified) with
+        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x simplified, aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SSet x y =>
@@ -283,10 +318,25 @@ Section VarName.
     | SIf cond bThen bElse => (SSkip, map.empty, map.empty, map.empty)
     | SLoop body1 cond body2 => (SSkip, map.empty, map.empty, map.empty)
     | SSeq s1 s2 =>
-        let '(s1', names', values', aliases') := lvn names values aliases s1 in
-        let '(s2', names'', values'', aliases'') := lvn names' values' aliases' s2 in
+        let '(s1', names', values', aliases') := lvn' names values aliases s1 in
+        let '(s2', names'', values'', aliases'') := lvn' names' values' aliases' s2 in
         (SSeq s1' s2', names'', values'', aliases'')
     | SSkip => (SSkip, names, values, aliases)
     | SCall binds f args => (SSkip, map.empty, map.empty, map.empty)
     | SInteract binds a args => (SSkip, map.empty, map.empty, map.empty)
     end.
+
+  Definition lvn := lvn' map.empty map.empty map.empty.
+End VarName.
+
+Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
+
+Check (ssa Z Z.ltb Z_strict_order).
+Local Notation ssa_ := (ssa Z Z.ltb Z_strict_order).
+
+Definition example1_ssa := fst (ssa_ example1).
+Compute example1_ssa.
+
+Local Notation lvn_ := (lvn Z Z.ltb Z_strict_order).
+Compute (match example1_ssa with |SSeq a b => a |_ => SSkip end).
+Compute (lvn_ example1_ssa).
