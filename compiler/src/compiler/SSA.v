@@ -29,6 +29,23 @@ Import SortedList.parameters.
 #[export] Instance env_ok: map.ok env := SortedListString.ok _.
  *)
 
+Fixpoint is_simple {varname : Type} (s : stmt varname) :=
+  match s with
+  | SLoad _ _ _ _ => true
+  | SStore _ _ _ _ => true
+  | SInlinetable _ _ _ _ => true
+  | SStackalloc _ _ _ => false
+  | SLit _ _ => true
+  | SOp _ _ _ _ => true
+  | SSet _ _ => true
+  | SIf _ _ _ => false
+  | SLoop _ _ _ => false
+  | SSeq s1 s2 => is_simple s1 && is_simple s2
+  | SSkip => true
+  | SCall _ _ _ => false
+  | SInteract _ _ _ => false
+  end.
+
 Section RHS.
   Context {varname : Type}.
   Definition as_to_Z (x : access_size) :=
@@ -170,12 +187,12 @@ Section VarName.
 
   Definition label_to_label := SortedList.map label_to_label_parameters label_lt_strict.
 
-  Definition label_to_stmt_parameters : parameters :=
+  Definition label_to_rhs_parameters : parameters :=
     {| key := varname * nat;
-      value := stmt (varname * nat);
+      value := @rhs (varname * nat);
       ltb := label_lt |}.
 
-  Definition label_to_stmt := SortedList.map label_to_stmt_parameters label_lt_strict.
+  Definition label_to_rhs := SortedList.map label_to_rhs_parameters label_lt_strict.
 
   Definition varname_to_nat_parameters : parameters :=
     {| key := varname;
@@ -247,23 +264,6 @@ Section VarName.
     end.
 
   Definition ssa := ssa' map.empty.
-
-  Fixpoint is_simple (s : stmt varname) :=
-    match s with
-    | SLoad _ _ _ _ => true
-    | SStore _ _ _ _ => true
-    | SInlinetable _ _ _ _ => true
-    | SStackalloc _ _ _ => false
-    | SLit _ _ => true
-    | SOp _ _ _ _ => true
-    | SSet _ _ => true
-    | SIf _ _ _ => false
-    | SLoop _ _ _ => false
-    | SSeq s1 s2 => is_simple s1 && is_simple s2
-    | SSkip => true
-    | SCall _ _ _ => false
-    | SInteract _ _ _ => false
-    end.
 
   Check exec.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte} {localsH: map.map varname word} {envH: map.map String.string (list varname * list varname * stmt varname)}.
@@ -381,7 +381,7 @@ Section VarName.
     | None => d
     end.
   
-  Fixpoint lvn' (names : rhs_to_label) (values : label_to_stmt)
+  Fixpoint lvn' (names : rhs_to_label) (values : label_to_rhs)
     (aliases : label_to_label) (s : stmt (varname * nat)) :=
     match s with
     | SLoad sz x a offset =>
@@ -403,7 +403,7 @@ Section VarName.
         (*simplify*)
         let simplified :=
           match map.get values i with
-          | Some (SLit _ c) =>
+          | Some (RLit c) =>
               let val := 0 (*should actually evaluate the thing*) in SLit x val
           | _ => SInlinetable sz x t i
           end in
@@ -411,13 +411,13 @@ Section VarName.
           - if so, update aliases appropriately, and skip
           - otherwise, add to list of names, and don't skip *)
         match map.get names (rhs_of_stmt simplified) with
-        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x simplified, aliases)
+        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x (rhs_of_stmt simplified), aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SStackalloc x nbytes body => (SSkip, map.empty, map.empty, map.empty)
     | SLit x v =>
         match map.get names (rhs_of_stmt (SLit x v)) with
-        | None => (SLit x v, map.put names (rhs_of_stmt (SLit x v)) x, map.put values x (SLit x v), aliases)
+        | None => (SLit x v, map.put names (rhs_of_stmt (SLit x v)) x, map.put values x (rhs_of_stmt (SLit x v)), aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SOp x op y z =>
@@ -430,19 +430,19 @@ Section VarName.
           for now it's just simple constant folding.*)
         let simplified :=
           match map.get values y with
-          | Some (SLit _ c1) =>
+          | Some (RLit c1) =>
               match z with
               | Const c2 => SLit x (word.unsigned (interp_binop op (word.of_Z c1) (word.of_Z c2)))(*TODO: wouldn't have to deal with word-to-nat conversions if i would add a word literal construct*)
               | Var z =>
                   match map.get values z with
-                  | Some (SLit _ c2) => SLit x (word.unsigned (interp_binop op (word.of_Z c1) (word.of_Z c2)))
+                  | Some (RLit c2) => SLit x (word.unsigned (interp_binop op (word.of_Z c1) (word.of_Z c2)))
                   | _ => SOp x op y (Var z)
                   end
               end
           | _ => SOp x op y z
           end in
         match map.get names (rhs_of_stmt simplified) with
-        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x simplified, aliases)
+        | None => (simplified, map.put names (rhs_of_stmt simplified) x, map.put values x (rhs_of_stmt simplified), aliases)
         | Some x' => (SSkip, names, values, map.put aliases x x')
         end
     | SSet x y =>
@@ -461,32 +461,72 @@ Section VarName.
 
   Definition lvn := lvn' map.empty map.empty map.empty.
 
+  Print get_default.
   Print rhs. Search bopname. Print operand.
-  Definition eval_rhs (l : locals) (e : rhs) : word :=
+  Definition eval_rhs (l : localsL) (e : @rhs (varname * nat)) : word :=
     match e with
     | RLoad sz a offset => word.of_Z 0
     | RStore sz a offset => word.of_Z 0
     | RInlinetable sz t i => word.of_Z 0 (*fill in*)
     | RLit v => word.of_Z v
     | ROp op y z =>
-        let z_val :=
+        let y := get_default l y (word.of_Z 0) in
+        let z :=
           match z with
-          | Const z => z
-          | Var z => match map.get l z with | Some z => z | None => word.of_Z 0 end
-          end
+          | Const z => word.of_Z z
+          | Var z => get_default l z (word.of_Z 0)
+          end in
         interp_binop op y z
+    | RSet x => get_default l x (word.of_Z 0)
+    end. Check @rhs_of_stmt.
 
-  Lemma lvn_works e s t m lH mcH post names values aliases :
-    is_simple s = true ->
-    execH e s t m lH mcH post ->
-    execL e (fst (lvn' t m lL mcL
+  Definition names_values_aliases_good (used_before : list (varname * nat)) (lH lL : localsL) (names : rhs_to_label) (values : label_to_rhs) (aliases : label_to_label) :=
+    (*lH related to lL via aliases*)
+    (forall x y, map.get lH x = Some y ->
+           (*map.get lH (get_default aliases x x) = Some y, but do we care?*)
+            map.get lL (get_default aliases x x) = Some y) /\
+      (*values related to lL*)
+      (forall x e, map.get values x = Some e -> map.get lH x = Some (eval_rhs lH e)) /\
+      (*names related to lL*)
+      (forall x e, map.get names e = Some x -> map.get lH x = Some (eval_rhs lH e)) /\
+      (forall x y, map.get aliases x = Some y -> In y used_before).
+  
+  (*forall (e : rhs),
+    map.get values (get_default aliases x x) = Some e ->
+    map.get names e = Some (get_default aliases x x) /\
+    eval_rhs lL e = y.*)
+
+  Definition used_in (s : stmt)
+
+  Lemma lvn_works e sH t m lH mcH post used_before :
+    is_simple sH = true ->
+    
+    execL e sH t m lH mcH post ->
+    forall lL mcL names values aliases,
+    names_values_aliases_good lH lL names values aliases ->
+    let '(sL, names', values', aliases') := lvn' names values aliases sH in
+    execL e sL t m lL mcL
       (fun t' m' lL' mc' =>
          exists lH' mcH',
            post t' m' lH' mcH' /\
-             (forall x y, map.get aliases x = Some y -> map.get lL' x = map.get lL' y) /\
-             (forall x y, map.get values x = Some l ->
-                     forall y, 
+             names_values_aliases_good lH' lL' names' values' aliases'
+                     
+             (*(forall x y, map.get aliases x = Some y -> map.get lH' x = map.get lH' y) /\*)
+             (*(forall x y, map.get values x = Some y -> map.get lH' x = Some (eval_rhs lH' y))*)
       ).
+  Proof.
+    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases (Hgood1 & Hgood2 & Hgood3); try discriminate Hsimple.
+    - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
+      cbv [names_values_aliases_good]. ssplit.
+      + intros x0 y0. rewrite map.get_put_dec. Tactics.destruct_one_match.
+        -- intros Hx0. inversion Hx0. subst. rewrite map.get_put_same. reflexivity.
+        -- intros Hx0. apply Hgood1 in Hx0. rewrite map.get_put_diff by assumption.
+      intros x0 y0. specialize (Hgood x0 y0).
+      rewrite map.get_put_dec. Tactics.destruct_one_match.
+      + intros H. inversion H. subst. rewrite map.get_put_same. split; [reflexivity|].
+        intros. eexists. clear H.
+      + simpl.
+      apply do 2 eexists. split; [eassumption|].
 
   
 End VarName.
