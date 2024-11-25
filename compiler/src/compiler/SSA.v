@@ -38,32 +38,52 @@ Section RHS.
     | access_size.four => 2
     | access_size.word => 3
     end.
+  Print stmt.
 
+  Inductive rhs :=
+  | RLoad (sz : access_size) (a : varname) (offset : Z)
+  | RStore (sz : access_size) (a : varname) (offset : Z)
+  | RInlinetable (sz : access_size) (t : list byte) (i : varname)
+  | RLit (v : Z)
+  (* | RWord (w : word) *)
+  | ROp (op : bopname) (y : varname) (z : @operand varname)
+  | RSet (y : varname).
+
+  Definition rhs_of_stmt (s : stmt varname) :=
+    match s with
+    | SLoad sz x a offset => RLoad sz a offset
+    | SStore sz x a offset => RStore sz a offset
+    | SInlinetable sz x t i => RInlinetable sz t i
+    | SLit x v => RLit v
+    | SOp x op y z => ROp op y z
+    | SSet x y => RSet y
+    | _ => RLit 0
+    end.
+  
   Check SOp.
   Inductive rhs_op :=
-  | RLoad | RStore | RInlinetable | RLit | ROp | RSet.
+  | RLoad_ | RStore_ | RInlinetable_ | RLit_ | ROp_ | RSet_.
 
-  Definition rhs : Type := rhs_op * option access_size * option varname (*rs1*) * option Z (*imm*) * option (list byte) * option bopname * option (@operand varname).
+  Definition rhs_tuple : Type := rhs_op * option access_size * option varname (*rs1*) * option Z (*imm*) * option (list byte) * option bopname * option (@operand varname).
 
-  Definition rhs_of_stmt (s : stmt varname) : rhs :=
+  Definition rhs_to_tuple (s : rhs) : rhs_tuple :=
     match s with
-    | SLoad sz x a offset => (RLoad, Some sz, Some a, Some offset, None, None, None)
-    | SStore sz x a offset => (RStore, Some sz, Some a, Some offset, None, None, None)
-    | SInlinetable sz x t i => (RInlinetable, Some sz, Some i, None, Some t, None, None)
-    | SLit x v => (RLit, None, None, Some v, None, None, None)
-    | SOp x op y z => (ROp, None, Some y, None, None, Some op, Some z)
-    | SSet x y => (RSet, None, Some y, None, None, None, None)
-    | _ => (RSet, None, None, None, None, None, None)
+    | RLoad sz a offset => (RLoad_, Some sz, Some a, Some offset, None, None, None)
+    | RStore sz a offset => (RStore_, Some sz, Some a, Some offset, None, None, None)
+    | RInlinetable sz t i => (RInlinetable_, Some sz, Some i, None, Some t, None, None)
+    | RLit v => (RLit_, None, None, Some v, None, None, None)
+    | ROp op y z => (ROp_, None, Some y, None, None, Some op, Some z)
+    | RSet y => (RSet_, None, Some y, None, None, None, None)
     end.
 
-  Definition rhstype_to_Z (x : rhs_op) : Z :=
+  Definition rhsop_to_Z (x : rhs_op) : Z :=
     match x with
-    | RLoad => 0
-    | RStore => 1
-    | RInlinetable => 2
-    | RLit => 3
-    | ROp => 4
-    | RSet => 5
+    | RLoad_ => 0
+    | RStore_ => 1
+    | RInlinetable_ => 2
+    | RLit_ => 3
+    | ROp_ => 4
+    | RSet_ => 5
     end.
 
   Definition bopname_to_Z (x : bopname) : Z :=
@@ -95,21 +115,23 @@ Section RHS.
     | Const y => (1, None, Some y)
     end.
   
-  Check (lexicog4 (lexicog4 (lift2 rhstype_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
+  Check (lexicog4 (lexicog4 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
 
   (*I suspect I should be able to make coq do this, given with_bot, lift2, Z.lt, etc.*)
   Definition rhslt : rhs -> rhs -> bool :=
-    lexicog4 (lexicog4 (lift2 rhstype_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb)))).
+    lift2 rhs_to_tuple (lexicog4 (lexicog4 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
 
   Lemma rhslt_strict : strict_order rhslt.
-  Proof. Check Z_strict_order.
+  Proof.
+    cbv [rhslt].
     repeat (apply lexicog_strict || apply lt_varname_strict || apply lexicog4_strict || apply lexicog3_strict || apply Z_strict_order || apply with_bot_strict || match goal with | |- strict_order (lift2 _ _) => apply lift2_strict end).
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - exact byte.unsigned_inj.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
-  Qed.
+    - intros. destruct x, y; simpl in H; reflexivity || congruence.
+  Qed.  
 End RHS.
   
 Section VarName.
@@ -438,6 +460,33 @@ Section VarName.
     end.
 
   Definition lvn := lvn' map.empty map.empty map.empty.
+
+  Print rhs. Search bopname. Print operand.
+  Definition eval_rhs (l : locals) (e : rhs) : word :=
+    match e with
+    | RLoad sz a offset => word.of_Z 0
+    | RStore sz a offset => word.of_Z 0
+    | RInlinetable sz t i => word.of_Z 0 (*fill in*)
+    | RLit v => word.of_Z v
+    | ROp op y z =>
+        let z_val :=
+          match z with
+          | Const z => z
+          | Var z => match map.get l z with | Some z => z | None => word.of_Z 0 end
+          end
+        interp_binop op y z
+
+  Lemma lvn_works e s t m lH mcH post names values aliases :
+    is_simple s = true ->
+    execH e s t m lH mcH post ->
+    execL e (fst (lvn' t m lL mcL
+      (fun t' m' lL' mc' =>
+         exists lH' mcH',
+           post t' m' lH' mcH' /\
+             (forall x y, map.get aliases x = Some y -> map.get lL' x = map.get lL' y) /\
+             (forall x y, map.get values x = Some l ->
+                     forall y, 
+      ).
 
   
 End VarName.
