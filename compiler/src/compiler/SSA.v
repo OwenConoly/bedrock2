@@ -156,44 +156,6 @@ Section VarName.
   Context (varname_lt : varname -> varname -> bool).
   Context (varname_lt_strict : strict_order varname_lt).
 
-  Definition label_lt := lexicog2 varname_lt (lift2 Z.of_nat Z.ltb).
-
-  Lemma label_lt_strict : strict_order label_lt.
-  Proof. 
-    apply lexicog2_strict.
-    1: apply varname_lt_strict. apply lift2_strict. 1: apply Z_strict_order.
-    Search (forall x y : nat, Z.of_nat x = Z.of_nat y -> x = y). exact Nat2Z.inj.
-  Qed.
-    
-  Definition rhs_to_label_parameters : parameters :=
-    {| key := rhs;
-      ltb := rhslt label_lt;
-      value := varname * nat|}.
-
-  Definition rhslabel_strict :
-    strict_order rhs_to_label_parameters.(ltb).
-  Proof.
-    apply rhslt_strict. apply label_lt_strict.
-  Defined.
-
-  Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
-
-  Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
-
-  Definition label_to_label_parameters : parameters :=
-    {| key := varname * nat;
-      value := varname * nat;
-      ltb := label_lt |}.
-
-  Definition label_to_label := SortedList.map label_to_label_parameters label_lt_strict.
-
-  Definition label_to_rhs_parameters : parameters :=
-    {| key := varname * nat;
-      value := @rhs (varname * nat);
-      ltb := label_lt |}.
-
-  Definition label_to_rhs := SortedList.map label_to_rhs_parameters label_lt_strict.
-
   Definition varname_to_nat_parameters : parameters :=
     {| key := varname;
       value := nat;
@@ -201,24 +163,6 @@ Section VarName.
 
   Definition varname_to_nat := SortedList.map varname_to_nat_parameters varname_lt_strict.
   
-  
-  (*
-      Inductive stmt: Type :=
-    | SLoad(sz: Syntax.access_size)(x: varname)(a: varname)(offset: Z)
-    | SStore(sz: Syntax.access_size)(a: varname)(v: varname)(offset: Z)
-    | SInlinetable(sz: Syntax.access_size)(x: varname)(t: list Byte.byte)(i: varname)
-    | SStackalloc(x : varname)(nbytes: Z)(body: stmt)
-    | SLit(x: varname)(v: Z)
-    | SOp(x: varname)(op: bopname)(y: varname)(z: operand)
-    | SSet(x y: varname)
-    | SIf(cond: bcond)(bThen bElse: stmt)
-    | SLoop(body1: stmt)(cond: bcond)(body2: stmt)
-    | SSeq(s1 s2: stmt)
-    | SSkip
-    | SCall(binds: list varname)(f: String.string)(args: list varname)
-    | SInteract(binds: list varname)(a: String.string)(args: list varname).
-
-   *)
   Existing Instance varname_to_nat.
   Definition get := @map.get _ _ varname_to_nat.
   Definition getnat (count : map.rep) (x : varname) :=
@@ -374,6 +318,49 @@ Section VarName.
       destruct (ssa' count' s2) as [s2' count'']. simpl in *.
       econstructor; [eassumption|]. simpl. intros. fwd. eapply H0; eauto.
   Qed.
+End VarName.
+
+Section LVN.
+  Context (varname : Type).
+  Context (varname_lt : varname -> varname -> bool).
+  Context (varname_lt_strict : strict_order varname_lt).
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte} {locals: map.map varname word} {env: map.map String.string (list varname * list varname * stmt varname)}.
+  Context {locals_ok : map.ok locals}.
+  Context {ext_spec: ExtSpec}. Print EqDecider.
+  Context {eqd : forall x y : varname, _} {HED : EqDecider eqd}.
+  Context {eqd' : forall x y : varname * nat, _} {HED' : EqDecider eqd'}.
+  Context (phase : compphase) (isRegH : varname -> bool) (isRegL : varname * nat -> bool).
+
+  Notation exec := (@exec varname _ _ _ _ _ _ _ phase isRegH).
+    
+  Definition rhs_to_label_parameters : parameters :=
+    {| key := rhs;
+      ltb := rhslt varname_lt;
+      value := varname|}.
+
+  Definition rhslabel_strict :
+    strict_order rhs_to_label_parameters.(ltb).
+  Proof.
+    apply rhslt_strict. apply varname_lt_strict.
+  Defined.
+
+  Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
+
+  Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
+
+  Definition label_to_label_parameters : parameters :=
+    {| key := varname;
+      value := varname;
+      ltb := varname_lt |}.
+
+  Definition label_to_label := SortedList.map label_to_label_parameters varname_lt_strict.
+
+  Definition label_to_rhs_parameters : parameters :=
+    {| key := varname;
+      value := @rhs varname;
+      ltb := varname_lt |}.
+
+  Definition label_to_rhs := SortedList.map label_to_rhs_parameters varname_lt_strict.
   
   Definition get_default {A B : Type} {mt} m x d :=
     match @map.get A B mt m x with
@@ -382,7 +369,7 @@ Section VarName.
     end.
   
   Fixpoint lvn' (names : rhs_to_label) (values : label_to_rhs)
-    (aliases : label_to_label) (s : stmt (varname * nat)) :=
+    (aliases : label_to_label) (s : stmt varname) :=
     match s with
     | SLoad sz x a offset =>
         (*first, get canonical names of variables appearing in the line*)
@@ -463,7 +450,7 @@ Section VarName.
 
   Print get_default.
   Print rhs. Search bopname. Print operand.
-  Definition eval_rhs (l : localsL) (e : @rhs (varname * nat)) : word :=
+  Definition eval_rhs (l : locals) (e : rhs) : word :=
     match e with
     | RLoad sz a offset => word.of_Z 0
     | RStore sz a offset => word.of_Z 0
@@ -478,9 +465,9 @@ Section VarName.
           end in
         interp_binop op y z
     | RSet x => get_default l x (word.of_Z 0)
-    end. Check @rhs_of_stmt.
+    end.
 
-  Definition names_values_aliases_good (used_before : list (varname * nat)) (lH lL : localsL) (names : rhs_to_label) (values : label_to_rhs) (aliases : label_to_label) :=
+  Definition names_values_aliases_good (lH lL : locals) (names : rhs_to_label) (values : label_to_rhs) (aliases : label_to_label) :=
     (*lH related to lL via aliases*)
     (forall x y, map.get lH x = Some y ->
            (*map.get lH (get_default aliases x x) = Some y, but do we care?*)
@@ -488,39 +475,98 @@ Section VarName.
       (*values related to lL*)
       (forall x e, map.get values x = Some e -> map.get lH x = Some (eval_rhs lH e)) /\
       (*names related to lL*)
-      (forall x e, map.get names e = Some x -> map.get lH x = Some (eval_rhs lH e)) /\
-      (forall x y, map.get aliases x = Some y -> In y used_before).
+      (forall x e, map.get names e = Some x -> map.get lH x = Some (eval_rhs lH e)).
   
   (*forall (e : rhs),
     map.get values (get_default aliases x x) = Some e ->
     map.get names e = Some (get_default aliases x x) /\
     eval_rhs lL e = y.*)
 
-  Definition used_in (s : stmt)
+  Print stmt.
+  Fixpoint modified_in (name : varname) (s : stmt varname) : Prop :=
+    match s with
+    | SLoad sz x a offset => name = x
+    | SStore sz x a offset => name = x
+    | SInlinetable sz x t i => name = x
+    | SLit x v => name = x
+    | SOp x op y z => name = x
+    | SSet x y => name = x
+    | SSeq s1 s2 => modified_in name s1 \/ modified_in name s2
+    | _ => True
+    end.
 
-  Lemma lvn_works e sH t m lH mcH post used_before :
-    is_simple sH = true ->
-    
-    execL e sH t m lH mcH post ->
-    forall lL mcL names values aliases,
-    names_values_aliases_good lH lL names values aliases ->
-    let '(sL, names', values', aliases') := lvn' names values aliases sH in
-    execL e sL t m lL mcL
-      (fun t' m' lL' mc' =>
-         exists lH' mcH',
-           post t' m' lH' mcH' /\
-             names_values_aliases_good lH' lL' names' values' aliases'
-                     
-             (*(forall x y, map.get aliases x = Some y -> map.get lH' x = map.get lH' y) /\*)
-             (*(forall x y, map.get values x = Some y -> map.get lH' x = Some (eval_rhs lH' y))*)
-      ).
+  Fixpoint in_rhs (name : varname) (e : rhs) : Prop :=
+    match e with
+    | RLoad sz a offset => name = a
+    | RStore sz a offset => name = a
+    | RInlinetable sz t i => name = i
+    | RLit v => False
+    | ROp op y z => name = y \/ Var name = z
+    | RSet y => name = y
+    end.
+
+  Lemma not_in_rhs_irrelevant x y l e :
+    ~in_rhs x e ->
+    eval_rhs (map.put l x y) e = eval_rhs l e.
   Proof.
-    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases (Hgood1 & Hgood2 & Hgood3); try discriminate Hsimple.
-    - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
+    intros H. destruct e; simpl in *; try reflexivity.
+    - assert (H0: y0 <> x /\ z <> Var x) by auto. clear H. destruct H0 as [H1 H2].
+      cbv [get_default]. rewrite map.get_put_diff by assumption.
+      destruct z; [|reflexivity]. assert (v <> x) by congruence.
+      rewrite map.get_put_diff by assumption. reflexivity.
+    - cbv [get_default]. rewrite map.get_put_diff by (symmetry; assumption).
+      reflexivity.
+  Qed.
+  
+  Lemma lvn_works e sH t m lH mcH post :
+    is_simple sH = true ->
+    exec e sH t m lH mcH post ->
+    forall lL mcL names values aliases,
+      (forall x, modified_in x sH -> map.get aliases x = None) ->
+      (forall x y, modified_in y sH -> map.get aliases x <> Some y) ->
+      (forall x, modified_in x sH -> map.get values x = None) ->
+      (forall x y e, modified_in y sH -> map.get values x = Some e -> ~in_rhs y e) ->
+      names_values_aliases_good lH lL names values aliases ->
+      let '(sL, names', values', aliases') := lvn' names values aliases sH in
+      exec e sL t m lL mcL
+        (fun t' m' lL' mc' =>
+           exists lH' mcH',
+             post t' m' lH' mcH' /\
+               names_values_aliases_good lH' lL' names' values' aliases'
+                                         
+        (*(forall x y, map.get aliases x = Some y -> map.get lH' x = map.get lH' y) /\*)
+        (*(forall x y, map.get values x = Some y -> map.get lH' x = Some (eval_rhs lH' y))*)
+        ).
+  Proof.
+    cbv [label_to_label_parameters] in *.
+    cbv [label_to_label label_to_label_parameters] in *. cbv [key value] in *.
+    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa_aliases_l ssa_aliases_r ssa_values_l ssa_values_r (Hgood1 & Hgood2 & Hgood3); try discriminate Hsimple;
+      try (specialize (ssa_aliases_l _ eq_refl); specialize (ssa_values_l _ eq_refl);
+           specialize ssa_values_r with (1 := eq_refl);
+           specialize ssa_aliases_r with (1 := eq_refl)).
+    - 
+      apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
       cbv [names_values_aliases_good]. ssplit.
       + intros x0 y0. rewrite map.get_put_dec. Tactics.destruct_one_match.
-        -- intros Hx0. inversion Hx0. subst. rewrite map.get_put_same. reflexivity.
-        -- intros Hx0. apply Hgood1 in Hx0. rewrite map.get_put_diff by assumption.
+        -- intros Hx0. inversion Hx0. subst. 
+           cbv [get_default]. cbv [label_to_label label_to_label_parameters key value] in *.
+           rewrite ssa_aliases_l. rewrite map.get_put_same. reflexivity.
+        -- intros Hx0. apply Hgood1 in Hx0. rewrite <- Hx0. apply map.get_put_diff.
+           cbv [get_default]. Tactics.destruct_one_match.
+           ++ intros H'. subst. apply ssa_aliases_r in E0. apply E0.
+           ++ congruence.
+      + intros x0 e0 Hx0. assert (x0 <> x).
+        { intros H'. subst.
+          cbv [label_to_rhs label_to_rhs_parameters key value] in *.
+          rewrite ssa_values_l in Hx0. congruence. }
+        rewrite map.get_put_diff by assumption.
+        specialize ssa_values_r with (1 := Hx0). apply Hgood2 in Hx0.
+        Search eval_rhs. rewrite not_in_rhs_irrelevant by assumption. assumption.
+      + admit.
+    - admit.
+    - destruct (
+        intros. apply 
+        apply ssa_values_r in Hx0.
       intros x0 y0. specialize (Hgood x0 y0).
       rewrite map.get_put_dec. Tactics.destruct_one_match.
       + intros H. inversion H. subst. rewrite map.get_put_same. split; [reflexivity|].
