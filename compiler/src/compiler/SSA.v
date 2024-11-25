@@ -251,21 +251,12 @@ Section VarName.
   Context {eqd : forall x y : varname, _} {HED : EqDecider eqd}.
   Context {eqd' : forall x y : varname * nat, _} {HED' : EqDecider eqd'}.
   Context (phase : compphase) (isRegH : varname -> bool) (isRegL : varname * nat -> bool).
-  Check exec phase isRegH.
-  Check @exec.
   Notation execH := (@exec varname _ _ _ _ _ _ _ phase isRegH).
   Notation execL := (@exec (varname * nat)  _ _ _ _ _ _ _ phase isRegL).
-  Check execH. Check execL.
-  Check map.fold. Check map.put.
-  Check exec.
-   
-  Print map.fold_spec.
+
   Definition compile_locals (count : varname_to_nat) (lH : localsH) : localsL :=
     map.fold (fun lH k v => map.put lH (k, getnat count k) v) map.empty lH.
 
-  Search map.map.
-  Check map.map_ext.
-  
   Lemma compile_locals_spec count lH :
     forall k n v, map.get (compile_locals count lH) (k, n) = Some v <->
                n = getnat count k /\ map.get lH k = Some v.
@@ -347,8 +338,6 @@ Section VarName.
       (fun t' m' lL' mc' =>
          exists lH' mcH',
            post t' m' lH' mcH' /\
-      (*lL' = compile_locals (snd (ssa' count s)) lH'*)
-      (*^not true; compile_locals doesn't keep old/intermediate values*)
              map.extends lL' (compile_locals (snd (ssa' count s)) lH')).
   Proof.
     intros Hsimple Hexec. induction Hexec; intros lL mcL count; try discriminate Hsimple; intros Hext; try (econstructor; eauto using compile_locals_spec'''); try (do 2 eexists; split; [eassumption|]); simpl; try apply compile_locals_inc; try assumption.
@@ -364,26 +353,12 @@ Section VarName.
       econstructor; [eassumption|]. simpl. intros. fwd. eapply H0; eauto.
   Qed.
   
-  (*when we get to *)
   Definition get_default {A B : Type} {mt} m x d :=
     match @map.get A B mt m x with
     | Some y => y
     | None => d
     end.
-  Print SortedList.map.
-
-  Print parameters.Build_parameters.
-  Print parameters. Check rhslt. Check lexicog2.
-
   
-  
-  (*Note: I treat names as if it is magical in certain ways.
-    The domain is actually statements mod some equivalence relation, wheere for example:
-    - SLit "1" 1 = SLit "2" 1
-    - "z" := "x" + "y" = "ry" = "y" + "x"
-    That is, two operations are the same if they're the same.
-    I should actually implement this rather than just pretending that it works.
-   *)
   Fixpoint lvn' (names : rhs_to_label) (values : label_to_stmt)
     (aliases : label_to_label) (s : stmt (varname * nat)) :=
     match s with
