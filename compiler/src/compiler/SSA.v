@@ -672,22 +672,68 @@ Section LVN.
         { intros H'. subst x. eapply ssa_names_r. apply Hx0. }
         rewrite map.get_put_diff by auto. apply Hgood3.
   Qed.
+
+  Fixpoint assigned_to (s : stmt varname) : list varname :=
+    match s with
+    | SLoad sz x a offset => [x]
+    | SStore sz x a offset => [x]
+    | SInlinetable sz x t i => [x]
+    | SLit x v => [x]
+    | SOp x op y z => [x]
+    | SSet x y => [x]
+    | SSeq s1 s2 => assigned_to s1 ++ assigned_to s2
+    | _ => []
+    end.
+
+  Lemma modified_assigned_to x s :
+    is_simple s ->
+    modified_in x s ->
+    In x (assigned_to s).
+  Proof.
+    clear.
+    induction s; try (simpl; solve [auto]).
+    simpl. intros H1 H2. Search (In _ (_ ++ _)). apply in_app_iff. tauto.
+  Qed.
+
+  Lemma ssa_hyps_preserved s1 s2 names values aliases :
+    is_simple (SSeq s1 s2) ->
+    NoDup (assigned_to (SSeq s1 s2)) ->
+    (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
+    let '(s1', names', values', aliases') := lvn' names values aliases s1 in
+    (forall x, modified_in x s2 -> ssa_hyps x names' values' aliases').
+  Proof.
+    induction s1; intros simple ssa_form ssa; simpl in simple; try tauto;
+      destruct (lvn' names values aliases _) as [[[s1' names'] values'] aliases'] eqn:E;
+      try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H))); simpl in E;
+      try (inversion E; subst; clear E; assumption).
+    - simpl in ssa_form. inversion ssa_form. subst. revert E. destruct_one_match.
+      + intros E'. inversion E'. subst. clear E'. revert E. destruct_one_match.
+        -- clear E. destruct_one_match.
+           ++ simpl. intros Hv. cbv [ssa_hyps] in *. fwd.
+              intuition eauto.
+              --- rewrite map.get_put_dec. destruct_one_match.
+                  +++ exfalso. apply H2. apply modified_assigned_to; assumption.
+                  +++ assumption. 
+              --- revert H1. rewrite map.get_put_dec. destruct_one_match.
+                  +++ intros H'. inversion H'. subst. congruence.
+                  +++ apply ssap1.
+           ++ simpl. intros Hv. Admitted.
       
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
+    NoDup (assigned_to sH) ->
     exec e sH t m lH mcH post ->
     forall lL mcL names values aliases,
       (forall x, modified_in x sH -> ssa_hyps x names values aliases) ->
       names_values_aliases_good lH lL names values aliases ->
       let '(sL, names', values', aliases') := lvn' names values aliases sH in
-      (forall x, modified_in x sH -> ssa_hyps x names' values' aliases)
       exec e sL t m lL mcL
         (fun t' m' lL' mc' =>
            exists lH' mcH',
              post t' m' lH' mcH' /\
                names_values_aliases_good lH' lL' names' values' aliases').
   Proof.
-    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa nva; try solve [destruct Hsimple];
+    intros simple ssa_form Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa nva; try solve [destruct simple];
       try specialize (ssa _ eq_refl); assert (ssa' := ssa); try destruct ssa' as (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r);
       assert (nva' := nva); destruct nva' as (Hgood1 & Hgood2 & Hgood3).
     - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
@@ -754,68 +800,24 @@ Section LVN.
         simpl. tauto.
     - admit.
     - econstructor; eauto. do 2 eexists. split; [eassumption|]. admit.
-    - simpl.
-      destruct Hsimple as [? ?].
-      specialize (IHHexec ltac:(assumption) lL mcL names values aliases).
+    - assert (ssa_form' := ssa_form). assert (simple' := simple).
+      simpl in simple', ssa_form'.
+      apply List.NoDup_app_iff in ssa_form'. fwd.
+      specialize (IHHexec ltac:(assumption) ltac:(assumption) lL mcL names values aliases).
       eassert (H': _). 2: specialize (IHHexec H').
       { intros. apply ssa. simpl. left. assumption. }
       specialize (IHHexec ltac:(assumption)).
+      assert (ssa_hyps' := ssa_hyps_preserved _ _ _ _ _ ltac:(eassumption) ltac:(eassumption) ltac:(eassumption)).
       destruct (lvn' names values aliases s1) as [ [ [s1' names'] values'] aliases'].
-      destruct (lvn' names' values' aliases' s2) as [[[s2' names''] values''] aliases''].
+      destruct (lvn' names' values' aliases' s2) as [[[s2' names''] values''] aliases''] eqn:E2.
       econstructor. 1: exact IHHexec.
-      simpl. intros. fwd. specialize (H0 _ _ _ _ ltac:(eassumption) ltac:(assumption)).
-      specialize (H0 l' mc' names' values' aliases').
+      simpl. intros. fwd.
+      specialize (H0 _ _ _ _ ltac:(eassumption) ltac:(assumption) ltac:(assumption)).
+      specialize (H0 l' mc' names' values' aliases' ssa_hyps' ltac:(assumption)).
+      rewrite E2 in H0. apply H0.
+    - econstructor. do 2 eexists. eauto.
   Abort.
-
-  Fixpoint assigned_to (s : stmt varname) : list varname :=
-    match s with
-    | SLoad sz x a offset => [x]
-    | SStore sz x a offset => [x]
-    | SInlinetable sz x t i => [x]
-    | SLit x v => [x]
-    | SOp x op y z => [x]
-    | SSet x y => [x]
-    | SSeq s1 s2 => assigned_to s1 ++ assigned_to s2
-    | _ => []
-    end.
-
-  Lemma modified_assigned_to x s :
-    is_simple s ->
-    modified_in x s ->
-    In x (assigned_to s).
-  Proof.
-    clear.
-    induction s; try (simpl; solve [auto]).
-    simpl. intros H1 H2. Search (In _ (_ ++ _)). apply in_app_iff. tauto.
-  Qed.
-
-  Lemma ssa_hyps_preserved s1 s2 names values aliases :
-    is_simple (SSeq s1 s2) ->
-    NoDup (assigned_to (SSeq s1 s2)) ->
-    (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
-    let '(s1', names', values', aliases') := lvn' names values aliases s1 in
-    (forall x, modified_in x s2 -> ssa_hyps x names' values' aliases').
-  Proof.
-    induction s1; intros simple ssa_form ssa; simpl in simple; try tauto;
-      destruct (lvn' names values aliases _) as [[[s1' names'] values'] aliases'] eqn:E;
-      try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H))); simpl in E;
-      try (inversion E; subst; clear E; assumption).
-    - simpl in ssa_form. inversion ssa_form. subst. revert E. destruct_one_match.
-      + intros E'. inversion E'. subst. clear E'. revert E. destruct_one_match.
-        -- clear E. destruct_one_match.
-           ++ simpl. intros Hv. cbv [ssa_hyps] in *. fwd.
-              intuition eauto.
-              --- rewrite map.get_put_dec. destruct_one_match.
-                  +++ exfalso. apply H2. apply modified_assigned_to; assumption.
-                  +++ assumption. 
-              --- revert H1. rewrite map.get_put_dec. destruct_one_match.
-                  +++ intros H'. inversion H'. subst. congruence.
-                  +++ Search x0. apply ssap1.
-           ++ simpl. intros 
-              intros E'; inversion E'; subst; clear E'.
-      simpl in Hsimple.
-      repeat destruct_one_match.
-End VarName.
+End LVN.
 
 Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
 
