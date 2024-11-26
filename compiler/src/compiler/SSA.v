@@ -368,6 +368,7 @@ Section LVN.
   Context {rhs_to_label_ok : map.ok rhs_to_label}.
   Context {label_to_label_ok : map.ok label_to_label}.
   Context {label_to_rhs_ok : map.ok label_to_rhs}.
+  Context {word_ok : word.ok word}.
   
   Definition get_default {A B : Type} {mt} m x d :=
     match @map.get A B mt m x with
@@ -487,7 +488,6 @@ Section LVN.
   Definition names_values_aliases_good (lH lL : locals) (names : rhs_to_label) (values : label_to_rhs) (aliases : label_to_label) :=
     (*lH related to lL via aliases*)
     (forall x y, map.get lH x = Some y ->
-           (*map.get lH (get_default aliases x x) = Some y, but do we care?*)
             map.get lL (get_default aliases x x) = Some y) /\
       (*values related to lL*)
       (forall x e, map.get values x = Some e -> map.get lL x = Some (eval_rhs lL e)) /\
@@ -536,6 +536,11 @@ Section LVN.
     - cbv [get_default]. rewrite map.get_put_diff by (symmetry; assumption).
       reflexivity.
   Qed.
+
+  Lemma put_one_still_good lH lL x v names values aliases :
+    names_values_aliases_good lH lL names values aliases ->
+    names_values_aliases_good (map.put lH x v) (map.put lL x v) names values aliases.
+  Proof.
   
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH = true ->
@@ -581,12 +586,29 @@ Section LVN.
         rewrite map.get_put_diff by assumption.
         rewrite not_in_rhs_irrelevant by assumption. assumption.
     - admit. (*same as load*)
-    - remember (match map.get values (get_default aliases i i) with
+    - set (yes_or_no := fun P => P \/ ~P).
+      assert (H4: yes_or_no (exists v0, map.get values (get_default aliases i i) = Some (RLit v0))).
+      { subst yes_or_no. destruct (map.get values (get_default aliases i i)).
+        2: { right. intros ?. fwd. congruence. }
+        destruct r; try (right; intros ?; fwd; congruence; left).
+        left. eexists. reflexivity. }
+      subst yes_or_no.
+      assert (H0' := Hgood1). specialize H0' with (1 := H0).
+      remember (match map.get values (get_default aliases i i) with
           | Some (RLit _) => _
           | _ => SInlinetable sz x table (get_default aliases i i)
           end) as simplified eqn:Hs.
       assert (eval_rhs lL (rhs_of_stmt simplified) = eval_rhs l (rhs_of_stmt (SInlinetable sz x table i))).
-      { admit. }
+      { simpl. destruct H4 as [yes | no].
+        - fwd. simpl. Search v0. apply Hgood2 in yes. cbv [get_default]. rewrite H0.
+          rewrite word.of_Z_unsigned. rewrite yes in H0'.
+          inversion H0'. subst. reflexivity.
+        - assert (simplified = SInlinetable sz x table (get_default aliases i i)).
+          { rewrite Hs. destruct_one_match; try reflexivity.
+            destruct_one_match; try reflexivity. exfalso. apply no.
+            eexists. reflexivity. }
+          clear Hs. subst. simpl. cbv [get_default]. fold (get_default aliases i i).
+          rewrite H0. rewrite H0'. reflexivity. }
       destruct (map.get names (rhs_of_stmt simplified)) eqn:E; simpl.
       + (*it was already there, so skip*)
         clear Hs. econstructor. do 2 eexists. split; [eassumption|]. split; [|split].
@@ -599,13 +621,7 @@ Section LVN.
               apply Hgood1. assumption.
         -- apply Hgood2.
         -- apply Hgood3.
-      + set (yes_or_no := fun P => P \/ ~P).
-        assert (H4: yes_or_no (exists v0, map.get values (get_default aliases i i) = Some (RLit v0))).
-        { subst yes_or_no. destruct (map.get values (get_default aliases i i)).
-          2: { right. intros ?. fwd. congruence. }
-          destruct r; try (right; intros ?; fwd; congruence; left).
-          left. eexists. reflexivity. }
-        destruct H4 as [yes | no]; clear yes_or_no.
+      + destruct H4 as [yes | no].
         -- (*constant propagation*)
           destruct yes as [v0 yes]. rewrite yes in Hs. rewrite Hs in *. clear Hs.
           remember (word.unsigned _) as val.
@@ -647,7 +663,6 @@ Section LVN.
           { cbv [get_default]. destruct_one_match.
             - intros H'. eapply ssa_aliases_r. subst x. apply E0.
             - assumption. }
-          clear no. Search i. assert (H0' := Hgood1). specialize H0' with (1 := H0).
           do 2 eexists. split; [eassumption|]. split; [|split].
           ++ (*copied and pasted from load*)
             intros x0 y0. rewrite map.get_put_dec. Tactics.destruct_one_match.
@@ -685,84 +700,39 @@ Section LVN.
                      ---- apply Hgood3. assumption.
                      ---- eapply ssa_names_l. eassumption.
                  +++ intros H'. subst x0. eapply ssa_names_r. eassumption.
-    - 
-                 rewrite H0'.
-                 apply ssa_aliases_r in E0.
-                 Check H0'. cbv [get_default]. rewrite H0'. specialize Hgood1 with (1 := H0). simpl. Search index.
-                 clear no. Search i. specialize Hgood1 with (1 := H0).
-                 cbv [get_default]. rewrite map.get_put_diff.
-                 2: { destruct_one_match. 2: solve [auto].
-                      intros H'. subst v0. apply ssa_aliases_r in E0.
-                      assumption. }
-                 fold (get_default aliases i i). rewrite Hgood1.
-                 rewrite H1. reflexivity.
-             --- (*load*) intros Hx0.
-                 rewrite map.get_put_diff by auto.
-                 specialize Hgood2 with (1 := Hx0). rewrite Hgood2.
-                 rewrite not_in_rhs_irrelevant. 1: reflexivity.
-                 eapply ssa_values_r. apply Hx0.
-          ++ intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
-             --- simpl. intros Hx0. inversion_clear Hx0.
-                 eapply ssa_names_l in Hx0. specialize ssa_names_l with (1 := Hx0).
-                 rewrite not_in_rhs_irrelevant by auto. assumption.
-               
-                 eapply ssa_aliases_r in E0. assumption.
-                 rewrite H1. Search load.
-              intros x0 e0 Hx0. assert (x0 <> x).
-             { intros H'. subst.
-               rewrite ssa_values_l in Hx0. congruence. }
-        rewrite map.get_put_diff by assumption.
-        specialize ssa_values_r with (1 := Hx0). apply Hgood2 in Hx0.
-        Search eval_rhs. rewrite not_in_rhs_irrelevant by assumption. assumption.
-      + intros x0 e0 Hx0. specialize Hgood3 with (1 := Hx0).
-        specialize ssa_names_l with (1 := Hx0).
-        assert (x0 <> x).
-        { intros H'. subst.
-          apply ssa_names_r in Hx0. assumption. }
-        rewrite map.get_put_diff by assumption.
-        rewrite not_in_rhs_irrelevant by assumption. assumption.
-          Search i. specialize Hgood1 with (1 := H0).
-            Search index. Search x. Search i. rewrite <- H0 in Hgood1. destruct_one_match.
-            - apply Hgood
-                 apply Hgood3 in Hx0. rewrite map.get_put_diff by auto.
-        rewrite not_in_rhs_irrelevant by assumption. assumption. apply 
-               
-               intros Hy0. cbv [get_default]. rewrite map.get_put_diff by auto.
-              apply Hgood1. assumption.
-                 rewrite H3. Search  y0. rewrite <- H1. Search index.
-                 
-                 rewrite H1 in *. rewrite <- yes.
-                 Search v0. rewrite H1 in *.
-          fwd. intuition eauto.
-          subst yes_or_no. simpl.
-          as [r|] eqn:E'.
-        assert (exists v, r = RLit v \/ ~exists v, r = RLit v).
-              apply Hgood1 in E.
-              Search y0. Search simplified. simpl in H3.
-      destruct_one_match; simpl.
-      match goal with
-      | |- match ?X with _ => _ end => destruct X as [ [ [sL names'] values'] aliases'] eqn:E
-      end.
-      econstructor; eauto.
-      destruct 
-      clear Heqsimplified_rhs.
-      destruct (map.get values (get_default aliases i i)) eqn:Eival.
-      
-      destruct (rhs_of_stmt _) eqn:E.
-      destruct_one_match. destruct p as [ [sL names'] values'].
-      rename r into aliases'. revert E. destruct_one_match.
-      + revert E. cdestruct_one_match.
+    - simpl. destruct (map.get names _) eqn:E; simpl.
+      + econstructor. do 2 eexists. split; [eassumption|]. split; [|split].
+        -- intros x0 y0. rewrite map.get_put_dec. destruct_one_match; intros Hx0.
+           ++ inversion Hx0. subst. cbv [get_default]. rewrite map.get_put_same.
+              Search v0. apply Hgood3 in E. apply E.
+           ++ cbv [get_default]. rewrite map.get_put_diff by auto. apply Hgood1.
+              assumption.
+        -- apply Hgood2.
+        -- apply Hgood3.
+      + econstructor. do 2 eexists. split; [eassumption|]. split; [|split].
+        -- intros x0 y0. rewrite map.get_put_dec. destruct_one_match; intros Hx0.
+           ++ inversion Hx0. subst. cbv [get_default]. rewrite ssa_aliases_l.
+              rewrite map.get_put_same. reflexivity.
+           ++ apply Hgood1 in Hx0. rewrite <- Hx0. apply map.get_put_diff.
+              cbv [get_default]. destruct_one_match. 2: solve[auto].
+              intros H'. subst. eapply ssa_aliases_r. eassumption.
+        -- intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+           ++ simpl. intros Hx0. inversion Hx0. subst e0. clear Hx0.
+              rewrite map.get_put_same. reflexivity.
+           ++ (*load*) intros Hx0.
+              rewrite map.get_put_diff by auto.
+              specialize Hgood2 with (1 := Hx0). rewrite Hgood2.
+              rewrite not_in_rhs_irrelevant. 1: reflexivity.
+              eapply ssa_values_r. apply Hx0.
+        -- intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+           ++ simpl. intros Hx0. inversion Hx0. subst x0. clear Hx0.
+              apply map.get_put_same.
+           ++ simpl in E0. intros Hx0. rewrite map.get_put_diff.
+              --- rewrite not_in_rhs_irrelevant.
+                  +++ apply Hgood3. assumption.
+                  +++ eapply ssa_names_l. eassumption.
+              --- intros H'. subst x0. eapply ssa_names_r. eassumption.
         
-        intros. apply 
-        apply ssa_values_r in Hx0.
-      intros x0 y0. specialize (Hgood x0 y0).
-      rewrite map.get_put_dec. Tactics.destruct_one_match.
-      + intros H. inversion H. subst. rewrite map.get_put_same. split; [reflexivity|].
-        intros. eexists. clear H.
-      + simpl.
-      apply do 2 eexists. split; [eassumption|].
-
-  
 End VarName.
 
 Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
