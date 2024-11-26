@@ -19,6 +19,7 @@ Require Import coqutil.Word.Bitwidth.
 Require Import coqutil.Word.Interface.
 Local Hint Mode Word.Interface.word - : typeclass_instances.
 Require Import compiler.FlatImp.
+Require Import coqutil.Tactics.fwd.
 Print stmt.
 
 Require Import coqutil.Map.SortedList.
@@ -293,7 +294,6 @@ Section VarName.
       + congruence.
   Qed.
 
-  Require Import coqutil.Tactics.fwd.
   
   Lemma ssa_works eH eL s t m lH mcH post :
     is_simple s = true ->
@@ -328,12 +328,12 @@ Section LVN.
   Context {locals_ok : map.ok locals}.
   Context {ext_spec: ExtSpec}. Print EqDecider.
   Context {eqd : forall x y : varname, _} {HED : EqDecider eqd}.
-  Context {eqd' : forall x y : varname * nat, _} {HED' : EqDecider eqd'}.
-  Context (phase : compphase) (isRegH : varname -> bool) (isRegL : varname * nat -> bool).
-
-  Notation exec := (@exec varname _ _ _ _ _ _ _ phase isRegH).
+  Context {eqd' : forall x y : @rhs varname, _} {HED' : EqDecider eqd'}.
+  Context (phase : compphase) (isReg : varname -> bool).
+  
+  Notation exec := (@exec varname _ _ _ _ _ _ _ phase isReg).
     
-  Definition rhs_to_label_parameters : parameters :=
+  (*Let rhs_to_label_parameters : parameters :=
     {| key := rhs;
       ltb := rhslt varname_lt;
       value := varname|}.
@@ -347,20 +347,27 @@ Section LVN.
   Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
 
   Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
-
-  Definition label_to_label_parameters : parameters :=
+  
+  Let label_to_label_parameters : parameters :=
     {| key := varname;
       value := varname;
       ltb := varname_lt |}.
 
   Definition label_to_label := SortedList.map label_to_label_parameters varname_lt_strict.
 
-  Definition label_to_rhs_parameters : parameters :=
+  Let label_to_rhs_parameters : parameters :=
     {| key := varname;
       value := @rhs varname;
       ltb := varname_lt |}.
 
-  Definition label_to_rhs := SortedList.map label_to_rhs_parameters varname_lt_strict.
+  Definition label_to_rhs := SortedList.map label_to_rhs_parameters varname_lt_strict.*)
+  
+  Context (rhs_to_label : map.map (@rhs varname) varname).
+  Context (label_to_label : map.map varname varname).
+  Context (label_to_rhs : map.map varname (@rhs varname)).
+  Context {rhs_to_label_ok : map.ok rhs_to_label}.
+  Context {label_to_label_ok : map.ok label_to_label}.
+  Context {label_to_rhs_ok : map.ok label_to_rhs}.
   
   Definition get_default {A B : Type} {mt} m x d :=
     match @map.get A B mt m x with
@@ -391,7 +398,12 @@ Section LVN.
         let simplified :=
           match map.get values i with
           | Some (RLit c) =>
-              let val := 0 (*should actually evaluate the thing*) in SLit x val
+              let val :=
+                match load sz (map.of_list_word t) (word.of_Z c) with
+                | Some val => val
+                | None => word.of_Z 0
+                end
+              in SLit x (word.unsigned val)
           | _ => SInlinetable sz x t i
           end in
         (*check if we've seen this before:
@@ -450,11 +462,16 @@ Section LVN.
 
   Print get_default.
   Print rhs. Search bopname. Print operand.
-  Definition eval_rhs (l : locals) (e : rhs) : word :=
+  Print exec.exec.
+  
+  Definition eval_rhs (l : locals) (e : @rhs varname) : word :=
     match e with
     | RLoad sz a offset => word.of_Z 0
     | RStore sz a offset => word.of_Z 0
-    | RInlinetable sz t i => word.of_Z 0 (*fill in*)
+    | RInlinetable sz t i => match load sz (map.of_list_word t) (get_default l i (word.of_Z 0)) with
+                            | Some val => val
+                            | None => word.of_Z 0
+                            end
     | RLit v => word.of_Z v
     | ROp op y z =>
         let y := get_default l y (word.of_Z 0) in
@@ -473,9 +490,9 @@ Section LVN.
            (*map.get lH (get_default aliases x x) = Some y, but do we care?*)
             map.get lL (get_default aliases x x) = Some y) /\
       (*values related to lL*)
-      (forall x e, map.get values x = Some e -> map.get lH x = Some (eval_rhs lH e)) /\
+      (forall x e, map.get values x = Some e -> map.get lL x = Some (eval_rhs lL e)) /\
       (*names related to lL*)
-      (forall x e, map.get names e = Some x -> map.get lH x = Some (eval_rhs lH e)).
+      (forall x e, map.get names e = Some x -> map.get lL x = Some (eval_rhs lL e)).
   
   (*forall (e : rhs),
     map.get values (get_default aliases x x) = Some e ->
@@ -510,6 +527,8 @@ Section LVN.
     eval_rhs (map.put l x y) e = eval_rhs l e.
   Proof.
     intros H. destruct e; simpl in *; try reflexivity.
+    - cbv [get_default]. rewrite map.get_put_diff by (symmetry; assumption).
+      reflexivity.
     - assert (H0: y0 <> x /\ z <> Var x) by auto. clear H. destruct H0 as [H1 H2].
       cbv [get_default]. rewrite map.get_put_diff by assumption.
       destruct z; [|reflexivity]. assert (v <> x) by congruence.
@@ -526,30 +545,23 @@ Section LVN.
       (forall x y, modified_in y sH -> map.get aliases x <> Some y) ->
       (forall x, modified_in x sH -> map.get values x = None) ->
       (forall x y e, modified_in y sH -> map.get values x = Some e -> ~in_rhs y e) ->
+      (forall x y e, modified_in y sH -> map.get names e = Some x -> ~in_rhs y e) ->
+      (forall x e, modified_in x sH -> map.get names e <> Some x) ->
       names_values_aliases_good lH lL names values aliases ->
       let '(sL, names', values', aliases') := lvn' names values aliases sH in
       exec e sL t m lL mcL
         (fun t' m' lL' mc' =>
            exists lH' mcH',
              post t' m' lH' mcH' /\
-               names_values_aliases_good lH' lL' names' values' aliases'
-                                         
-        (*(forall x y, map.get aliases x = Some y -> map.get lH' x = map.get lH' y) /\*)
-        (*(forall x y, map.get values x = Some y -> map.get lH' x = Some (eval_rhs lH' y))*)
-        ).
+               names_values_aliases_good lH' lL' names' values' aliases').
   Proof.
-    cbv [label_to_label_parameters] in *.
-    cbv [label_to_label label_to_label_parameters] in *. cbv [key value] in *.
-    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa_aliases_l ssa_aliases_r ssa_values_l ssa_values_r (Hgood1 & Hgood2 & Hgood3); try discriminate Hsimple;
-      try (specialize (ssa_aliases_l _ eq_refl); specialize (ssa_values_l _ eq_refl);
-           specialize ssa_values_r with (1 := eq_refl);
-           specialize ssa_aliases_r with (1 := eq_refl)).
-    - 
-      apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
+    intros Hsimple Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa_aliases_l ssa_aliases_r ssa_values_l ssa_values_r ssa_names_l ssa_names_r (Hgood1 & Hgood2 & Hgood3); try discriminate Hsimple;
+      repeat match goal with | H: _ |- _ => specialize H with (1 := eq_refl) end.
+    - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
       cbv [names_values_aliases_good]. ssplit.
       + intros x0 y0. rewrite map.get_put_dec. Tactics.destruct_one_match.
         -- intros Hx0. inversion Hx0. subst. 
-           cbv [get_default]. cbv [label_to_label label_to_label_parameters key value] in *.
+           cbv [get_default].
            rewrite ssa_aliases_l. rewrite map.get_put_same. reflexivity.
         -- intros Hx0. apply Hgood1 in Hx0. rewrite <- Hx0. apply map.get_put_diff.
            cbv [get_default]. Tactics.destruct_one_match.
@@ -557,14 +569,190 @@ Section LVN.
            ++ congruence.
       + intros x0 e0 Hx0. assert (x0 <> x).
         { intros H'. subst.
-          cbv [label_to_rhs label_to_rhs_parameters key value] in *.
           rewrite ssa_values_l in Hx0. congruence. }
         rewrite map.get_put_diff by assumption.
         specialize ssa_values_r with (1 := Hx0). apply Hgood2 in Hx0.
         Search eval_rhs. rewrite not_in_rhs_irrelevant by assumption. assumption.
-      + admit.
-    - admit.
-    - destruct (
+      + intros x0 e0 Hx0. specialize Hgood3 with (1 := Hx0).
+        specialize ssa_names_l with (1 := Hx0).
+        assert (x0 <> x).
+        { intros H'. subst.
+          apply ssa_names_r in Hx0. assumption. }
+        rewrite map.get_put_diff by assumption.
+        rewrite not_in_rhs_irrelevant by assumption. assumption.
+    - admit. (*same as load*)
+    - remember (match map.get values (get_default aliases i i) with
+          | Some (RLit _) => _
+          | _ => SInlinetable sz x table (get_default aliases i i)
+          end) as simplified eqn:Hs.
+      assert (eval_rhs lL (rhs_of_stmt simplified) = eval_rhs l (rhs_of_stmt (SInlinetable sz x table i))).
+      { admit. }
+      destruct (map.get names (rhs_of_stmt simplified)) eqn:E; simpl.
+      + (*it was already there, so skip*)
+        clear Hs. econstructor. do 2 eexists. split; [eassumption|]. split; [|split].
+        -- intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
+           ++ intros Hy0. inversion Hy0. subst. cbv [get_default].
+              rewrite map.get_put_same. apply Hgood3 in E. rewrite E. rewrite H3.
+              simpl. Search y0. Search index. cbv [get_default]. rewrite H0. rewrite H1.
+              reflexivity.
+           ++ intros Hy0. cbv [get_default]. rewrite map.get_put_diff by auto.
+              apply Hgood1. assumption.
+        -- apply Hgood2.
+        -- apply Hgood3.
+      + set (yes_or_no := fun P => P \/ ~P).
+        assert (H4: yes_or_no (exists v0, map.get values (get_default aliases i i) = Some (RLit v0))).
+        { subst yes_or_no. destruct (map.get values (get_default aliases i i)).
+          2: { right. intros ?. fwd. congruence. }
+          destruct r; try (right; intros ?; fwd; congruence; left).
+          left. eexists. reflexivity. }
+        destruct H4 as [yes | no]; clear yes_or_no.
+        -- (*constant propagation*)
+          destruct yes as [v0 yes]. rewrite yes in Hs. rewrite Hs in *. clear Hs.
+          remember (word.unsigned _) as val.
+          apply Hgood2 in yes. simpl in yes. Search i. simpl in H3.
+          cbv [get_default] in H3. rewrite H0 in H3. rewrite H1 in H3. subst v.
+          econstructor.
+          do 2 eexists. split; [eassumption|]. split; [|split].
+          ++ intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
+             --- intros Hy0. inversion Hy0. subst y0. cbv [get_default].
+                 rewrite ssa_aliases_l. apply map.get_put_same.
+             --- (*this case copied and pasted from load*)
+               intros Hx0. apply Hgood1 in Hx0. rewrite <- Hx0. apply map.get_put_diff.
+               cbv [get_default]. Tactics.destruct_one_match.
+               +++ intros H'. subst. apply ssa_aliases_r in E1. apply E1.
+               +++ congruence.
+          ++ intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
+             --- intros Hy0. inversion Hy0. subst y0. clear Hy0.
+                 rewrite map.get_put_same. simpl. reflexivity.
+             --- (*copied and pasted from load*)
+               intros Hx0. rewrite map.get_put_diff by auto.
+               specialize ssa_values_r with (1 := Hx0). apply Hgood2 in Hx0.
+               rewrite not_in_rhs_irrelevant by assumption. assumption.
+          ++ intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+             --- intros Hx0. inversion Hx0. subst x. rewrite map.get_put_same.
+                 reflexivity.
+             --- intros Hx0. simpl in E0. simpl in E.
+                 simpl. Search e0. specialize Hgood3 with (1 := Hx0).
+                 specialize ssa_names_l with (1 := Hx0).
+                 rewrite not_in_rhs_irrelevant by assumption.
+                 assert (x <> x0).
+                 { intros H'. subst x. eapply ssa_names_r. apply Hx0. }
+                 rewrite map.get_put_diff by auto. apply Hgood3.
+        -- (*no constant propagation*)
+          assert (simplified = SInlinetable sz x table (get_default aliases i i)).
+          { rewrite Hs. destruct_one_match; try reflexivity.
+            destruct_one_match; try reflexivity. exfalso. apply no.
+            eexists. reflexivity. }
+          clear Hs. subst simplified. econstructor; eauto.
+          { cbv [get_default]. destruct_one_match.
+            - intros H'. eapply ssa_aliases_r. subst x. apply E0.
+            - assumption. }
+          clear no. Search i. assert (H0' := Hgood1). specialize H0' with (1 := H0).
+          do 2 eexists. split; [eassumption|]. split; [|split].
+          ++ (*copied and pasted from load*)
+            intros x0 y0. rewrite map.get_put_dec. Tactics.destruct_one_match.
+             --- intros Hx0. inversion Hx0. subst. 
+                 cbv [get_default].
+                 rewrite ssa_aliases_l. rewrite map.get_put_same. reflexivity.
+             --- intros Hx0. apply Hgood1 in Hx0. rewrite <- Hx0. apply map.get_put_diff.
+                 cbv [get_default]. Tactics.destruct_one_match.
+                 +++ intros H'. subst. apply ssa_aliases_r in E1. apply E1.
+                 +++ congruence.
+          ++ intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+             --- simpl. intros Hx0. inversion Hx0. subst e0. clear Hx0.
+                 rewrite map.get_put_same. simpl. Search index.
+                 
+                 cbv [get_default]. rewrite map.get_put_diff.
+                 2: { destruct_one_match. 2: solve [auto].
+                      intros H'. subst v0. apply ssa_aliases_r in E0.
+                      assumption. }
+                 fold (get_default aliases i i). rewrite H0'.
+                 rewrite H1. reflexivity.
+             --- (*load*) intros Hx0.
+                 rewrite map.get_put_diff by auto.
+                 specialize Hgood2 with (1 := Hx0). rewrite Hgood2.
+                 rewrite not_in_rhs_irrelevant. 1: reflexivity.
+                 eapply ssa_values_r. apply Hx0.
+          ++ intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+             --- simpl. intros Hx0. inversion Hx0. subst x0. clear Hx0.
+                 rewrite map.get_put_same. cbv [get_default].
+                 rewrite map.get_put_diff.
+                 2: { destruct_one_match. 2: solve[auto].
+                      intros H'. subst v0. eapply ssa_aliases_r. exact E0. }
+                 fold (get_default aliases i i). rewrite H0'. rewrite H1. reflexivity.
+             --- simpl in E0. intros Hx0. rewrite map.get_put_diff.
+                 +++ rewrite not_in_rhs_irrelevant.
+                     ---- apply Hgood3. assumption.
+                     ---- eapply ssa_names_l. eassumption.
+                 +++ intros H'. subst x0. eapply ssa_names_r. eassumption.
+    - 
+                 rewrite H0'.
+                 apply ssa_aliases_r in E0.
+                 Check H0'. cbv [get_default]. rewrite H0'. specialize Hgood1 with (1 := H0). simpl. Search index.
+                 clear no. Search i. specialize Hgood1 with (1 := H0).
+                 cbv [get_default]. rewrite map.get_put_diff.
+                 2: { destruct_one_match. 2: solve [auto].
+                      intros H'. subst v0. apply ssa_aliases_r in E0.
+                      assumption. }
+                 fold (get_default aliases i i). rewrite Hgood1.
+                 rewrite H1. reflexivity.
+             --- (*load*) intros Hx0.
+                 rewrite map.get_put_diff by auto.
+                 specialize Hgood2 with (1 := Hx0). rewrite Hgood2.
+                 rewrite not_in_rhs_irrelevant. 1: reflexivity.
+                 eapply ssa_values_r. apply Hx0.
+          ++ intros x0 e0. rewrite map.get_put_dec. destruct_one_match.
+             --- simpl. intros Hx0. inversion_clear Hx0.
+                 eapply ssa_names_l in Hx0. specialize ssa_names_l with (1 := Hx0).
+                 rewrite not_in_rhs_irrelevant by auto. assumption.
+               
+                 eapply ssa_aliases_r in E0. assumption.
+                 rewrite H1. Search load.
+              intros x0 e0 Hx0. assert (x0 <> x).
+             { intros H'. subst.
+               rewrite ssa_values_l in Hx0. congruence. }
+        rewrite map.get_put_diff by assumption.
+        specialize ssa_values_r with (1 := Hx0). apply Hgood2 in Hx0.
+        Search eval_rhs. rewrite not_in_rhs_irrelevant by assumption. assumption.
+      + intros x0 e0 Hx0. specialize Hgood3 with (1 := Hx0).
+        specialize ssa_names_l with (1 := Hx0).
+        assert (x0 <> x).
+        { intros H'. subst.
+          apply ssa_names_r in Hx0. assumption. }
+        rewrite map.get_put_diff by assumption.
+        rewrite not_in_rhs_irrelevant by assumption. assumption.
+          Search i. specialize Hgood1 with (1 := H0).
+            Search index. Search x. Search i. rewrite <- H0 in Hgood1. destruct_one_match.
+            - apply Hgood
+                 apply Hgood3 in Hx0. rewrite map.get_put_diff by auto.
+        rewrite not_in_rhs_irrelevant by assumption. assumption. apply 
+               
+               intros Hy0. cbv [get_default]. rewrite map.get_put_diff by auto.
+              apply Hgood1. assumption.
+                 rewrite H3. Search  y0. rewrite <- H1. Search index.
+                 
+                 rewrite H1 in *. rewrite <- yes.
+                 Search v0. rewrite H1 in *.
+          fwd. intuition eauto.
+          subst yes_or_no. simpl.
+          as [r|] eqn:E'.
+        assert (exists v, r = RLit v \/ ~exists v, r = RLit v).
+              apply Hgood1 in E.
+              Search y0. Search simplified. simpl in H3.
+      destruct_one_match; simpl.
+      match goal with
+      | |- match ?X with _ => _ end => destruct X as [ [ [sL names'] values'] aliases'] eqn:E
+      end.
+      econstructor; eauto.
+      destruct 
+      clear Heqsimplified_rhs.
+      destruct (map.get values (get_default aliases i i)) eqn:Eival.
+      
+      destruct (rhs_of_stmt _) eqn:E.
+      destruct_one_match. destruct p as [ [sL names'] values'].
+      rename r into aliases'. revert E. destruct_one_match.
+      + revert E. cdestruct_one_match.
+        
         intros. apply 
         apply ssa_values_r in Hx0.
       intros x0 y0. specialize (Hgood x0 y0).
