@@ -819,11 +819,12 @@ Section LVN.
     (forall x, modified_in x s2 -> ssa_hyps x names' values' aliases').
   Proof.
     induction s1; intros simple ssa_form1 ssa_form2 ssa; try tauto;
-      assert (simple' := simple); simpl in simple';
+      try (destruct simple as [simple _]; solve [destruct simple]);
       assert (ssa_form' := ssa_form1); simpl in ssa_form'; inversion ssa_form'; subst;
       assert (ssa' := ssa);
       destruct (lvn' names values aliases _) as [[[s1' names'] values'] aliases'] eqn:E;
-      try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H))); simpl in E;
+      cbn -[rhs_of_stmt] in E;
+      try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H)));
       assert (ssa'':=ssa);
       try destruct ssa'' as [[ssa_aliases_l ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]];
       try (inversion E; subst; clear E; assumption).
@@ -837,7 +838,7 @@ Section LVN.
            eapply H0. eapply E.
       + intros E'. inversion E'. subst. clear E'. fwd.
         eapply (growing_names_preserves_ssa_hyps _ s2); simpl; eauto.
-        -- split; [|assumption]. repeat destruct_one_match; reflexivity.
+        -- destruct simple. split; [|assumption]. repeat destruct_one_match; reflexivity.
         -- repeat destruct_one_match; reflexivity.
         -- intros. assert (H0' := ssa_form2 _ H0).
            simpl in H0'. assert (x1 <> i) by tauto. clear H0'.
@@ -850,7 +851,70 @@ Section LVN.
            repeat destruct_one_match; simpl; tauto.
         -- intros. apply ssa'. right. assumption.
         -- intros H'. eapply modified_once; eauto. reflexivity.
-    - Abort.
+    - revert E. destruct_one_match.
+      + intros E'. inversion E'. subst. clear E'.
+        eapply (growing_aliases_preserves_ssa_hyps _ s2); eauto. 1: reflexivity.
+        intros H'. eapply or_intror in H'. apply ssa' in H'. destruct H' as [_ H'].
+        destruct H' as [_ H']. destruct H' as [_ H']. apply H' in E. apply E.
+      + intros E'. inversion E'. subst. clear E'.
+        replace (RLit v) with (rhs_of_stmt (SLit x v)) by reflexivity.
+        eapply (growing_names_preserves_ssa_hyps _ s2); eauto.
+        -- reflexivity.
+        -- intros. apply ssa'. right. assumption.
+        -- intros H'. eapply modified_once; eauto. reflexivity.
+    - revert E. destruct_one_match.
+      + intros E'. inversion E'. subst. clear E'.
+        eapply growing_aliases_preserves_ssa_hyps; eauto.
+        -- simpl. reflexivity.
+        -- specialize (ssa' v). simpl in ssa'. intros H'.
+           specialize (ssa' (or_intror H')). clear -H' E ssa'.
+           destruct ssa'. destruct H0. clear H H0. destruct H1.
+           eapply H0. eapply E.
+      + intros E'. inversion E'. subst. clear E'. fwd.
+        eapply (growing_names_preserves_ssa_hyps _ s2); simpl; eauto.
+        -- destruct simple. split; [|assumption]. repeat destruct_one_match; reflexivity.
+        -- repeat destruct_one_match; reflexivity.
+        -- intros. assert (H0' := ssa_form2 _ H0).
+           simpl in H0'. assert (x1 <> y) by tauto. assert (Var x1 <> z) by tauto.
+           clear H0'.
+           eapply or_intror in H0. apply ssa' in H0. destruct H0 as [H0 _].
+           destruct H0 as [_ H0].
+           assert (H': x1 <> get_default aliases' y y).
+           { cbv [get_default]. destruct_one_match.
+             - intros H'. subst. eapply H0. eapply E0.
+             - assumption. }
+           assert (H'': match z with
+                        | Var z0 => x1 <> get_default aliases' z0 z0
+                        | _ => True
+                        end).
+           { cbv [get_default]. destruct_one_match. 2: reflexivity. destruct_one_match.
+             - intros H''. subst. eapply H0. eapply E0.
+             - intros H''. subst. congruence. }
+           (*assert (thing1: forall x y, @Var varname x = Const y <-> False).
+           { intros. split. 2: intros thing; destruct thing.
+             intros thing; inversion thing. }*)
+           assert (thing2: forall x y, @Var varname x = Var y <-> x = y).
+           { intros. split. 2: intros; subst; reflexivity.
+             intros thing; inversion thing; subst; reflexivity. }
+           destruct z; repeat destruct_one_match; simpl.
+           all: try tauto.
+           (*all: try rewrite thing1.
+           all: try tauto.*)
+           all: try rewrite thing2.
+           all: tauto.
+        -- intros. apply ssa'. right. assumption.
+        -- intros H'. eapply modified_once; try eassumption. reflexivity.
+    - inversion E. subst. clear E.
+      eapply (growing_aliases_preserves_ssa_hyps _ s2); eauto.
+      + reflexivity.
+      + intros H'. assert (H'' := H'). eapply or_intror in H''.
+        apply ssa' in H''. cbv [get_default] in H''.
+        revert H''. destruct_one_match.
+        -- intros [[_ H''] [[_ _] [_ _]]]. apply H'' in E. apply E.
+        -- intros _. apply ssa_form2 in H'. apply H'. cbv [get_default].
+           rewrite E. simpl. auto.
+    - admit.
+    - 
       
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
