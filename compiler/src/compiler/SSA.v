@@ -520,6 +520,20 @@ Section LVN.
     | _ => True
     end.
 
+  (* (*could define by using accessed*) *)
+  (* Fixpoint accessed_in (name : varname) (s : stmt varname) : Prop := *)
+  (*   match s with *)
+  (*   | SLoad sz x a offset => name = a  *)
+  (*   | SStore sz x a offset => name = x \/ name = a *)
+  (*   | SInlinetable sz x t i => name = i *)
+  (*   | SLit x v => False *)
+  (*   | SOp x op y z => name = y \/ z = Var name *)
+  (*   | SSet x y => name = y *)
+  (*   | SSeq s1 s2 => accessed_in name s1 \/ accessed_in name s2 *)
+  (*   | SSkip => False *)
+  (*   | _ => True *)
+  (*   end. *)
+
   Fixpoint in_rhs (name : varname) (e : rhs) : Prop :=
     match e with
     | RLoad sz a offset => name = a
@@ -704,7 +718,6 @@ Section LVN.
     simpl. intros H1 H2. Search (In _ (_ ++ _)). apply in_app_iff. tauto.
   Qed.
 
-  Print ssa_hyps.
   Lemma modified_once x s1 s2 :
     is_simple (SSeq s1 s2) ->
     NoDup (assigned_to (SSeq s1 s2)) ->
@@ -718,47 +731,126 @@ Section LVN.
     eapply ndp3; eassumption.
   Qed.
 
-  Lemma how_to_preserve_ssa_hyps s1 s2 y v names values aliases :
+  Lemma growing_aliases_preserves_ssa_hyps s1 s2 y v names values aliases :
     is_simple (SSeq s1 s2) ->
     NoDup (assigned_to (SSeq s1 s2)) ->
     (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
     modified_in y s1 ->
-    v <> y ->
-    (forall x, modified_in x s2 -> ssa_hyps_aliases x (map.put aliases y v)).
+    ~modified_in v s2 ->
+    (forall x, modified_in x s2 -> ssa_hyps x names values (map.put aliases y v)).
   Proof.
-    intros simple ssa_form ssa ymod vneqy x Hx. cbv [ssa_hyps_aliases].
-    specialize (ssa x (or_intror Hx)).
-    destruct ssa as [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]].
-    split.
-    - rewrite map.get_put_diff.
-      { assumption. }
-      intros H'. subst. eapply modified_once; eassumption.
-    - intros y0. rewrite map.get_put_dec. destruct_one_match.
-      + intros H'. inversion H'. subst. congruence.
+    intros simple ssa_form ssa ymod vnmod x Hx. cbv [ssa_hyps].
+    assert (ssax := ssa x (or_intror Hx)).
+    destruct ssax as [[ssax_aliases_l  ssax_aliases_r] [ssax_values ssax_names]].
+    ssplit.
+    - split.
+      + rewrite map.get_put_diff.
+        { assumption. }
+        intros H'. subst. eapply modified_once; eassumption.
+      + intros y0. rewrite map.get_put_dec. destruct_one_match.
+        -- intros H'. inversion H'. subst. apply vnmod. apply Hx.
+        -- auto.
+    - assumption.
+    - assumption.
+  Qed.
 
+  Definition is_assignment (s : stmt varname) : Prop :=
+    match s with
+    | SLoad sz x a offset => True
+    | SStore sz x a offset => True
+    | SInlinetable sz x t i => True
+    | SLit x v => True
+    | SOp x op y z => True
+    | SSet x y => True
+    | SSeq s1 s2 => False
+    | _ => False
+    end.
+
+  Fixpoint accessed_in (x : varname) (s : stmt varname) : Prop :=
+    match s with
+    | SSeq s1 s2 => accessed_in x s1 \/ accessed_in x s2
+    | _ => is_assignment s /\ in_rhs x (rhs_of_stmt s)
+    end.
+
+  Lemma ass_rhs_accessed s x :
+    is_assignment s ->
+    in_rhs x (rhs_of_stmt s) ->
+    accessed_in x s.
+  Proof.
+    intros ass rhs. destruct s; simpl in ass; try solve [destruct ass];
+      simpl in rhs; subst; simpl; auto.
+  Qed.    
+
+  Lemma growing_names_preserves_ssa_hyps s1 s2 y names values aliases :
+    is_simple (SSeq s1 s2) ->
+    is_assignment s1 ->
+    (forall x, modified_in x s2 -> ~accessed_in x s1) ->
+    (forall x, modified_in x s2 -> ssa_hyps x names values aliases) ->
+    ~modified_in y s2 ->
+    (forall x, modified_in x s2 -> ssa_hyps x (map.put names (rhs_of_stmt s1) y) (map.put values y (rhs_of_stmt s1)) aliases).
+  Proof.
+    intros simple ass ssa_form1 ssa ynmod x Hx. cbv [ssa_hyps].
+    assert (ssax := ssa x Hx).
+    destruct ssax as [ssax_aliases [[ssax_values_l ssax_values_r] [ssax_names_l ssax_names_r]]].
+    ssplit.
+    - assumption.
+    - split.
+      + rewrite map.get_put_diff. 1: assumption. intros H'. subst. auto.
+      + intros y0 e. rewrite map.get_put_dec. destruct_one_match.
+        -- intros E. inversion E. subst. clear E. apply ssa_form1 in Hx.
+           intros H'. apply Hx. apply ass_rhs_accessed; assumption.
+        -- intros H. eapply ssax_values_r. eassumption.
+     - split.
+      + intros y0 e. rewrite map.get_put_dec. destruct_one_match.
+        -- intros E. inversion E. subst. clear E. apply ssa_form1 in Hx.
+           intros H'. apply Hx. apply ass_rhs_accessed; assumption.
+        -- intros H. eapply ssax_names_l. eassumption.
+      + intros e. rewrite map.get_put_dec. destruct_one_match.
+        -- intros H'. inversion H'. subst. auto.
+        -- auto.
+  Qed.
+  
   Lemma ssa_hyps_preserved s1 s2 names values aliases :
     is_simple (SSeq s1 s2) ->
     NoDup (assigned_to (SSeq s1 s2)) ->
+    (forall x, modified_in x s2 -> ~accessed_in x s1) ->
     (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
     let '(s1', names', values', aliases') := lvn' names values aliases s1 in
     (forall x, modified_in x s2 -> ssa_hyps x names' values' aliases').
   Proof.
-    induction s1; intros simple ssa_form ssa; simpl in simple; try tauto;
+    induction s1; intros simple ssa_form1 ssa_form2 ssa; try tauto;
+      assert (simple' := simple); simpl in simple';
+      assert (ssa_form' := ssa_form1); simpl in ssa_form'; inversion ssa_form'; subst;
+      assert (ssa' := ssa);
       destruct (lvn' names values aliases _) as [[[s1' names'] values'] aliases'] eqn:E;
       try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H))); simpl in E;
+      assert (ssa'':=ssa);
+      try destruct ssa'' as [[ssa_aliases_l ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]];
       try (inversion E; subst; clear E; assumption).
-    - simpl in ssa_form. inversion ssa_form. subst. revert E. destruct_one_match.
-      + intros E'. inversion E'. subst. clear E'. revert E. destruct_one_match.
-        -- clear E. destruct_one_match.
-           ++ simpl. intros Hv. cbv [ssa_hyps] in *. fwd.
-              intuition eauto.
-              --- rewrite map.get_put_dec. destruct_one_match.
-                  +++ exfalso. apply H2. apply modified_assigned_to; assumption.
-                  +++ assumption. 
-              --- revert H1. rewrite map.get_put_dec. destruct_one_match.
-                  +++ intros H'. inversion H'. subst. congruence.
-                  +++ apply ssap1.
-           ++ simpl. intros Hv. Admitted.
+    - revert E. destruct_one_match.
+      + intros E'. inversion E'. subst. clear E'.
+        eapply growing_aliases_preserves_ssa_hyps; eauto.
+        -- simpl. reflexivity.
+        -- specialize (ssa' v). simpl in ssa'. intros H'.
+           specialize (ssa' (or_intror H')). clear -H' E ssa'.
+           destruct ssa'. destruct H0. clear H H0. destruct H1.
+           eapply H0. eapply E.
+      + intros E'. inversion E'. subst. clear E'. fwd.
+        eapply (growing_names_preserves_ssa_hyps _ s2); simpl; eauto.
+        -- split; [|assumption]. repeat destruct_one_match; reflexivity.
+        -- repeat destruct_one_match; reflexivity.
+        -- intros. assert (H0' := ssa_form2 _ H0).
+           simpl in H0'. assert (x1 <> i) by tauto. clear H0'.
+           eapply or_intror in H0. apply ssa' in H0. destruct H0 as [H0 _].
+           destruct H0 as [_ H0].
+           assert (H': x1 <> get_default aliases' i i).
+           { cbv [get_default]. destruct_one_match.
+             - intros H'. subst. eapply H0. eapply E0.
+             - assumption. }
+           repeat destruct_one_match; simpl; tauto.
+        -- intros. apply ssa'. right. assumption.
+        -- intros H'. eapply modified_once; eauto. reflexivity.
+    - Abort.
       
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
