@@ -809,25 +809,48 @@ Section LVN.
         -- intros H'. inversion H'. subst. auto.
         -- auto.
   Qed.
+  Search (NoDup (_ :: _)).
+
+  Fixpoint write_before_read (s : stmt varname) :=
+    match s with
+    | SSeq s1 s2 => write_before_read s1 /\ write_before_read s2 /\
+                     forall x, modified_in x s2 -> ~accessed_in x s1
+    | _ => True
+    end.
+
+  Lemma write_before_read_assoc s1 s2 s3 :
+    write_before_read (SSeq (SSeq s1 s2) s3) <-> write_before_read (SSeq s1 (SSeq s2 s3)).
+  Proof.
+    induction s1; simpl; fwd; intuition eauto.
+  Qed.
+  
+  Lemma assigned_to_assoc s1 s2 s3 :
+    assigned_to (SSeq (SSeq s1 s2) s3) = assigned_to (SSeq s1 (SSeq s2 s3)).
+  Proof.
+    simpl. rewrite app_assoc. reflexivity. Qed.
   
   Lemma ssa_hyps_preserved s1 s2 names values aliases :
     is_simple (SSeq s1 s2) ->
     NoDup (assigned_to (SSeq s1 s2)) ->
-    (forall x, modified_in x s2 -> ~accessed_in x s1) ->
+    write_before_read (SSeq s1 s2) ->
     (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
     let '(s1', names', values', aliases') := lvn' names values aliases s1 in
     (forall x, modified_in x s2 -> ssa_hyps x names' values' aliases').
   Proof.
-    induction s1; intros simple ssa_form1 ssa_form2 ssa; try tauto;
+    revert s2 names values aliases.
+    induction s1; intros s2 names values aliases simple ssa_form1 ssa_form2 ssa; try tauto;
       try (destruct simple as [simple _]; solve [destruct simple]);
-      assert (ssa_form' := ssa_form1); simpl in ssa_form'; inversion ssa_form'; subst;
+      assert (ssa_form' := ssa_form1); simpl in ssa_form';
+      try rewrite NoDup_cons_iff in ssa_form'; fwd;
+      assert (ssa_form2' := ssa_form2);
       assert (ssa' := ssa);
       destruct (lvn' names values aliases _) as [[[s1' names'] values'] aliases'] eqn:E;
-      cbn -[rhs_of_stmt] in E;
+      try cbn -[rhs_of_stmt] in E;
       try (intros x0 H; specialize (ssa x0); specialize (ssa (or_intror H)));
       assert (ssa'':=ssa);
       try destruct ssa'' as [[ssa_aliases_l ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]];
       try (inversion E; subst; clear E; assumption).
+    all: try (simpl in ssa_form2; destruct ssa_form2 as (?&?&ssa_form2)).
     - revert E. destruct_one_match.
       + intros E'. inversion E'. subst. clear E'.
         eapply growing_aliases_preserves_ssa_hyps; eauto.
@@ -859,7 +882,6 @@ Section LVN.
       + intros E'. inversion E'. subst. clear E'.
         replace (RLit v) with (rhs_of_stmt (SLit x v)) by reflexivity.
         eapply (growing_names_preserves_ssa_hyps _ s2); eauto.
-        -- reflexivity.
         -- intros. apply ssa'. right. assumption.
         -- intros H'. eapply modified_once; eauto. reflexivity.
     - revert E. destruct_one_match.
@@ -913,8 +935,27 @@ Section LVN.
         -- intros [[_ H''] [[_ _] [_ _]]]. apply H'' in E. apply E.
         -- intros _. apply ssa_form2 in H'. apply H'. cbv [get_default].
            rewrite E. simpl. auto.
-    - admit.
-    - 
+    - destruct (lvn' names values aliases _) as [[[s1'0 names'0] values'0] aliases'0] eqn:E'.
+      destruct (lvn' names'0 values'0 aliases'0 _) as [[[s2'0 names''0] values''0] aliases''0] eqn:E''. inversion E. subst. clear E.
+      destruct simple as [[simple1 simple2] simple3].
+      specialize (IHs1_1 (SSeq s1_2 s2)).
+      specialize IHs1_1 with (1 := conj simple1 (conj simple2 simple3)).
+      specialize IHs1_2 with (1 := conj simple2 simple3).
+      specialize (IHs1_2 names'0 values'0 aliases'0). rewrite E'' in IHs1_2.
+      apply IHs1_2.
+      { Search (NoDup (_ ++ _)). simpl in ssa_form1. rewrite <- app_assoc in ssa_form1.
+        apply List.NoDup_app_iff in ssa_form1.
+        destruct ssa_form1 as (_&ssa_form1&_&_). apply ssa_form1. }
+      { apply write_before_read_assoc in ssa_form2'. remember (SSeq s1_2 s2) as x.
+        simpl in ssa_form2'. fwd. assumption. }
+      2: assumption.
+      intros. specialize (IHs1_1 names values aliases). rewrite E' in IHs1_1.
+      apply IHs1_1.
+      { rewrite <- assigned_to_assoc. assumption. }
+      { apply write_before_read_assoc. assumption. }
+      { intros. apply ssa'. simpl. simpl in H3. destruct H3 as [H3|[H3|H3]]; auto. }
+      assumption.
+  Qed.
       
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
