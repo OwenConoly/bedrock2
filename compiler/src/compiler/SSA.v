@@ -149,7 +149,16 @@ Section RHS.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
-  Qed.  
+  Qed.
+
+  Definition varname_nat_lt : (varname * nat) -> (varname * nat) -> bool :=
+    (lexicog2 lt_varname (lift2 Z.of_nat Z.ltb)).
+
+  Lemma varname_nat_lt_strict : strict_order varname_nat_lt.
+  Proof.
+    apply lexicog2_strict. 1: assumption. apply lift2_strict.
+    1: exact Z_strict_order. intros. blia.
+  Qed.
 End RHS.
   
 Section VarName.
@@ -331,35 +340,6 @@ Section LVN.
   Context (phase : compphase) (isReg : varname -> bool).
   
   Notation exec := (@exec varname _ _ _ _ _ _ _ phase isReg).
-    
-  (*Let rhs_to_label_parameters : parameters :=
-    {| key := rhs;
-      ltb := rhslt varname_lt;
-      value := varname|}.
-
-  Definition rhslabel_strict :
-    strict_order rhs_to_label_parameters.(ltb).
-  Proof.
-    apply rhslt_strict. apply varname_lt_strict.
-  Defined.
-
-  Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
-
-  Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
-  
-  Let label_to_label_parameters : parameters :=
-    {| key := varname;
-      value := varname;
-      ltb := varname_lt |}.
-
-  Definition label_to_label := SortedList.map label_to_label_parameters varname_lt_strict.
-
-  Let label_to_rhs_parameters : parameters :=
-    {| key := varname;
-      value := @rhs varname;
-      ltb := varname_lt |}.
-
-  Definition label_to_rhs := SortedList.map label_to_rhs_parameters varname_lt_strict.*)
   
   Context (rhs_to_label : map.map (@rhs varname) varname).
   Context (label_to_label : map.map varname varname).
@@ -912,16 +892,11 @@ Section LVN.
            { cbv [get_default]. destruct_one_match. 2: reflexivity. destruct_one_match.
              - intros H''. subst. eapply H0. eapply E0.
              - intros H''. subst. congruence. }
-           (*assert (thing1: forall x y, @Var varname x = Const y <-> False).
-           { intros. split. 2: intros thing; destruct thing.
-             intros thing; inversion thing. }*)
            assert (thing2: forall x y, @Var varname x = Var y <-> x = y).
            { intros. split. 2: intros; subst; reflexivity.
              intros thing; inversion thing; subst; reflexivity. }
            destruct z; repeat destruct_one_match; simpl.
            all: try tauto.
-           (*all: try rewrite thing1.
-           all: try tauto.*)
            all: try rewrite thing2.
            all: tauto.
         -- intros. apply ssa'. right. assumption.
@@ -960,6 +935,7 @@ Section LVN.
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
     NoDup (assigned_to sH) ->
+    write_before_read sH ->
     exec e sH t m lH mcH post ->
     forall lL mcL names values aliases,
       (forall x, modified_in x sH -> ssa_hyps x names values aliases) ->
@@ -971,8 +947,8 @@ Section LVN.
              post t' m' lH' mcH' /\
                names_values_aliases_good lH' lL' names' values' aliases').
   Proof.
-    intros simple ssa_form Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa nva; try solve [destruct simple];
-      try specialize (ssa _ eq_refl); assert (ssa' := ssa); try destruct ssa' as (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r);
+    intros simple ssa_form1 ssa_form2 Hexec. induction Hexec; cbn [lvn']; intros lL mcL names values aliases ssa nva; try solve [destruct simple];
+      try specialize (ssa _ eq_refl); assert (ssa' := ssa); try destruct ssa' as [[ssa_aliases_l ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]];
       assert (nva' := nva); destruct nva' as (Hgood1 & Hgood2 & Hgood3).
     - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
        apply put_both_and_forget. 1: assumption. split; [|split]; assumption.
@@ -1038,33 +1014,94 @@ Section LVN.
         simpl. tauto.
     - admit.
     - econstructor; eauto. do 2 eexists. split; [eassumption|]. admit.
-    - assert (ssa_form' := ssa_form). assert (simple' := simple).
-      simpl in simple', ssa_form'.
-      apply List.NoDup_app_iff in ssa_form'. fwd.
-      specialize (IHHexec ltac:(assumption) ltac:(assumption) lL mcL names values aliases).
+    - assert (ssa_form1' := ssa_form1). assert (simple' := simple).
+      simpl in simple', ssa_form1'.
+      apply List.NoDup_app_iff in ssa_form1'. fwd.
+      assert (ssa_form2' := ssa_form2).
+      simpl in ssa_form2'. fwd.
+      specialize (IHHexec ltac:(assumption) ltac:(assumption) ltac:(assumption) lL mcL names values aliases).
       eassert (H': _). 2: specialize (IHHexec H').
       { intros. apply ssa. simpl. left. assumption. }
       specialize (IHHexec ltac:(assumption)).
-      assert (ssa_hyps' := ssa_hyps_preserved _ _ _ _ _ ltac:(eassumption) ltac:(eassumption) ltac:(eassumption)).
+      eassert (ssa_hyps' := ssa_hyps_preserved _ _ _ _ _ ltac:(eassumption) ltac:(eassumption) ltac:(eassumption)).
+      eassert _ as H''. 2: specialize (ssa_hyps' H''). 1: eassumption.
       destruct (lvn' names values aliases s1) as [ [ [s1' names'] values'] aliases'].
       destruct (lvn' names' values' aliases' s2) as [[[s2' names''] values''] aliases''] eqn:E2.
       econstructor. 1: exact IHHexec.
       simpl. intros. fwd.
-      specialize (H0 _ _ _ _ ltac:(eassumption) ltac:(assumption) ltac:(assumption)).
+      specialize (H0 _ _ _ _ ltac:(eassumption) ltac:(assumption) ltac:(assumption) ltac:(assumption)).
       specialize (H0 l' mc' names' values' aliases' ssa_hyps' ltac:(assumption)).
       rewrite E2 in H0. apply H0.
     - econstructor. do 2 eexists. eauto.
   Abort.
 End LVN.
 
-Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
+Section InstantiateThings.
+  Context {varname : Type} (varname_lt : varname -> varname -> bool).
+  Context (varname_lt_strict : strict_order varname_lt).
+  Let rhs_to_label_parameters : parameters :=
+        {| key := rhs;
+          ltb := rhslt varname_lt;
+          value := varname|}.
+  
+  Definition rhslabel_strict :
+    strict_order rhs_to_label_parameters.(ltb).
+  Proof.
+    apply rhslt_strict. apply varname_lt_strict.
+  Defined.
+  
+  Check (SortedList.map rhs_to_label_parameters rhslabel_strict).
+  
+  Definition rhs_to_label := SortedList.map rhs_to_label_parameters rhslabel_strict.
+  
+  Let label_to_label_parameters : parameters :=
+        {| key := varname;
+          value := varname;
+          ltb := varname_lt |}.
+  
+  Definition label_to_label := SortedList.map label_to_label_parameters varname_lt_strict.
+
+  Let label_to_rhs_parameters : parameters :=
+        {| key := varname;
+          value := @rhs varname;
+          ltb := varname_lt |}.
+  
+  Definition label_to_rhs := SortedList.map label_to_rhs_parameters varname_lt_strict.
+
+  Check ssa. Check lvn.
+  Definition easy_lvn' {width} {word: word width} {sth : map.map word Init.Byte.byte} := @lvn' varname width word sth rhs_to_label label_to_label label_to_rhs.
+  (*Definition easy_lvn {width} {word: word width} {sth : map.map word Init.Byte.byte} := @lvn varname width word sth rhs_to_label label_to_label label_to_rhs.*)
+End InstantiateThings.
+
+Check easy_lvn'.
+Definition easy_lvn'_with_nat {varname : Type} (varname_lt : varname -> varname -> bool) (varname_lt_strict : strict_order varname_lt) := @easy_lvn' _ (varname_nat_lt varname_lt) (varname_nat_lt_strict _ varname_lt_strict).
+
+Check easy_lvn'_with_nat.
+
+Definition easy_lvn_with_nat {varname : Type} (varname_lt : varname -> varname -> bool) (varname_lt_strict : strict_order varname_lt) {width} {word: word width} {sth : map.map word Init.Byte.byte} := @easy_lvn'_with_nat varname varname_lt varname_lt_strict width word sth map.empty map.empty map.empty.
+  
 
 Check (ssa Z Z.ltb Z_strict_order).
 Local Notation ssa_ := (ssa Z Z.ltb Z_strict_order).
 
-Definition example1_ssa := fst (ssa_ example1).
-Compute example1_ssa.
 
-Local Notation lvn_ := (lvn Z Z.ltb Z_strict_order).
-Compute (match example1_ssa with |SSeq a b => a |_ => SSkip end).
-Compute (lvn_ example1_ssa).
+Search (@strict_order (_ * _)).
+Check (easy_lvn'_with_nat Z.ltb Z_strict_order).
+
+Section Tests.
+  Context {width} {word : word width} {mem : map.map word Init.Byte.byte}.
+  Check (easy_lvn_with_nat Z.ltb Z_strict_order).
+
+  Definition example1 : stmt Z := SSeq (SSet 2 1) (SLoad access_size.word 3 2 0).
+  Definition example1_ssa := fst (ssa_ example1).
+
+  Definition example2 : stmt Z := SSeq (SSeq (SOp 1 bopname.add 2 (Var 3)) (SOp 1 bopname.add 2 (Var 3))) (SOp 1 bopname.sub 2 (Var 1)).
+
+  Definition pass := easy_lvn_with_nat Z.ltb Z_strict_order.
+  Compute (ssa_ example2).
+  Compute (pass (fst (ssa_ example2))).
+
+  Definition example3 : stmt Z := SSeq (SSeq (SOp 1 bopname.add 1 (Var 2)) (SOp 1 bopname.add 1 (Var 2))) (SOp 1 bopname.sub 2 (Var 1)).
+  Compute (ssa_ example3).
+  Compute (pass (fst (ssa_ example3))).  
+End Tests.
