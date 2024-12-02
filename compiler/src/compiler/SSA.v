@@ -545,14 +545,23 @@ Section LVN.
     - cbv [get_default]. rewrite map.get_put_diff by auto.
       reflexivity.
   Qed.
-  
-  Definition ssa_hyps x names values aliases :=
+
+  Definition ssa_hyps_aliases x (aliases : label_to_label) :=
     (map.get aliases x = None) /\
-    (forall y, map.get aliases y <> Some x) /\
+      (forall y, map.get aliases y <> Some x).
+
+  Definition ssa_hyps_values x (values : label_to_rhs) :=
     (map.get values x = None) /\
-    (forall y e, map.get values y = Some e -> ~in_rhs x e) /\
+      (forall y e, map.get values y = Some e -> ~in_rhs x e).
+
+  Definition ssa_hyps_names x (names : rhs_to_label) :=
     (forall y e, map.get names e = Some y -> ~in_rhs x e) /\
     (forall e, map.get names e <> Some x).
+  
+  Definition ssa_hyps x names values aliases :=
+    ssa_hyps_aliases x aliases /\
+     ssa_hyps_values x values /\
+      ssa_hyps_names x names.
 
   Lemma put_both lH lL x names values aliases r :
     ssa_hyps x names values aliases ->
@@ -561,7 +570,7 @@ Section LVN.
     (*eval_rhs lH r1 = eval_rhs lL r2 ->*)
     names_values_aliases_good (map.put lH x (eval_rhs lL r)) (map.put lL x (eval_rhs lL r)) (map.put names r x) (map.put values x r) aliases.
   Proof.
-    intros (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r) (Hgood1 & Hgood2 & Hgood3) notin.
+    intros [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]] (Hgood1 & Hgood2 & Hgood3) notin.
     split; [|split].
     - intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
       + intros Hx0. inversion Hx0. subst. 
@@ -595,7 +604,7 @@ Section LVN.
      names_values_aliases_good lH lL names values aliases ->
      names_values_aliases_good (map.put lH x v) (map.put lL x v) names values aliases.
    Proof.  
-    intros (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r) (Hgood1 & Hgood2 & Hgood3).
+    intros [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]] (Hgood1 & Hgood2 & Hgood3).
     split; [|split].
     - intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
       + intros Hx0. inversion Hx0. subst. 
@@ -626,7 +635,7 @@ Section LVN.
     map.get names r = Some x ->
     names_values_aliases_good (map.put lH y v) lL names values (map.put aliases y x).
   Proof.
-    intros (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r) (Hgood1 & Hgood2 & Hgood3) Heval Hnames.
+    intros [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]] (Hgood1 & Hgood2 & Hgood3) Heval Hnames.
     split; [|split].
     - intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
       + intros Hy0. inversion Hy0. subst. cbv [get_default].
@@ -645,7 +654,7 @@ Section LVN.
       (map.put lL x (word.of_Z val)) (map.put names (rhs_of_stmt (SLit x val)) x)
       (map.put values x (rhs_of_stmt (SLit x val))) aliases.
   Proof.
-    intros (ssa_aliases_l & ssa_aliases_r & ssa_values_l & ssa_values_r & ssa_names_l & ssa_names_r) (Hgood1 & Hgood2 & Hgood3).
+    intros [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]] (Hgood1 & Hgood2 & Hgood3).
     split; [|split].
     - intros x0 y0. rewrite map.get_put_dec. destruct_one_match.
       + intros Hy0. inversion Hy0. subst y0. cbv [get_default].
@@ -694,6 +703,38 @@ Section LVN.
     induction s; try (simpl; solve [auto]).
     simpl. intros H1 H2. Search (In _ (_ ++ _)). apply in_app_iff. tauto.
   Qed.
+
+  Print ssa_hyps.
+  Lemma modified_once x s1 s2 :
+    is_simple (SSeq s1 s2) ->
+    NoDup (assigned_to (SSeq s1 s2)) ->
+    modified_in x s1 ->
+    modified_in x s2 ->
+    False.
+  Proof.
+    intros simple nd m1 m2. apply List.NoDup_app_iff in nd. fold (assigned_to s2).
+    simpl in simple. fwd.
+    apply modified_assigned_to in m1, m2; [|assumption | assumption].
+    eapply ndp3; eassumption.
+  Qed.
+
+  Lemma how_to_preserve_ssa_hyps s1 s2 y v names values aliases :
+    is_simple (SSeq s1 s2) ->
+    NoDup (assigned_to (SSeq s1 s2)) ->
+    (forall x, modified_in x (SSeq s1 s2) -> ssa_hyps x names values aliases) ->
+    modified_in y s1 ->
+    v <> y ->
+    (forall x, modified_in x s2 -> ssa_hyps_aliases x (map.put aliases y v)).
+  Proof.
+    intros simple ssa_form ssa ymod vneqy x Hx. cbv [ssa_hyps_aliases].
+    specialize (ssa x (or_intror Hx)).
+    destruct ssa as [[ssa_aliases_l  ssa_aliases_r] [[ssa_values_l ssa_values_r] [ssa_names_l ssa_names_r]]].
+    split.
+    - rewrite map.get_put_diff.
+      { assumption. }
+      intros H'. subst. eapply modified_once; eassumption.
+    - intros y0. rewrite map.get_put_dec. destruct_one_match.
+      + intros H'. inversion H'. subst. congruence.
 
   Lemma ssa_hyps_preserved s1 s2 names values aliases :
     is_simple (SSeq s1 s2) ->
