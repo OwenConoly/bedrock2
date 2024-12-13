@@ -32,8 +32,7 @@ Import SortedList.parameters.
 
 Fixpoint is_simple {varname : Type} (s : stmt varname) :=
   match s with
-  | SLoad _ _ _ _ => True
-  | SStore _ _ _ _ => True
+  | SLoad _ _ _ _ | SStore _ _ _ _ => True
   | SInlinetable _ _ _ _ => True
   | SStackalloc _ _ _ => False
   | SLit _ _ => True
@@ -48,7 +47,7 @@ Fixpoint is_simple {varname : Type} (s : stmt varname) :=
   end.
 
 Section RHS.
-  Context {varname : Type}.
+  Context {varname : Type} {def : varname}.
   Definition as_to_Z (x : access_size) :=
     match x with
     | access_size.one => 0
@@ -60,7 +59,7 @@ Section RHS.
 
   Inductive rhs :=
   | RLoad (sz : access_size) (a : varname) (offset : Z)
-  | RStore (sz : access_size) (a : varname) (offset : Z)
+  | RStore (sz : access_size) (x : varname) (a : varname) (offset : Z)
   | RInlinetable (sz : access_size) (t : list byte) (i : varname)
   | RLit (v : Z)
   (* | RWord (w : word) *)
@@ -70,28 +69,36 @@ Section RHS.
   Definition rhs_of_stmt (s : stmt varname) :=
     match s with
     | SLoad sz x a offset => RLoad sz a offset
-    | SStore sz x a offset => RStore sz a offset
+    | SStore sz x a offset => RStore sz x a offset
     | SInlinetable sz x t i => RInlinetable sz t i
     | SLit x v => RLit v
     | SOp x op y z => ROp op y z
     | SSet x y => RSet y
     | _ => RLit 0
     end.
+
+  Fixpoint to_stmt (s : list (option varname * rhs)) : stmt varname :=
+    match s with
+    | (x, r) :: s' =>
+        let x := option_map (
+        let s1 :=
+          match r with
+          | RLoad sz a offset => SLoad
   
   Check SOp.
   Inductive rhs_op :=
   | RLoad_ | RStore_ | RInlinetable_ | RLit_ | ROp_ | RSet_.
 
-  Definition rhs_tuple : Type := rhs_op * option access_size * option varname (*rs1*) * option Z (*imm*) * option (list byte) * option bopname * option (@operand varname).
+  Definition rhs_tuple : Type := rhs_op * option access_size * option varname (*rs1*) * option varname (*rs2*) * option Z (*imm*) * option (list byte) * option bopname * option (@operand varname).
 
   Definition rhs_to_tuple (s : rhs) : rhs_tuple :=
     match s with
-    | RLoad sz a offset => (RLoad_, Some sz, Some a, Some offset, None, None, None)
-    | RStore sz a offset => (RStore_, Some sz, Some a, Some offset, None, None, None)
-    | RInlinetable sz t i => (RInlinetable_, Some sz, Some i, None, Some t, None, None)
-    | RLit v => (RLit_, None, None, Some v, None, None, None)
-    | ROp op y z => (ROp_, None, Some y, None, None, Some op, Some z)
-    | RSet y => (RSet_, None, Some y, None, None, None, None)
+    | RLoad sz a offset => (RLoad_, Some sz, None, Some a, Some offset, None, None, None)
+    | RStore sz x a offset => (RStore_, Some sz, Some x, Some a, Some offset, None, None, None)
+    | RInlinetable sz t i => (RInlinetable_, Some sz, None, Some i, None, Some t, None, None)
+    | RLit v => (RLit_, None, None, None, Some v, None, None, None)
+    | ROp op y z => (ROp_, None, Some y, None, None, None, Some op, Some z)
+    | RSet y => (RSet_, None, Some y, None, None, None, None, None)
     end.
 
   Definition rhsop_to_Z (x : rhs_op) : Z :=
@@ -123,7 +130,6 @@ Section RHS.
     | bopname.eq => 14
     end.
 
-  Print operand.
   Context (lt_varname : varname -> varname -> bool).
   Context (lt_varname_strict : strict_order lt_varname).
   
@@ -133,16 +139,16 @@ Section RHS.
     | Const y => (1, None, Some y)
     end.
   
-  Check (lexicog4 (lexicog4 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
+  Check (lexicog4 (lexicog4 (lexicog2 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb))) (with_bot lt_varname) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
 
   (*I suspect I should be able to make coq do this, given with_bot, lift2, Z.lt, etc.*)
   Definition rhslt : rhs -> rhs -> bool :=
-    lift2 rhs_to_tuple (lexicog4 (lexicog4 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb)) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
+    lift2 rhs_to_tuple (lexicog4 (lexicog4 (lexicog2 (lift2 rhsop_to_Z Z.ltb) (with_bot (lift2 as_to_Z Z.ltb))) (with_bot lt_varname) (with_bot lt_varname) (with_bot Z.ltb)) (with_bot (lexicog (lift2 byte.unsigned Z.ltb))) (with_bot (lift2 bopname_to_Z Z.ltb)) (with_bot (lift2 operand_to_tuple (lexicog3 Z.ltb (with_bot lt_varname) (with_bot Z.ltb))))).
 
   Lemma rhslt_strict : strict_order rhslt.
   Proof.
     cbv [rhslt].
-    repeat (apply lexicog_strict || apply lt_varname_strict || apply lexicog4_strict || apply lexicog3_strict || apply Z_strict_order || apply with_bot_strict || match goal with | |- strict_order (lift2 _ _) => apply lift2_strict end).
+    repeat (apply lexicog_strict || apply lt_varname_strict || apply lexicog4_strict || apply lexicog3_strict || apply lexicog2_strict || apply Z_strict_order || apply with_bot_strict || match goal with | |- strict_order (lift2 _ _) => apply lift2_strict end).
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - intros. destruct x, y; simpl in H; reflexivity || congruence.
     - exact byte.unsigned_inj.
@@ -180,50 +186,48 @@ Section VarName.
     | Some n => n
     | None => O
     end.
+
   Definition inc (count : map.rep) (x : varname) :=
     map.put count x (S (getnat count x)).
-  Print operand.
+
   Definition label_operand (x : @operand varname) (count : map.rep) :
     @operand (varname * nat) :=
     match x with
     | Var x => Var (x, getnat count x)
     | Const x => Const x
     end.
+
+  Print exec.interact.
                      
-  Fixpoint ssa' (count : map.rep) (s : stmt varname) :
-    stmt (varname * nat) * varname_to_nat :=
+  Fixpoint ssa' (count : map.rep) (s : list (option varname * rhs)) :
+    list (option (varname * nat) * rhs) * map.rep :=
     match s with
-    | SLoad sz x a offset =>
-        (SLoad sz (x, S (getnat count x)) (a, getnat count a) offset, inc count x)
-    | SStore sz x a offset =>
-        (SStore sz (x, getnat count x) (a, getnat count a) offset, count)
-    | SInlinetable sz x t i =>
-        (SInlinetable sz (x, S (getnat count x)) t (i, getnat count i), inc count x)
-    | SStackalloc x nbytes body => (SSkip, map.empty)
-    | SLit x v =>
-        (SLit (x, S (getnat count x)) v, inc count x)
-    | SOp x op y z =>
-        (SOp (x, S (getnat count x)) op (y, getnat count y) (label_operand z count), inc count x)
-    | SSet x y =>
-        (SSet (x, S (getnat count x)) (y, getnat count y), inc count x)
-    | SIf cond bThen bElse => (SSkip, map.empty)
-    | SLoop body1 cond body2 => (SSkip, map.empty)
-    | SSeq s1 s2 =>
-        let (s1', count') := ssa' count s1 in
-        let (s2', count'') := ssa' count' s2 in
-        (SSeq s1' s2', count'')
-    | SSkip => (SSkip, count)
-    | SCall binds f args => (SSkip, map.empty)
-    | SInteract binds a args => (SSkip, map.empty)
+    | (x, r) :: s' =>
+        let r' :=
+          match r with
+          | RLoad sz a offset => RLoad sz (a, getnat count a) offset
+          | RStore sz x a offset => RStore sz (x, getnat count x) (a, getnat count a) offset
+          | RInlinetable sz t i => RInlinetable sz t (i, getnat count i)
+          | RLit v => RLit v
+          | ROp op y z => ROp op (y, getnat count y) (label_operand z count)
+          | RSet y => RSet (y, getnat count y)
+          end in
+        let (x', count') :=
+          match x with
+          | Some x => (Some (x, S (getnat count x)), inc count x)
+          | None => (None, count)
+          end in
+        let (sL', count'') := (ssa' count' s') in
+        ((x', r) :: sL', count'')
+    | nil => (nil, count)
     end.
 
   Definition ssa := ssa' map.empty.
 
-  Check exec.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte} {localsH: map.map varname word} {envH: map.map String.string (list varname * list varname * stmt varname)}.
   Context {localsL : map.map (varname * nat) word} {envL: map.map String.string (list (varname * nat) * list (varname * nat) * stmt (varname * nat))}.
   Context {localsH_ok : map.ok localsH} {localsL_ok : map.ok localsL}.
-  Context {ext_spec: ExtSpec}. Print EqDecider.
+  Context {ext_spec: ExtSpec}.
   Context {eqd : forall x y : varname, _} {HED : EqDecider eqd}.
   Context {eqd' : forall x y : varname * nat, _} {HED' : EqDecider eqd'}.
   Context (phase : compphase) (isRegH : varname -> bool) (isRegL : varname * nat -> bool).
@@ -354,7 +358,44 @@ Section LVN.
     | Some y => y
     | None => d
     end.
-  
+
+  Search rhs.
+
+  Definition eval_rhs (l : locals) (e : @rhs varname) : word :=
+    match e with
+    | RLoad sz a offset => word.of_Z 0
+    | RStore sz a offset => word.of_Z 0
+    | RInlinetable sz t i =>
+        match load sz (map.of_list_word t) (get_default l i (word.of_Z 0)) with
+        | Some val => val
+        | None => word.of_Z 0
+        end
+    | RLit v => word.of_Z v
+    | ROp op y z =>
+        let y := get_default l y (word.of_Z 0) in
+        let z :=
+          match z with
+          | Const z => word.of_Z z
+          | Var z => get_default l z (word.of_Z 0)
+          end in
+        interp_binop op y z
+    | RSet x => get_default l x (word.of_Z 0)
+    end.
+
+  Check SInlinetable. 
+
+  Definition simplify (s : stmt varname) (values : label_to_rhs) : stmt varname :=
+    match s with
+    | SInlinetable sz x t i =>
+        match map.get values i with
+        | Some (RLit c) =>
+            let val := eval_rhs (map.put map.empty i (word.of_Z c)) (rhs_of_stmt (SInlinetable sz x t i))
+            in SLit x (word.unsigned val)
+        | _ => s
+        end
+    | _ => s
+    end.                                                  
+                                                          
   Fixpoint lvn' (names : rhs_to_label) (values : label_to_rhs)
     (aliases : label_to_label) (s : stmt varname) :=
     match s with
@@ -376,17 +417,7 @@ Section LVN.
         (*canonical names*)
         let i := get_default aliases i i in
         (*simplify*)
-        let simplified :=
-          match map.get values i with
-          | Some (RLit c) =>
-              let val :=
-                match load sz (map.of_list_word t) (word.of_Z c) with
-                | Some val => val
-                | None => word.of_Z 0
-                end
-              in SLit x (word.unsigned val)
-          | _ => SInlinetable sz x t i
-          end in
+        let simplified := simplify (SInlinetable sz x t i) values in
         (*check if we've seen this before:
           - if so, update aliases appropriately, and skip
           - otherwise, add to list of names, and don't skip *)
@@ -441,37 +472,6 @@ Section LVN.
 
   Definition lvn := lvn' map.empty map.empty map.empty.
 
-  Print get_default.
-  Print rhs. Search bopname. Print operand.
-  Print exec.exec.
-  
-  Definition eval_rhs(*_with_aliases*) (*(aliases : label_to_label)*) (l : locals) (e : @rhs varname) : word :=
-    match e with
-    | RLoad sz a offset => word.of_Z 0
-    | RStore sz a offset => word.of_Z 0
-    | RInlinetable sz t i =>
-        (*let i := get_default aliases i i in*)
-        match load sz (map.of_list_word t) (get_default l i (word.of_Z 0)) with
-        | Some val => val
-        | None => word.of_Z 0
-        end
-    | RLit v => word.of_Z v
-    | ROp op y z =>
-        (*let y := get_default aliases y y in*)
-        let y := get_default l y (word.of_Z 0) in
-        let z :=
-          match z with
-          | Const z => word.of_Z z
-          | Var z => (*let z := get_default aliases z z in*)
-                    get_default l z (word.of_Z 0)
-          end in
-        interp_binop op y z
-    | RSet x => (*let x := get_default aliases x x in*)
-               get_default l x (word.of_Z 0)
-    end.
-
-  (*Definition eval_rhs := eval_rhs_with_aliases map.empty.*)
-
   Definition names_values_aliases_good (lH lL : locals) (names : rhs_to_label) (values : label_to_rhs) (aliases : label_to_label) :=
     (*lH related to lL via aliases*)
     (forall x y, map.get lH x = Some y ->
@@ -480,13 +480,7 @@ Section LVN.
       (forall x e, map.get values x = Some e -> map.get lL x = Some (eval_rhs lL e)) /\
       (*names related to lL*)
       (forall x e, map.get names e = Some x -> map.get lL x = Some (eval_rhs lL e)).
-  
-  (*forall (e : rhs),
-    map.get values (get_default aliases x x) = Some e ->
-    map.get names e = Some (get_default aliases x x) /\
-    eval_rhs lL e = y.*)
 
-  Print stmt.
   Fixpoint modified_in (name : varname) (s : stmt varname) : Prop :=
     match s with
     | SLoad sz x a offset => name = x
@@ -499,20 +493,6 @@ Section LVN.
     | SSkip => False
     | _ => True
     end.
-
-  (* (*could define by using accessed*) *)
-  (* Fixpoint accessed_in (name : varname) (s : stmt varname) : Prop := *)
-  (*   match s with *)
-  (*   | SLoad sz x a offset => name = a  *)
-  (*   | SStore sz x a offset => name = x \/ name = a *)
-  (*   | SInlinetable sz x t i => name = i *)
-  (*   | SLit x v => False *)
-  (*   | SOp x op y z => name = y \/ z = Var name *)
-  (*   | SSet x y => name = y *)
-  (*   | SSeq s1 s2 => accessed_in name s1 \/ accessed_in name s2 *)
-  (*   | SSkip => False *)
-  (*   | _ => True *)
-  (*   end. *)
 
   Fixpoint in_rhs (name : varname) (e : rhs) : Prop :=
     match e with
@@ -931,6 +911,10 @@ Section LVN.
       { intros. apply ssa'. simpl. simpl in H3. destruct H3 as [H3|[H3|H3]]; auto. }
       assumption.
   Qed.
+
+  Print write_before_read.
+
+  Print lvn'. Print ssa_hyps_aliases.
       
   Lemma lvn_works e sH t m lH mcH post :
     is_simple sH ->
@@ -953,7 +937,13 @@ Section LVN.
     - apply Hgood1 in H. econstructor; eauto. do 2 eexists. split; [eassumption|].
        apply put_both_and_forget. 1: assumption. split; [|split]; assumption.
     - apply Hgood1 in H. apply Hgood1 in H0. econstructor; eauto.
-    - set (yes_or_no := fun P => P \/ ~P).
+    - destruct (map.get names _) eqn:E.
+      + econstructor. do 2 eexists. split; [eassumption|].
+        eapply put_high; try eassumption. apply Hgood3 in E. Search v. simpl. reflexivity.
+        eval_rhs
+
+
+      set (yes_or_no := fun P => P \/ ~P).
       assert (H4: yes_or_no (exists v0, map.get values (get_default aliases i i) = Some (RLit v0))).
       { subst yes_or_no. destruct (map.get values (get_default aliases i i)).
         2: { right. intros ?. fwd. congruence. }
