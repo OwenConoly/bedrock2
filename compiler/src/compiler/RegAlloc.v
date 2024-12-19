@@ -14,16 +14,19 @@ Require Import bedrock2.MetricCosts.
 
 Open Scope Z_scope.
 
-Local Notation srcvar := String.string (only parsing).
 Local Notation impvar := Z (only parsing).
-Local Notation stmt  := (@FlatImp.stmt srcvar). (* input type *)
 Local Notation stmt' := (@FlatImp.stmt impvar). (* output type *)
-Local Notation bcond  := (@FlatImp.bcond srcvar).
 Local Notation bcond' := (@FlatImp.bcond impvar).
+
+Section SrcVar.
+  Context {srcvar : Type} (srcvar_eqb : srcvar -> srcvar -> bool) (isRegVar : srcvar -> bool).
+  Context {srcvar_eqb_decider : EqDecider srcvar_eqb}.
+  Local Notation stmt  := (@FlatImp.stmt srcvar). (* input type *)
+  Local Notation bcond  := (@FlatImp.bcond srcvar).
 
 Definition accessed_vars_bcond(c: bcond): list srcvar :=
   match c with
-  | CondBinary _ x y => list_union String.eqb [x] [y]
+  | CondBinary _ x y => list_union srcvar_eqb [x] [y]
   | CondNez x => [x]
   end.
 
@@ -32,25 +35,25 @@ Fixpoint live(s: stmt)(used_after: list srcvar): list srcvar :=
   | SSet x y
   | SLoad _ x y _
   | SInlinetable _ x _ y =>
-    list_union String.eqb [y] (list_diff String.eqb used_after [x])
-  | SStore _ a x _ => list_union String.eqb [a; x] used_after
-  | SStackalloc x _ body => list_diff String.eqb (live body used_after) [x]
-  | SLit x _ => list_diff String.eqb used_after [x]
+    list_union srcvar_eqb [y] (list_diff srcvar_eqb used_after [x])
+  | SStore _ a x _ => list_union srcvar_eqb [a; x] used_after
+  | SStackalloc x _ body => list_diff srcvar_eqb (live body used_after) [x]
+  | SLit x _ => list_diff srcvar_eqb used_after [x]
 
   | SOp x _ y z => let var_z := match z with
                                 | Var vz => [vz]
                                 | Const _ => []
                                 end in
-                   list_union String.eqb ([y] ++ var_z) (list_diff String.eqb used_after [x])
-  | SIf c s1 s2 => list_union String.eqb
-                              (list_union String.eqb (live s1 used_after) (live s2 used_after))
+                   list_union srcvar_eqb ([y] ++ var_z) (list_diff srcvar_eqb used_after [x])
+  | SIf c s1 s2 => list_union srcvar_eqb
+                              (list_union srcvar_eqb (live s1 used_after) (live s2 used_after))
                               (accessed_vars_bcond c)
   | SSeq s1 s2 => live s1 (live s2 used_after)
   | SLoop s1 c s2 =>
-    live s1 (list_union String.eqb (accessed_vars_bcond c) (list_union String.eqb used_after (live s2 [])))
+    live s1 (list_union srcvar_eqb (accessed_vars_bcond c) (list_union srcvar_eqb used_after (live s2 [])))
   | SSkip => used_after
   | SCall binds _ args
-  | SInteract binds _ args => list_union String.eqb args (list_diff String.eqb used_after binds)
+  | SInteract binds _ args => list_union srcvar_eqb args (list_diff srcvar_eqb used_after binds)
   end.
 
 (* old RegAlloc files:
@@ -113,7 +116,7 @@ Fixpoint remove_nonfirst_starts(started: list srcvar)(l: list event): list event
   match l with
   | (x, is_start) :: rest =>
     if is_start then
-      if List.find (String.eqb x) started then
+      if List.find (srcvar_eqb x) started then
         remove_nonfirst_starts started rest
       else
         (x, true) :: remove_nonfirst_starts (x :: started) rest
@@ -128,7 +131,7 @@ Fixpoint remove_nonlast_ends(l: list event): list event :=
     if is_start then
       (x, true) :: remove_nonlast_ends rest
     else
-      if List.find (fun '(y, y_is_start) => andb (negb y_is_start) (String.eqb x y)) rest then
+      if List.find (fun '(y, y_is_start) => andb (negb y_is_start) (srcvar_eqb x y)) rest then
         remove_nonlast_ends rest
       else
         (x, false) :: remove_nonlast_ends rest
@@ -200,7 +203,7 @@ Definition yield_reg(r: impvar)(av: av_regs): av_regs :=
   end.
 
 Definition lookup(x: srcvar)(corresp: list (srcvar * impvar)): result impvar :=
-  match List.find (fun p => String.eqb x (fst p)) corresp with
+  match List.find (fun p => srcvar_eqb x (fst p)) corresp with
   | Some (_, x') => Success x'
   | None => error:(x "not found")
   end.
@@ -227,7 +230,7 @@ Fixpoint process_intervals(corresp: list (srcvar * impvar))(av: av_regs)(l: list
 (* ** New implementation: Process source variables from shortest to longest lifetime *)
 
 (* varname, start time, live interval length *)
-Definition lifetime := (string * (Z * Z))%type.
+Definition lifetime := (srcvar * (Z * Z))%type.
 
 Definition non_overlapping: lifetime -> lifetime -> bool :=
   fun '(_, (start1, len1)) '(_, (start2, len2)) =>
@@ -293,7 +296,7 @@ Fixpoint events_to_intervals(current_time: Z)(events: list event): list lifetime
   | (varname, is_start) :: tail =>
       let rec := events_to_intervals (current_time + 1) tail in
       if is_start then
-        let len := 1 + index_of (fun '(varname', _) => String.eqb varname varname') tail in
+        let len := 1 + index_of (fun '(varname', _) => srcvar_eqb varname varname') tail in
         (varname, (current_time, len)) :: rec
       else rec
   | nil => nil
@@ -400,7 +403,12 @@ Fixpoint rename(corresp: list (srcvar * impvar))(s: stmt): result stmt' :=
     Success (SInteract binds' f args')
   end.
 
-Module WithBugs.
+(*cannot have module inside section, so I've commented this out*)
+(*Module WithBugs.
+  Section SrcVar.
+    Context {srcvar : Type} {srcvar_eqb : srcvar -> srcvar -> bool}.
+    Local Notation stmt  := (@FlatImp.stmt srcvar). (* input type *)
+    Local Notation bcond  := (@FlatImp.bcond srcvar).
 Definition assign_lhs(x: srcvar)(corresp: list (srcvar * impvar))(av: av_regs) :=
   match lookup x corresp with
   | Success x' => (x', corresp, av)
@@ -424,10 +432,10 @@ Fixpoint regalloc
   result (list (srcvar * impvar) * av_regs * stmt') := (* should aways return Success *)
   let l_before := live s l_after in
   let av := List.fold_right
-              (fun p av => if List.find (String.eqb (fst p)) l_before then av else yield_reg (snd p) av)
+              (fun p av => if List.find (srcvar_eqb (fst p)) l_before then av else yield_reg (snd p) av)
               av corresp in
   let corresp := List.filter
-                   (fun p => if List.find (String.eqb (fst p)) l_before then true else false) corresp in
+                   (fun p => if List.find (srcvar_eqb (fst p)) l_before then true else false) corresp in
   match s with
   | SLoad sz x y ofs =>
     y' <- lookup y corresp;;
@@ -489,7 +497,7 @@ Fixpoint regalloc
     let '(binds', corresp, av) := assign_lhss binds corresp av in
     Success (corresp, av, SInteract binds' f args')
   end.
-End WithBugs.
+End WithBugs.*)
 
 Definition regalloc_function: list srcvar * list srcvar * stmt -> result (list impvar * list impvar * stmt') :=
   fun '(args, rets, fbody) =>
@@ -573,15 +581,16 @@ Section IntersectLemmas.
   Qed.
 End IntersectLemmas.
 
-#[export] Hint Resolve Byte.eqb_spec : typeclass_instances.
+(*#[export] doesn't work because section*)
+#[local] Hint Resolve Byte.eqb_spec : typeclass_instances.
 
 Definition assert(b: bool)(els: result unit): result unit := if b then Success tt else els.
 
 Definition mapping_eqb: srcvar * impvar -> srcvar * impvar -> bool :=
-  fun '(x, x') '(y, y') => andb (String.eqb x y) (Z.eqb x' y').
+  fun '(x, x') '(y, y') => andb (srcvar_eqb x y) (Z.eqb x' y').
 
 Definition check_regs (x: srcvar) (x': impvar) : bool :=
-  negb (andb (isRegStr x) (negb (isRegZ x'))).
+  negb (andb (isRegVar x) (negb (isRegZ x'))).
 
 Definition check_regs_op (x: @operand srcvar) (x': @operand impvar) : bool :=
   match x, x' with
@@ -652,7 +661,7 @@ Definition check_bcond(m: list (srcvar * impvar))(c: bcond)(c': bcond'): result 
 
 Definition assignment(m: list (srcvar * impvar))(x: srcvar)(x': impvar): result (list (srcvar * impvar)) :=
   if check_regs x x' then
-    Success ((x, x') :: (remove_by_snd Z.eqb x' (remove_by_fst String.eqb x m)))
+    Success ((x, x') :: (remove_by_snd Z.eqb x' (remove_by_fst srcvar_eqb x m)))
   else
     error:("Register allocation checker got an assignment of source register variable" x
            "to target stack variable" x'
@@ -1052,6 +1061,12 @@ Section CheckerCorrect.
       unfold assert. rewrite E4p1. reflexivity.
   Qed.
 
+  Lemma EqDecider_sym {X : Type} (eqb : X -> _) {_ : EqDecider eqb} x y :
+    eqb x y = eqb y x.
+  Proof.
+    pose proof (H x y) as H0. pose proof (H y x) as H1. destruct H0, H1; congruence.
+  Qed.
+  
   Lemma states_compat_put: forall lH corresp lL x x' v m,
       assignment corresp x x' = Success m ->
       states_compat lH corresp lL ->
@@ -1060,28 +1075,30 @@ Section CheckerCorrect.
     intros. unfold states_compat in *. intros k k'. intros.
     rewrite map.get_put_dec. rewrite map.get_put_dec in H2.
     unfold assert_in, assignment in H, H0, H1. fwd. simpl in E.
-    rewrite String.eqb_sym, Z.eqb_sym in E.
+    Search (EqDecider _).
+    rewrite (EqDecider_sym srcvar_eqb), Z.eqb_sym in E.
     destr (Z.eqb x' k').
-    - destr (String.eqb x k).
+    - destr (srcvar_eqb x k).
       + assumption.
       + simpl in E. eapply find_some in E. destruct E as [E F].
         destruct p. eapply Bool.andb_true_iff in F. destruct F as [F1 F2].
-        eapply String.eqb_eq in F1. subst s.
+        autoforward with typeclass_instances in F1. subst s.
         eapply Z.eqb_eq in F2. subst z.
         exfalso. eapply not_In_remove_by_snd in E. exact E.
     - rewrite Bool.andb_false_r in E.
       eapply find_some in E. destruct E as [E F].
       destruct p. eapply Bool.andb_true_iff in F. destruct F as [F1 F2].
-      eapply String.eqb_eq in F1. subst s.
+      autoforward with typeclass_instances in F1. subst s.
       eapply Z.eqb_eq in F2. subst z.
       eapply In_remove_by_snd in E. apply proj1 in E.
       eapply In_remove_by_fst in E. destruct E.
-      destr (String.eqb x k).
+      destr (srcvar_eqb x k).
       + exfalso. congruence.
       + eapply H0. 2: eassumption. unfold assert_in.
         destruct_one_match. 1: rewrite E0; trivial.
         eapply find_none in E3. 2: eassumption.
-        simpl in E3. rewrite String.eqb_refl, Z.eqb_refl in E3. discriminate.
+        simpl in E3. autoforward with typeclass_instances in E3.
+        destruct E3; congruence.
   Qed.
 
 
@@ -1134,14 +1151,14 @@ Section CheckerCorrect.
     end.
 
   Lemma check_regs_cost_SIf:
-    forall (cond : bcond) (bThen bElse : stmt) (corresp : list (string * Z))
-      (cond0 : bcond') (s'1 s'2 : stmt') (a0 a1 : list (string * Z))
+    forall (cond : bcond) (bThen bElse : stmt) (corresp : list (srcvar * Z))
+      (cond0 : bcond') (s'1 s'2 : stmt') (a0 a1 : list (srcvar * Z))
       (mc mcL : MetricLog),
       check_bcond corresp cond cond0 = Success tt ->
       check corresp bThen s'1 = Success a0 ->
       check corresp bElse s'2 = Success a1 ->
       forall mc' mcH' : MetricLog,
-        (mc' - exec.cost_SIf isRegZ cond0 mcL <= mcH' - exec.cost_SIf isRegStr cond mc)%metricsH ->
+        (mc' - exec.cost_SIf isRegZ cond0 mcL <= mcH' - exec.cost_SIf isRegVar cond mc)%metricsH ->
         (mc' - mcL <= mcH' - mc)%metricsH.
   Proof.
     intros.
@@ -1155,15 +1172,15 @@ Section CheckerCorrect.
   Qed.
 
   Lemma check_regs_cost_SLoop_false:
-  forall (cond : bcond) (body1 body2 : stmt) (corresp' : list (string * Z)) (s'1 : stmt')
-      (cond0 : bcond') (s'2 : stmt') (mc mcL : MetricLog) (a : list (string * Z)),
+  forall (cond : bcond) (body1 body2 : stmt) (corresp' : list (srcvar * Z)) (s'1 : stmt')
+      (cond0 : bcond') (s'2 : stmt') (mc mcL : MetricLog) (a : list (srcvar * Z)),
     check a body1 s'1 = Success corresp' ->
     check_bcond corresp' cond cond0 = Success tt ->
-    forall a2 : list (string * Z),
+    forall a2 : list (srcvar * Z),
     check corresp' body2 s'2 = Success a2 ->
     forall mc' mcH' : MetricLog,
     (mc' - mcL <= mcH' - mc)%metricsH ->
-    (exec.cost_SLoop_false isRegZ cond0 mc' - mcL <= exec.cost_SLoop_false isRegStr cond mcH' - mc)%metricsH.
+    (exec.cost_SLoop_false isRegZ cond0 mc' - mcL <= exec.cost_SLoop_false isRegVar cond mcH' - mc)%metricsH.
   Proof.
     intros.
     repeat (unfold check_bcond, assert_in, assignment in *; fwd).
@@ -1194,7 +1211,7 @@ Section CheckerCorrect.
 
   Lemma checker_correct: forall (e: srcEnv) (e': impEnv) s t m lH mcH post,
       check_funcs e e' = Success tt ->
-      exec PreSpill isRegStr e s t m lH mcH post ->
+      exec PreSpill isRegVar e s t m lH mcH post ->
       forall lL corresp corresp' s' mcL,
       check corresp s s' = Success corresp' ->
       states_compat lH (precond corresp s s') lL ->
@@ -1333,7 +1350,7 @@ Section CheckerCorrect.
           repeat (unfold check_bcond, assert_in, assignment in *; fwd).
           clear -E0 E1 E2 H4p1p0 H4p1p1 H4p1 H4p3.
           intros; unfold check_regs in *; cbn in *; unfold exec.cost_SLoop_true in *; try discr_match_success;
-            destr cond; destr cond0; destr (isRegStr x); destr (isRegZ x0); try (destr (isRegStr y)); try (destr (isRegZ y0));
+            destr cond; destr cond0; destr (isRegVar x); destr (isRegZ x0); try (destr (isRegStr y)); try (destr (isRegZ y0));
             try discriminate; try discr_match_success.
           all: cost_solve.
     - (* Case exec.seq *)
@@ -1351,3 +1368,4 @@ Section CheckerCorrect.
   Qed.
 
 End CheckerCorrect.
+End SrcVar.
