@@ -379,6 +379,8 @@ Section WithWordAndMem.
         + eexists; split; eauto. unfold cost_spill_spec in *; solve_MetricLog.
     Qed.
 
+    Notation regalloc_functions := (regalloc_functions String.eqb isRegStr).
+
     Lemma regalloc_functions_NoDup: forall funs funs',
         regalloc_functions funs = Success funs' ->
         forall f argnames retnames body,
@@ -415,8 +417,8 @@ Section WithWordAndMem.
       unfold lookup_and_check_func, check_func in E0. fwd.
 
       rename l0 into argregs, l1 into retregs.
-      apply_in_hyps assert_ins_same_length.
-      apply_in_hyps assignments_same_length.
+      apply_in_hyps (assert_ins_same_length String.eqb).
+      apply_in_hyps (assignments_same_length String.eqb).
       apply_in_hyps @map.putmany_of_list_zip_sameLength.
       assert (exists l', map.of_list_zip argregs argvals = Some l'). {
         eapply map.sameLength_putmany_of_list. congruence.
@@ -425,10 +427,11 @@ Section WithWordAndMem.
       eexists _, _, _, _. split. 1: eassumption. split. 1: eassumption. intros.
       unfold map.of_list_zip in *.
       eapply FlatImp.exec.weaken.
-      - eapply checker_correct; eauto.
-        eapply states_compat_precond.
-        edestruct putmany_of_list_zip_states_compat as (lL' & P' & Cp); try eassumption.
-        1: eapply states_compat_empty.
+      - eapply (checker_correct String.eqb); eauto with typeclass_instances.
+        eapply (states_compat_precond String.eqb).
+        edestruct (putmany_of_list_zip_states_compat String.eqb) as (lL' & P' & Cp); try eassumption || auto with typeclass_instances.
+        1: eapply (states_compat_empty String.eqb).
+        1: auto.
         rewrite H1 in P'. inversion P'. exact Cp.
       - simpl. intros. fwd. eexists. split.
         + eauto using states_compat_getmany.
