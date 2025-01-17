@@ -122,7 +122,7 @@ Section semantics.
         args <- eval_call_args tl;
         Some (v :: args)
       | _ => Some nil
-      end.
+    end.
 
   End WithMemAndLocals.
 End semantics.
@@ -324,6 +324,100 @@ Module exec. Section WithParams.
         eauto 10.
   Qed.
 
+  Print cmd.
+  Fixpoint rm_some_dead (s : cmd) :=
+    match s with
+    | cmd.stackalloc x n cmd.skip => cmd.skip
+    | cmd.stackalloc x n body => cmd.stackalloc x n (rm_some_dead body)
+    | cmd.cond c i e => cmd.cond c (rm_some_dead i) (rm_some_dead e)
+    | cmd.seq s1 s2 => cmd.seq (rm_some_dead s1) (rm_some_dead s2)
+    | cmd.while c body => cmd.while c (rm_some_dead body)
+    | _ => s
+    end.
+
+  Lemma rm_some_dead_correct s t m l post :
+    exec s t m l post -> exec (rm_some_dead s) t m l post.
+  Proof.
+    intros H. induction H; try solve [econstructor; eauto].
+    simpl. destruct body; try solve [econstructor; eauto].
+    econstructor.
+  Abort.
+
+  Check eval_expr.
+  Lemma mextend_expr (m0 : mem) m l ex v :
+      map.extends m0 m ->
+      eval_expr m l ex = Some v ->
+      eval_expr m0 l ex = Some v.
+  Proof.
+    intros * H H0. revert v H0. induction ex; intros; simpl in *; eauto.
+    - destruct (eval_expr m l ex); try discriminate H0. erewrite IHex by reflexivity.
+      Print map.extends. cbv [load load_Z]. Search load. (* :( *)
+  Admitted.
+
+  Lemma mextend s t m m0 trash l post :
+    map.split m0 m trash ->
+    exec s t m l post ->
+    exec s t m0 l (fun t m0' l => exists m', map.split m0' m' trash /\ post t m' l).
+  Proof.
+    (*intros Hextends Hexec.
+    assert (Hext : map.extends m0 m).
+    { intros H w H0. Search map.split. eapply map.get_split_grow_r; eassumption. }*)
+    (*assert (Hext' : forall l e v, eval_expr m l e = Some v -> eval_expr m0 l e = Some v).
+    { intros. eapply mextend_expr; eassumption. }*)
+    intros Hm0 Hexec. revert m0 Hm0. induction Hexec.
+    5: { intros m0 Hm0. econstructor; eauto. intros. eapply weaken. 1: eapply H1.
+         4: { simpl. intros. fwd. exists (map.putmany mSmall' trash), mStack'.
+              split; [assumption|]. split.
+              { split.
+                2: { intro. intros.
+                   (*proof: cant have k in mSmall' since mSmall' disjoint from mStack'.
+                    cant have k in trash since k is in mStack' is in m'0, whcih is disjoint from trash*)
+                     admit. }
+                apply map.map_ext. intros.
+                rewrite map.get_putmany_dec.
+                destruct (map.get mStack' k) eqn:E.
+                - destruct H4p0. subst. destruct H4p1p1. subst.
+                  do 2 rewrite map.get_putmany_dec. rewrite E.
+                  destruct (map.get trash k) eqn:E'; try reflexivity.
+                  exfalso. eapply H5. 2: eassumption. rewrite map.get_putmany_dec.
+                  rewrite E. reflexivity.
+                - destruct H4p0.  subst. do 2 rewrite map.get_putmany_dec.
+                  destruct (map.get trash k); try reflexivity.
+                  destruct H4p1p1.  subst. rewrite map.get_putmany_dec. rewrite E.
+                  reflexivity. }
+              exists mSmall'. split; [|assumption].
+              Search (map.split (map.putmany _ _) _ _). apply map.split_disjoint_putmany.
+              (*proof: small' is in m'0, which is disjoint from trash*) admit. }
+         1: eassumption.
+         { instantiate (1 := map.putmany mSmall mStack).
+           apply map.split_disjoint_putmany.
+           (*proof: mSmall subset of m0, whcih is disj from mStack*)
+           admit. }
+         destruct H3. subst. destruct Hm0. subst. Check map.putmany_assoc.
+         rewrite <- map.putmany_assoc. rewrite (map.putmany_comm trash).
+         1: rewrite map.putmany_assoc. 1: apply map.split_disjoint_putmany.
+         - Search (map.disjoint (map.putmany _ _)). apply map.disjoint_putmany_l.
+           split; [assumption|]. apply map.disjoint_putmany_l in H4. destruct H4.
+           apply map.disjoint_comm. assumption.
+         - apply map.disjoint_putmany_l in H4. destruct H4. assumption. }
+    
+           
+         1: eassumption.
+              apply map.split_putmany.
+                  fwd.
+                Search map.putmany.
+                     
+              eexists. eexists. split; eauto. split; eauto.
+              
+         eapply  H1.
+    revert m0. induction Hexec; try solve [econstructor; eauto].
+    3: { econstructor; eauto. intros. eapply H1. 
+    - econstructor; eauto. admit.
+      -    - econstructor; eauto. intros. specialize H1 with (5 := Hext'). oeapply H1. econstructor; 
+      
+      
+    - econstructor; eauto. apply mextend_epxr. Search eval_expr.
+     
   End WithEnv.
 
   Lemma extend_env: forall e1 e2,
