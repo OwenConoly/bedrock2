@@ -100,12 +100,12 @@ Section semantics.
       match e with
       | expr.literal v => Some (word.of_Z v)
       | expr.var x => map.get l x
-      | expr.inlinetable aSize t index =>
-          index' <- eval_expr index;
-          load aSize (map.of_list_word t) index'
-      | expr.load aSize a =>
-          a' <- eval_expr a;
-          load aSize m a'
+      (* | expr.inlinetable aSize t index => *)
+      (*     index' <- eval_expr index; *)
+      (*     load aSize (map.of_list_word t) index' *)
+      (* | expr.load aSize a => *)
+      (*     a' <- eval_expr a; *)
+      (*     load aSize m a' *)
       | expr.op op e1 e2 =>
           v1 <- eval_expr e1;
           v2 <- eval_expr e2;
@@ -134,22 +134,27 @@ Module exec. Section WithParams.
   Section WithEnv.
   Context (e: env).
 
-  Implicit Types post : trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  Implicit Types post : trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *) Print cmd.load. Print load.
   Inductive exec: cmd -> trace -> mem -> locals ->
                   (trace -> mem -> locals -> Prop) -> Prop :=
   | skip: forall t m l post,
       post t m l ->
       exec cmd.skip t m l post
   | set: forall x e t m l post v,
-      eval_expr m l e = Some v ->
+      eval_expr l e = Some v ->
       post t m (map.put l x v) ->
       exec (cmd.set x e) t m l post
   | unset: forall x t m l post,
       post t m (map.remove l x) ->
       exec (cmd.unset x) t m l post
+  | load: forall x sz e t m l post a v,
+      eval_expr l e = Some a ->
+      load sz m a = Some v ->
+      post t m (map.put l x v) ->
+      exec (cmd.load x sz e) t m l post
   | store: forall sz ea ev t m l post a v m',
-      eval_expr m l ea = Some a ->
-      eval_expr m l ev = Some v ->
+      eval_expr l ea = Some a ->
+      eval_expr l ev = Some v ->
       store sz m a v = Some m' ->
       post t m' l ->
       exec (cmd.store sz ea ev) t m l post
@@ -166,12 +171,12 @@ Module exec. Section WithParams.
               post t' mSmall' l')) ->
       exec (cmd.stackalloc x n body) t mSmall l post
   | if_true: forall t m l e c1 c2 post v,
-      eval_expr m l e = Some v ->
+      eval_expr l e = Some v ->
       word.unsigned v <> 0 ->
       exec c1 t m l post ->
       exec (cmd.cond e c1 c2) t m l post
   | if_false: forall e c1 c2 t m l post v,
-      eval_expr m l e = Some v ->
+      eval_expr l e = Some v ->
       word.unsigned v = 0 ->
       exec c2 t m l post ->
       exec (cmd.cond e c1 c2) t m l post
@@ -180,19 +185,19 @@ Module exec. Section WithParams.
       (forall t' m' l', mid t' m' l' -> exec c2 t' m' l' post) ->
       exec (cmd.seq c1 c2) t m l post
   | while_false: forall e c t m l post v,
-      eval_expr m l e = Some v ->
+      eval_expr l e = Some v ->
       word.unsigned v = 0 ->
       post t m l ->
       exec (cmd.while e c) t m l post
   | while_true: forall e c t m l post v mid,
-      eval_expr m l e = Some v ->
+      eval_expr l e = Some v ->
       word.unsigned v <> 0 ->
       exec c t m l mid ->
       (forall t' m' l', mid t' m' l' -> exec (cmd.while e c) t' m' l' post) ->
       exec (cmd.while e c) t m l post
   | call: forall binds fname arges t m l post params rets fbody args lf mid,
       map.get e fname = Some (params, rets, fbody) ->
-      eval_call_args m l arges = Some args ->
+      eval_call_args l arges = Some args ->
       map.of_list_zip params args = Some lf ->
       exec fbody t m lf mid ->
       (forall t' m' st1, mid t' m' st1 ->
@@ -202,7 +207,7 @@ Module exec. Section WithParams.
       exec (cmd.call binds fname arges) t m l post
   | interact: forall binds action arges args t m l post mKeep mGive mid,
       map.split m mKeep mGive ->
-      eval_call_args m l arges = Some args ->
+      eval_call_args l arges = Some args ->
       ext_spec t mGive action args mid ->
       (forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
@@ -214,7 +219,7 @@ Module exec. Section WithParams.
 
   Lemma interact_cps: forall binds action arges args t m l post mKeep mGive,
       map.split m mKeep mGive ->
-      eval_call_args m l arges = Some args ->
+      eval_call_args l arges = Some args ->
       ext_spec t mGive action args (fun mReceive resvals =>
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
