@@ -372,21 +372,28 @@ Section WithParams.
   Context {ext_spec: ExtSpec}.
 
   Implicit Types (l: locals) (m: list mem) (post: trace -> list mem -> locals -> Prop).
-  
+
   Inductive all_disj : list mem -> Prop :=
   | nil_disj : all_disj []
   | cons_disj m mi : all_disj m ->
-                     map.disjoint mi (fold_right map.putmany map.empty m) ->
+                     (forall mj, In mj m -> map.disjoint mi mj) ->
                      all_disj (mi :: m).
 
   Lemma all_disj_alt mi m :
     all_disj (mi :: m) ->
-    forall mj, In mj m ->
-          map.disjoint mi mj.
+    map.disjoint mi (fold_right map.putmany map.empty m).
   Proof.
-    intros Hdisj. intros mj. induction m; [intros []|].
-    intros H. destruct H as [H|H].
-    - subst. inversion Hdisj. subst. clear Hdisj. inversion H1. clear H1. subst. apply IHm.
+    induction m.
+    - intros _. simpl. apply map.disjoint_empty_r.
+    - intros H. simpl. Search (map.disjoint _ (map.putmany _ _)).
+      apply map.disjoint_putmany_r. 
+      inversion H. subst. clear H.
+      split.
+      + apply H3. left. reflexivity.
+      + apply IHm. constructor.
+        -- inversion H2. subst. assumption.
+        -- intros. apply H3. right. assumption.
+  Qed.
 
   Lemma all_disj_putmany_commute m :
     all_disj m ->
@@ -394,7 +401,7 @@ Section WithParams.
   Proof.
     induction m; intros Hdisj; [reflexivity|]. inversion Hdisj. subst.
     specialize (IHm ltac:(assumption)). simpl. rewrite <- IHm. apply map.putmany_comm.
-    assumption.
+    apply all_disj_alt. assumption.
   Qed.
 
   Lemma all_disj_get m mi a v :
@@ -412,9 +419,9 @@ Section WithParams.
       + Search (map.get (map.putmany _ _)). apply map.get_putmany_right. assumption.
       + rewrite map.get_putmany_left.
         -- apply IHm; assumption.
-        -- pose proof all_disj_alt as H'. specialize (H' _ _ Hdisj _ H).
-           clear -H' Hget. cbv [map.disjoint] in H'. specialize (H' a).
-           destruct (map.get a0 a); [|reflexivity]. exfalso. eapply H'; eauto.
+        -- specialize (H2 _ H).
+           clear -H2 Hget. cbv [map.disjoint] in H2. specialize (H2 a).
+           destruct (map.get a0 a); [|reflexivity]. exfalso. eapply H2; eauto.
   Qed.
 
   Lemma put_putmany_assoc (mi mj : mem) a v :
@@ -443,7 +450,7 @@ Section WithParams.
     intros H1 H2. subst. revert H1. induction m1; simpl; intros Hdisj Hget.
     - inversion Hdisj. subst. apply put_putmany_assoc.
       destruct (map.get (fold_right _ _ _) _) eqn:E; [|reflexivity].
-      exfalso. eapply H2; eassumption.
+      exfalso. eapply all_disj_alt; eassumption.
     - rewrite map.put_putmany_commute. f_equal. apply IHm1; [|assumption].
       inversion Hdisj. subst. assumption.
   Qed.                                                            
@@ -469,7 +476,20 @@ Section WithParams.
     all_disj (m1 ++ [mi] ++ m2) ->
     all_disj (m1 ++ [mj] ++ m2).
   Proof.
-
+    intros H1 H2. induction m1; simpl in *.
+    - inversion H2. subst. constructor; [assumption|]. intros.
+      eapply map.sub_domain_disjoint; eauto.
+    - inversion H2. subst. constructor; [solve[auto]|]. intros.
+      apply in_app_iff in H. destruct H as [H|H].
+      + apply H4. apply in_app_iff. left. assumption.
+      + destruct H as [H|H].
+        -- subst. apply map.disjoint_comm.
+           eapply map.sub_domain_disjoint; [|eassumption]. clear -H2 word_ok mem_ok.
+           inversion H2. subst. apply map.disjoint_comm.
+           apply H3. apply in_app_iff. right. left. reflexivity.
+        -- apply H4. apply in_app_iff. right. right. assumption.
+  Qed.
+ 
   Lemma all_disj_putmany_of_tuple sz m mi m1 m2 keys v v0 :
     all_disj m ->
     m = m1 ++ [mi] ++ m2 ->
@@ -532,7 +552,8 @@ Section WithParams.
   Proof.
     intros H0 H. revert H0. induction H; intros Hdisj; try solve [econstructor; eauto].
     - econstructor; eauto using all_disj_load.
-    - econstructor; eauto.
+    - econstructor; eauto using all_disj_store.
+    - 
 
     
                 
