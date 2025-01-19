@@ -6,6 +6,7 @@ Require Import bedrock2.Syntax coqutil.Map.Interface coqutil.Map.OfListWord.
 Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Export bedrock2.Memory.
 Require Import Coq.Lists.List.
+Import ListNotations.
 
 (* BW is not needed on the rhs, but helps infer width *)
 Definition LogItem{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
@@ -134,9 +135,9 @@ Module exec. Section WithParams.
   Section WithEnv.
   Context (e: env).
 
-  Implicit Types post : trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *) Print cmd.load. Print load.
-  Inductive exec: cmd -> trace -> mem -> locals ->
-                  (trace -> mem -> locals -> Prop) -> Prop :=
+  Implicit Types post : trace -> list mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  Inductive exec: cmd -> trace -> list mem -> locals ->
+                  (trace -> list mem -> locals -> Prop) -> Prop :=
   | skip: forall t m l post,
       post t m l ->
       exec cmd.skip t m l post
@@ -147,28 +148,29 @@ Module exec. Section WithParams.
   | unset: forall x t m l post,
       post t m (map.remove l x) ->
       exec (cmd.unset x) t m l post
-  | load: forall x sz e t m l post a v,
+  | load: forall x sz e t m mi l post a v,
       eval_expr l e = Some a ->
-      load sz m a = Some v ->
+      In mi m ->
+      load sz mi a = Some v ->
       post t m (map.put l x v) ->
       exec (cmd.load x sz e) t m l post
-  | store: forall sz ea ev t m l post a v m',
+  | store: forall sz ea ev t m l post m1 m2 mi a v mi',
       eval_expr l ea = Some a ->
       eval_expr l ev = Some v ->
-      store sz m a v = Some m' ->
-      post t m' l ->
+      m = m1 ++ [mi] ++ m2 ->
+      store sz mi a v = Some mi' ->
+      post t (m1 ++ [mi'] ++ m2) l ->
       exec (cmd.store sz ea ev) t m l post
   | stackalloc: forall x n body t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (forall a mStack mCombined,
+      (forall a mStack,
         anybytes a n mStack ->
-        map.split mCombined mSmall mStack ->
-        exec body t mCombined (map.put l x a)
+        exec body t (mStack :: mSmall) (map.put l x a)
           (fun t' mCombined' l' =>
-            exists mSmall' mStack',
-              anybytes a n mStack' /\
-              map.split mCombined' mSmall' mStack' /\
-              post t' mSmall' l')) ->
+             exists mSmall' mStack',
+               mCombined' = mStack' :: mSmall' /\
+                 anybytes a n mStack' /\
+                 post t' mSmall' l')) ->
       exec (cmd.stackalloc x n body) t mSmall l post
   | if_true: forall t m l e c1 c2 post v,
       eval_expr l e = Some v ->
@@ -205,27 +207,28 @@ Module exec. Section WithParams.
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
           post t' m' l') ->
       exec (cmd.call binds fname arges) t m l post
-  | interact: forall binds action arges args t m l post mKeep mGive mid,
-      map.split m mKeep mGive ->
-      eval_call_args l arges = Some args ->
-      ext_spec t mGive action args mid ->
-      (forall mReceive resvals, mid mReceive resvals ->
-          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
-          forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) t m l post.
+  (* | interact: forall binds action arges args t m l post mKeep mGive mid, *)
+  (*     map.split m mKeep mGive -> *)
+  (*     eval_call_args l arges = Some args -> *)
+  (*     ext_spec t mGive action args mid -> *)
+  (*     (forall mReceive resvals, mid mReceive resvals -> *)
+  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
+  (*         forall m', map.split m' mKeep mReceive -> *)
+  (*         post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
+  (*     exec (cmd.interact binds action arges) t m l post. *)
+           .
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma interact_cps: forall binds action arges args t m l post mKeep mGive,
-      map.split m mKeep mGive ->
-      eval_call_args l arges = Some args ->
-      ext_spec t mGive action args (fun mReceive resvals =>
-          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
-          forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) t m l post.
-  Proof. intros. eauto using interact. Qed.
+  (* Lemma interact_cps: forall binds action arges args t m l post mKeep mGive, *)
+  (*     map.split m mKeep mGive -> *)
+  (*     eval_call_args l arges = Some args -> *)
+  (*     ext_spec t mGive action args (fun mReceive resvals => *)
+  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
+  (*         forall m', map.split m' mKeep mReceive -> *)
+  (*         post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
+  (*     exec (cmd.interact binds action arges) t m l post. *)
+  (* Proof. intros. eauto using interact. Qed. *)
 
   Lemma seq_cps: forall c1 c2 t m l post,
       exec c1 t m l (fun t' m' l' => exec c2 t' m' l' post) ->
@@ -249,84 +252,6 @@ Module exec. Section WithParams.
       intros.
       edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
       eauto 10.
-    - eapply interact; try eassumption.
-      intros.
-      edestruct H2 as (? & ? & ?); [eassumption|].
-      eauto 10.
-  Qed.
-
-  Lemma intersect: forall t l m s post1,
-      exec s t m l post1 ->
-      forall post2,
-        exec s t m l post2 ->
-        exec s t m l (fun t' m' l' => post1 t' m' l' /\ post2 t' m' l').
-  Proof.
-    induction 1;
-      intros;
-      match goal with
-      | H: exec _ _ _ _ _ |- _ => inversion H; subst; clear H
-      end;
-      try match goal with
-      | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ =>
-        replace x2 with x1 in * by congruence;
-          replace y2 with y1 in * by congruence;
-          replace z2 with z1 in * by congruence;
-          clear x2 y2 z2 H2
-      end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      try solve [econstructor; eauto | exfalso; congruence].
-
-    - econstructor. 1: eassumption.
-      intros.
-      rename H0 into Ex1, H11 into Ex2.
-      eapply weaken. 1: eapply H1. 1,2: eassumption.
-      1: eapply Ex2. 1,2: eassumption.
-      cbv beta.
-      intros. fwd.
-      lazymatch goal with
-      | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-        specialize @map.split_diff with (4 := A) (5 := B) as P
-      end.
-      edestruct P; try typeclasses eauto. 2: subst; eauto 10.
-      eapply anybytes_unique_domain; eassumption.
-    - econstructor.
-      + eapply IHexec. exact H5. (* not H *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply while_true. 1, 2: eassumption.
-      + eapply IHexec. exact H9. (* not H1 *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply call. 1, 2, 3: eassumption.
-      + eapply IHexec. exact H15. (* not H2 *)
-      + simpl. intros *. intros [? ?].
-        edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-        edestruct H16 as (? & ? & ? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
-    - pose proof ext_spec.mGive_unique as P.
-      specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H13).
-      subst mGive0.
-      destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _).
-      subst mKeep0.
-      eapply interact. 1,2: eassumption.
-      + eapply ext_spec.intersect; [ exact H1 | exact H13 ].
-      + simpl. intros *. intros [? ?].
-        edestruct H2 as (? & ? & ?); [eassumption|].
-        edestruct H14 as (? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
   Qed.
 
   End WithEnv.
@@ -346,7 +271,7 @@ Section WithParams.
   Context {locals: map.map String.string word}.
   Context {ext_spec: ExtSpec}.
 
-  Implicit Types (l: locals) (m: mem) (post: trace -> mem -> list word -> Prop).
+  Implicit Types (l: locals) (m: list mem) (post: trace -> list mem -> list word -> Prop).
 
   Definition call e fname t m args post :=
     exists argnames retnames body,

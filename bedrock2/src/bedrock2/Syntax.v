@@ -51,7 +51,7 @@ Module cmd.
   | seq (s1 s2: cmd)
   | while (test : expr) (body : cmd)
   | call (binds : list String.string) (function : String.string) (args: list expr)
-  | interact (binds : list String.string) (action : String.string) (args: list expr).
+  (* | interact (binds : list String.string) (action : String.string) (args: list expr) *).
 
   (* TODO avoid duplication *)
   Definition dowhile(body: cmd)(cond: expr): cmd :=
