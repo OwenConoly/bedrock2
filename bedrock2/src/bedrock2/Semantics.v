@@ -567,7 +567,13 @@ Section WithParams.
     same_domain m1 m2 ->
     same_domain m2 m3 ->
     same_domain m1 m3.
-  Proof. Admitted.
+  Proof.
+    intros H1 H2. revert m3 H2. induction H1; intros m3 H2.
+    - inversion H2. constructor.
+    - inversion H2. subst. constructor.
+      + eapply map.same_domain_trans; eassumption.
+      + eapply IHsame_domain; eassumption.
+  Qed.
 
   Lemma same_domain_app_iff m1 m1' m2 m2' :
     length m1 = length m1' ->
@@ -660,5 +666,85 @@ Section WithParams.
       + simpl in H. rewrite map.putmany_empty_r in H. eassumption.
     - simpl. intros. fwd. inversion H0p1. subst. inversion H4. subst. simpl.
       rewrite map.putmany_empty_r. assumption.
+  Qed.
+
+  Print cmd.
+  Open Scope bool_scope.
+  
+  Fixpoint some_dce (s : cmd) :=
+    match s with
+    | cmd.stackalloc x n cmd.skip => if Z.leb 0 n && Z.leb n (Z.pow 2 width) then cmd.set x (expr.literal 0) else s
+    | cmd.stackalloc x n body => cmd.stackalloc x n (some_dce body)
+    | cmd.cond c i e => cmd.cond c (some_dce i) (some_dce e)
+    | cmd.seq s1 s2 => cmd.seq (some_dce s1) (some_dce s2)
+    | cmd.while c body => cmd.while c (some_dce body)
+    | _ => s
+    end.
+
+  Print Interface.word.
+
+  Open Scope Z_scope. Search (Z -> Z -> Z).
+  Require Import Coq.ZArith.BinInt. Print anybytes.
+  Search mem. Search (_ -> map.rep).
+  Print OfFunc.map.of_func. Search (_ -> list nat). Print seq. Search byte.
+  Require Import Coq.micromega.Lia.
+  Require Coq.Arith.PeanoNat.
+
+  Require Import bedrock2.Array.
+  
+  Lemma anybytes_exist n base :
+    le n (Z.to_nat (Z.pow 2 width - Z.of_nat base)) ->
+    anybytes (@word.of_Z width word (Z.of_nat base)) (Z.of_nat n)
+      (OfFunc.map.of_func (fun (_ : word) => Some Byte.x00) (map (fun x => word.of_Z (Z.of_nat x)) (seq base n))).
+  Proof.
+    intros. Check array_1_to_anybytes. eassert (Z.of_nat n = _) as ->.
+    2: { eapply array_1_to_anybytes. instantiate (1 := repeat Byte.x00 n).
+         revert base H. induction n.
+         - simpl. split; reflexivity.
+         - intros. simpl. cbv [Separation.sep]. eexists. eexists. split; [|split].
+           3: { replace (word.add (word.of_Z (Z.of_nat base)) (word.of_Z 1)) with (@word.of_Z width word (Z.of_nat (S base))).
+                - apply IHn. lia.
+                - Search word.add. rewrite <- Properties.word.ring_morph_add.
+                  f_equal. lia. }
+           2: { reflexivity. }
+           split.
+           + apply map.map_ext. Search OfFunc.map.of_func. intros.
+             rewrite map.get_put_dec. destruct_one_match.
+             -- Search (map.get (map.putmany _ _)). rewrite map.get_putmany_left.
+                ++ rewrite map.get_put_same. reflexivity.
+                ++ Search OfFunc.map.of_func. apply OfFunc.map.get_of_func_notIn.
+                   intros H'. Search (In _ (seq _ _)). Search (In _ (map _ _)).
+                   apply in_map_iff in H'. fwd. apply in_seq in H'p1. Search word.of_Z.
+                   Search word.of_Z.
+                   pose proof @Properties.word.of_Z_inj_small width word word_ok as P.
+                   specialize P with (1 := H'p0).
+                   specialize (P ltac:(lia) ltac:(lia)). clear H'p0. lia.
+             -- rewrite map.get_putmany_dec. destruct_one_match; [reflexivity|].
+                rewrite map.get_put_diff by auto. rewrite map.get_empty. reflexivity.
+           + apply map.disjoint_put_l. 2: apply map.disjoint_empty_l.
+             apply OfFunc.map.get_of_func_notIn.
+                   intros H'. Search (In _ (seq _ _)). Search (In _ (map _ _)).
+                   apply in_map_iff in H'. fwd. apply in_seq in H'p1. Search word.of_Z.
+                   Search word.of_Z.
+                   pose proof @Properties.word.of_Z_inj_small width word word_ok as P.
+                   specialize P with (1 := H'p0).
+                   specialize (P ltac:(lia) ltac:(lia)). clear H'p0. lia. }
+    rewrite repeat_length. Check length_rev. (*this should be the same as length_rev...*)
+    reflexivity.
+  Qed.    
+  
+  Lemma some_dce_correct e s t m l post :
+    exec e s t m l post ->
+    exec e (some_dce s) t m l post.
+  Proof.
+    intros H. induction H; try solve [econstructor; eauto].
+    destruct body; try solve [econstructor; eauto].
+    clear H0. simpl in H1. pose proof (anybytes_exist (Z.to_nat n) 0) as somebytes.
+    simpl. destruct (Z.leb 0 n && (n <=? 2 ^ width)) eqn:E; [|solve [econstructor; eauto]].
+    apply andb_prop in E. destruct E as [E1 E2]. apply Z.leb_le in E1, E2.
+    specialize (somebytes ltac:(lia)). Search (Z.of_nat (Z.to_nat _)).
+    rewrite Znat.Z2Nat.id in somebytes by lia.
+    specialize H1 with (1 := somebytes). inversion H1. clear H1. subst. fwd.
+    econstructor. 1: reflexivity. assumption.
   Qed.
 End WithParams.
