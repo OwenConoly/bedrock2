@@ -395,6 +395,12 @@ Section WithParams.
         -- intros. apply H3. right. assumption.
   Qed.
 
+  Lemma all_disj_alt_conv mi m :
+    map.disjoint mi (fold_right map.putmany map.empty m) ->
+    (forall mj : mem, In mj m -> map.disjoint mi mj).
+  Proof.
+    Admitted.
+
   Lemma all_disj_putmany_commute m :
     all_disj m ->
     fold_right map.putmany map.empty m = fold_right (fun x y => map.putmany y x) map.empty m.
@@ -542,23 +548,117 @@ Section WithParams.
     apply Hget in E0. rewrite E0. reflexivity.
   Qed.
 
-  Lemma exec_implies_oldexec e s t m l post :
+  Inductive same_domain : list mem -> list mem -> Prop :=
+  | nil_same : same_domain [] []
+  | cons_same mi mi' m m' : map.same_domain mi mi' ->
+                            same_domain m m' ->
+                            same_domain (mi :: m) (mi' :: m').
+
+  Lemma same_domain_refl m : same_domain m m.
+  Proof.
+    induction m.
+    - constructor.
+    - constructor.
+      + apply map.same_domain_refl.
+      + assumption.
+  Qed.
+
+  Lemma same_domain_trans m1 m2 m3 :
+    same_domain m1 m2 ->
+    same_domain m2 m3 ->
+    same_domain m1 m3.
+  Proof. Admitted.
+
+  Lemma same_domain_app_iff m1 m1' m2 m2' :
+    length m1 = length m1' ->
+    same_domain (m1 ++ m2) (m1' ++ m2') <-> same_domain m1 m1' /\ same_domain m2 m2'.
+  Proof.
+    revert m1'. induction m1.
+    - intros. destruct m1'; [|discriminate H]. simpl. split; intros.
+      + split; [constructor|assumption].
+      + fwd. assumption.
+    - intros. destruct m1'; [discriminate H|]. injection H as H. apply IHm1 in H.
+      clear IHm1. simpl. split; intros.
+      + inversion H0. subst. clear H0. rewrite H in H6. fwd. split; [|assumption].
+        constructor; assumption.
+      + fwd. inversion H0p0. subst. clear H0p0. constructor; [assumption|].
+        apply H. clear H. auto.
+  Qed.
+
+  Lemma putmany_same_domain (mi mi' mj mj' : mem) :
+    map.same_domain mi mi' ->
+    map.same_domain mj mj' ->
+    map.same_domain (map.putmany mi mj) (map.putmany mi' mj').
+  Proof. Admitted.
+
+  Lemma same_domain_flattened m1 m2 :
+    same_domain m1 m2 ->
+    map.same_domain (fold_right map.putmany map.empty m1) (fold_right map.putmany map.empty m2).
+  Proof.
+    intros H. induction H.
+    - simpl. apply map.same_domain_refl.
+    - simpl. Search map.same_domain. apply putmany_same_domain; assumption.
+  Qed.
+
+  Lemma same_domain_disj m m' :
+    all_disj m ->
+    same_domain m m' ->
+    all_disj m'.
+  Proof. Admitted.
+        
+  Lemma exec_implies_oldexec' e s t m l post :
     all_disj m ->
     exec e s t m l post ->
     oldexec e s t (fold_right map.putmany map.empty m) l
       (fun t mflat' l =>
-         exists m', mflat' = fold_right map.putmany map.empty m' /\
-         post t m' l).
+         exists m',
+           mflat' = fold_right map.putmany map.empty m' /\
+             same_domain m m' /\
+             post t m' l).
   Proof.
-    intros H0 H. revert H0. induction H; intros Hdisj; try solve [econstructor; eauto].
-    - econstructor; eauto using all_disj_load.
-    - econstructor; eauto using all_disj_store.
-    - 
+    intros H0 H. revert H0. induction H; intros Hdisj; try solve [econstructor; eauto using same_domain_refl].
+    - econstructor; eauto using all_disj_load, same_domain_refl.
+    - econstructor; eauto using all_disj_store. eexists. intuition eauto. subst.
+      apply same_domain_app_iff; [reflexivity|]. split; [apply same_domain_refl|].
+      constructor; [|apply same_domain_refl]. eapply store_preserves_domain.
+      eassumption.      
+    - econstructor; eauto. intros. destruct H3 as [H3 H4]. subst. simpl in H1.
+      Search map.putmany. rewrite map.putmany_comm by assumption.
+      eapply oldexec.weaken.
+      + eapply H1; [assumption|]. constructor; [assumption|]. apply all_disj_alt_conv.
+        apply map.disjoint_comm. assumption.
+      + simpl. intros. fwd. inversion H3p1. subst. clear H3p1. subst.
+        do 2 eexists. intuition eauto.
+        -- apply map.split_comm.
+           simpl. split; [reflexivity|].
+           eapply map.sub_domain_disjoint. 2: apply H7. apply map.disjoint_comm.
+           eapply map.sub_domain_disjoint. 1: eassumption.
+           apply same_domain_flattened. assumption.
+    - econstructor. 1: eapply IHexec; assumption. clear IHexec.
+      simpl. intros. fwd. eapply oldexec.weaken.
+      + apply H1; [assumption|]. eapply same_domain_disj; eassumption.
+      + simpl. intros. fwd. eexists. intuition eauto.
+        eapply same_domain_trans; eassumption.
+    - eapply oldexec.while_true; eauto. simpl. intros. fwd. eapply oldexec.weaken.
+      + apply H3; [assumption|]. eapply same_domain_disj; eassumption.
+      + simpl. intros. fwd. eexists. intuition eauto.
+        eapply same_domain_trans; eassumption.
+    - econstructor; eauto. simpl. intros. fwd. apply H3 in H4p2. clear H3. fwd.
+      eexists. intuition eauto. eexists. intuition eauto.
+  Qed.
 
-    
-                
-    
-    
-    
-    
+  Lemma exec_implies_oldexec e s t mi l post :
+    exec e s t [mi] l post ->
+    oldexec e s t mi l
+      (fun t mi' l => post t [mi'] l).
+  Proof.
+    intros. replace mi with (fold_right map.putmany map.empty [mi]) in *.
+    2: { simpl. rewrite map.putmany_empty_r. reflexivity. }
+    eapply oldexec.weaken.
+    - eapply exec_implies_oldexec'.
+      + constructor; [constructor|]. intros _ [].
+      + simpl in H. rewrite map.putmany_empty_r in H. eassumption.
+    - simpl. intros. fwd. inversion H0p1. subst. inversion H4. subst. simpl.
+      rewrite map.putmany_empty_r. assumption.
+  Qed.
 End WithParams.
