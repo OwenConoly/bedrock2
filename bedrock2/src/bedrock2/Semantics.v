@@ -383,7 +383,10 @@ Section WithParams.
     all_disj (mi :: m) ->
     forall mj, In mj m ->
           map.disjoint mi mj.
-  Proof. Admitted.
+  Proof.
+    intros Hdisj. intros mj. induction m; [intros []|].
+    intros H. destruct H as [H|H].
+    - subst. inversion Hdisj. subst. clear Hdisj. inversion H1. clear H1. subst. apply IHm.
 
   Lemma all_disj_putmany_commute m :
     all_disj m ->
@@ -414,6 +417,37 @@ Section WithParams.
            destruct (map.get a0 a); [|reflexivity]. exfalso. eapply H'; eauto.
   Qed.
 
+  Lemma put_putmany_assoc (mi mj : mem) a v :
+    map.get mj a = None ->
+    map.put (map.putmany mi mj) a v = map.putmany (map.put mi a v) mj.
+  Proof.
+    rewrite map.put_putmany_commute. Search (map.putmany (map.putmany _ _) _).
+    replace (map.put mi a v) with (map.putmany mi (map.put map.empty a v)).
+    2: { Search (map.putmany _ (map.put _ _ _)). rewrite <- map.put_putmany_commute.
+         rewrite map.putmany_empty_r.
+         reflexivity. }
+    rewrite <- map.putmany_assoc. Search (map.putmany ?x ?y = map.putmany ?y ?x).
+    intros H. f_equal.
+    rewrite map.putmany_comm.
+    - rewrite <- map.put_putmany_commute. rewrite map.putmany_empty_r. reflexivity.
+    - Search (map.disjoint (map.put _ _ _)). apply map.disjoint_put_l; [assumption|].
+      apply map.disjoint_empty_l.
+  Qed.
+
+  Lemma all_disj_put m m1 mi m2 a v0 v :
+    all_disj m ->
+    m = m1 ++ [mi] ++ m2 ->
+    map.get mi a = Some v0 ->
+    map.put (fold_right map.putmany map.empty m) a v = fold_right map.putmany map.empty (m1 ++ [map.put mi a v] ++ m2).
+  Proof.
+    intros H1 H2. subst. revert H1. induction m1; simpl; intros Hdisj Hget.
+    - inversion Hdisj. subst. apply put_putmany_assoc.
+      destruct (map.get (fold_right _ _ _) _) eqn:E; [|reflexivity].
+      exfalso. eapply H2; eassumption.
+    - rewrite map.put_putmany_commute. f_equal. apply IHm1; [|assumption].
+      inversion Hdisj. subst. assumption.
+  Qed.                                                            
+    
   Lemma all_disj_getmany_of_tuple sz m mi keys v :
     all_disj m ->
     In mi m ->
@@ -428,8 +462,52 @@ Section WithParams.
       destruct_one_match; [|congruence]. apply Hget in E. rewrite E.
       destruct_one_match; [|congruence]. intros H. inversion H. clear H. subst.
       apply IHsz in E0. cbv [map.getmany_of_tuple] in E0. rewrite E0. reflexivity.
-  Qed.      
+  Qed.
 
+  Lemma all_disj_sub_domain (mi mj : mem) m1 m2 :
+    map.sub_domain mj mi ->
+    all_disj (m1 ++ [mi] ++ m2) ->
+    all_disj (m1 ++ [mj] ++ m2).
+  Proof.
+
+  Lemma all_disj_putmany_of_tuple sz m mi m1 m2 keys v v0 :
+    all_disj m ->
+    m = m1 ++ [mi] ++ m2 ->
+    @map.getmany_of_tuple _ _ _ mi sz keys = Some v0 ->
+    @map.putmany_of_tuple _ _ _ _ keys v (fold_right map.putmany map.empty m) = fold_right map.putmany map.empty (m1 ++ [@map.putmany_of_tuple _ _ _ _ keys v mi] ++ m2).
+  Proof.
+    intros Hdisj Hmi. pose proof all_disj_put as Hput. subst.
+    induction sz.
+    - destruct keys. cbv [map.getmany_of_tuple]. simpl. auto.
+    - destruct keys. cbv [map.getmany_of_tuple]. simpl.
+      destruct_one_match; [|congruence]. destruct_one_match; [|congruence].
+      intros H. inversion H. clear H. subst. simpl in Hput.
+      pose proof E0 as E0'.
+      eapply map.putmany_of_tuple_preserves_domain in E0.
+      destruct E0 as [E0 E1]. apply E0 in E. fwd.
+      erewrite <- Hput.
+      3: reflexivity.
+      2: { eapply all_disj_sub_domain.  2: eassumption. apply E1. }
+      2: eassumption.
+      specialize IHsz with (1 := E0'). rewrite IHsz. reflexivity.
+  Qed.
+
+  Lemma all_disj_store m m1 m2 sz mi mi' a v :
+    all_disj m ->
+    m = m1 ++ [mi] ++ m2 ->
+    store sz mi a v = Some mi' ->
+    store sz (fold_right map.putmany map.empty m) a v = Some (fold_right map.putmany map.empty (m1 ++ [mi'] ++ m2)).
+  Proof.
+    intros Hdisj Hmi Hst. cbv [store store_Z store_bytes load_bytes] in *.
+    pose proof all_disj_getmany_of_tuple as Hget.
+    assert (Hin : In mi m).
+    { subst. clear. apply in_app_iff. right. apply in_app_iff. left. repeat constructor. }
+    specialize Hget with (1 := Hdisj) (2 := Hin).
+    destruct_one_match_hyp; [|congruence]. inversion Hst. clear Hst. subst.
+    pose proof E as E'. apply Hget in E'. rewrite E'. clear E'. f_equal.
+    eapply all_disj_putmany_of_tuple; eauto.
+  Qed.
+  
   Lemma all_disj_load m sz mi a v :
     all_disj m ->
     In mi m ->
@@ -443,7 +521,7 @@ Section WithParams.
     destruct_one_match_hyp; [|congruence]. inversion E. subst. clear E.
     apply Hget in E0. rewrite E0. reflexivity.
   Qed.
-  
+
   Lemma exec_implies_oldexec e s t m l post :
     all_disj m ->
     exec e s t m l post ->
@@ -456,7 +534,7 @@ Section WithParams.
     - econstructor; eauto using all_disj_load.
     - econstructor; eauto.
 
-      
+    
                 
     
     
