@@ -8,6 +8,14 @@ Require Export bedrock2.Memory.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
+Require Import Coq.ZArith.BinInt.
+Require Import Coq.micromega.Lia.
+Require Coq.Arith.PeanoNat.
+Require Import bedrock2.Array.
+
+Open Scope Z_scope.
+
+
 (* BW is not needed on the rhs, but helps infer width *)
 Definition LogItem{width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte} :=
   ((mem * String.string * list word) * (mem * list word))%type.
@@ -399,7 +407,13 @@ Section WithParams.
     map.disjoint mi (fold_right map.putmany map.empty m) ->
     (forall mj : mem, In mj m -> map.disjoint mi mj).
   Proof.
-    Admitted.
+    intros H. induction m; intros mj Hin.
+    - destruct Hin.
+    - simpl in H. apply map.disjoint_putmany_r in H. destruct H as [H1 H2].
+      destruct Hin as [Hin|Hin].
+      + subst. assumption.
+      + apply IHm; assumption.
+  Qed.
 
   Lemma all_disj_putmany_commute m :
     all_disj m ->
@@ -591,11 +605,27 @@ Section WithParams.
         apply H. clear H. auto.
   Qed.
 
+  Lemma putmany_sub_domain (mi mi' mj mj' : mem) :
+    map.sub_domain mi mi' ->
+    map.sub_domain mj mj' ->
+    map.sub_domain (map.putmany mi mj) (map.putmany mi' mj').
+  Proof.
+    intros H1 H2. pose proof map.putmany_spec mi mj. pose proof map.putmany_spec mi' mj'.
+    intro. intros. specialize (H k). specialize (H0 k).
+    destruct H0 as [H0|H0].
+    - fwd. eexists. eassumption.
+    - destruct H as [H|H].
+      + fwd. apply H2 in Hp0. fwd. congruence.
+      + fwd. rewrite H0p1. rewrite Hp1 in H3. apply H1 in H3. assumption.
+  Qed.
+
   Lemma putmany_same_domain (mi mi' mj mj' : mem) :
     map.same_domain mi mi' ->
     map.same_domain mj mj' ->
     map.same_domain (map.putmany mi mj) (map.putmany mi' mj').
-  Proof. Admitted.
+  Proof.
+    intros H1 H2. destruct H1, H2. split; apply putmany_sub_domain; auto.
+  Qed.
 
   Lemma same_domain_flattened m1 m2 :
     same_domain m1 m2 ->
@@ -606,12 +636,30 @@ Section WithParams.
     - simpl. Search map.same_domain. apply putmany_same_domain; assumption.
   Qed.
 
+  Lemma same_domain_disj' mi m m' :
+    (forall mj, In mj m -> map.disjoint mi mj) ->
+    same_domain m m' ->
+    (forall mj, In mj m' -> map.disjoint mi mj).
+  Proof.
+    intros H1 H2. induction H2; [assumption|].
+    intros. destruct H0 as [H0|H0].
+    - subst. apply map.disjoint_comm. eapply map.sub_domain_disjoint.
+      2: apply H. apply map.disjoint_comm. apply H1. left. reflexivity.
+    - apply IHsame_domain. 2: assumption. intros. apply H1. right. assumption.
+  Qed.
+
   Lemma same_domain_disj m m' :
     all_disj m ->
     same_domain m m' ->
     all_disj m'.
-  Proof. Admitted.
-        
+  Proof.
+    intros H1 H2. induction H2; [constructor|].
+    inversion H1. subst. clear H1.
+    constructor; [solve[auto]|].
+    intros. eapply same_domain_disj'; eauto. intros.
+    eapply map.sub_domain_disjoint; [|apply H]. apply H5. assumption.
+  Qed.
+  
   Lemma exec_implies_oldexec' e s t m l post :
     all_disj m ->
     exec e s t m l post ->
@@ -680,17 +728,6 @@ Section WithParams.
     | cmd.while c body => cmd.while c (some_dce body)
     | _ => s
     end.
-
-  Print Interface.word.
-
-  Open Scope Z_scope. Search (Z -> Z -> Z).
-  Require Import Coq.ZArith.BinInt. Print anybytes.
-  Search mem. Search (_ -> map.rep).
-  Print OfFunc.map.of_func. Search (_ -> list nat). Print seq. Search byte.
-  Require Import Coq.micromega.Lia.
-  Require Coq.Arith.PeanoNat.
-
-  Require Import bedrock2.Array.
   
   Lemma anybytes_exist n base :
     le n (Z.to_nat (Z.pow 2 width - Z.of_nat base)) ->
