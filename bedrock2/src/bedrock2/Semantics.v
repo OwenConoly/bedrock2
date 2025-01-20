@@ -393,7 +393,7 @@ Section WithParams.
   Proof.
     induction m.
     - intros _. simpl. apply map.disjoint_empty_r.
-    - intros H. simpl. Search (map.disjoint _ (map.putmany _ _)).
+    - intros H. simpl.
       apply map.disjoint_putmany_r. 
       inversion H. subst. clear H.
       split.
@@ -436,7 +436,7 @@ Section WithParams.
       rewrite all_disj_putmany_commute by assumption. simpl.
       rewrite <- all_disj_putmany_commute by assumption.
       inversion Hin; subst.
-      + Search (map.get (map.putmany _ _)). apply map.get_putmany_right. assumption.
+      + apply map.get_putmany_right. assumption.
       + rewrite map.get_putmany_left.
         -- apply IHm; assumption.
         -- specialize (H2 _ H).
@@ -448,17 +448,16 @@ Section WithParams.
     map.get mj a = None ->
     map.put (map.putmany mi mj) a v = map.putmany (map.put mi a v) mj.
   Proof.
-    rewrite map.put_putmany_commute. Search (map.putmany (map.putmany _ _) _).
+    rewrite map.put_putmany_commute.
     replace (map.put mi a v) with (map.putmany mi (map.put map.empty a v)).
-    2: { Search (map.putmany _ (map.put _ _ _)). rewrite <- map.put_putmany_commute.
+    2: { rewrite <- map.put_putmany_commute.
          rewrite map.putmany_empty_r.
          reflexivity. }
-    rewrite <- map.putmany_assoc. Search (map.putmany ?x ?y = map.putmany ?y ?x).
+    rewrite <- map.putmany_assoc.
     intros H. f_equal.
     rewrite map.putmany_comm.
     - rewrite <- map.put_putmany_commute. rewrite map.putmany_empty_r. reflexivity.
-    - Search (map.disjoint (map.put _ _ _)). apply map.disjoint_put_l; [assumption|].
-      apply map.disjoint_empty_l.
+    - apply map.disjoint_put_l; [assumption|]. apply map.disjoint_empty_l.
   Qed.
 
   Lemma all_disj_put m m1 mi m2 a v0 v :
@@ -633,7 +632,7 @@ Section WithParams.
   Proof.
     intros H. induction H.
     - simpl. apply map.same_domain_refl.
-    - simpl. Search map.same_domain. apply putmany_same_domain; assumption.
+    - simpl. apply putmany_same_domain; assumption.
   Qed.
 
   Lemma same_domain_disj' mi m m' :
@@ -677,7 +676,7 @@ Section WithParams.
       constructor; [|apply same_domain_refl]. eapply store_preserves_domain.
       eassumption.      
     - econstructor; eauto. intros. destruct H3 as [H3 H4]. subst. simpl in H1.
-      Search map.putmany. rewrite map.putmany_comm by assumption.
+      rewrite map.putmany_comm by assumption.
       eapply oldexec.weaken.
       + eapply H1; [assumption|]. constructor; [assumption|]. apply all_disj_alt_conv.
         apply map.disjoint_comm. assumption.
@@ -734,25 +733,22 @@ Section WithParams.
     anybytes (@word.of_Z width word (Z.of_nat base)) (Z.of_nat n)
       (OfFunc.map.of_func (fun (_ : word) => Some Byte.x00) (map (fun x => word.of_Z (Z.of_nat x)) (seq base n))).
   Proof.
-    intros. Check array_1_to_anybytes. eassert (Z.of_nat n = _) as ->.
+    intros. eassert (Z.of_nat n = _) as ->.
     2: { eapply array_1_to_anybytes. instantiate (1 := repeat Byte.x00 n).
          revert base H. induction n.
          - simpl. split; reflexivity.
          - intros. simpl. cbv [Separation.sep]. eexists. eexists. split; [|split].
            3: { replace (word.add (word.of_Z (Z.of_nat base)) (word.of_Z 1)) with (@word.of_Z width word (Z.of_nat (S base))).
                 - apply IHn. lia.
-                - Search word.add. rewrite <- Properties.word.ring_morph_add.
-                  f_equal. lia. }
+                - rewrite <- Properties.word.ring_morph_add. f_equal. lia. }
            2: { reflexivity. }
            split.
-           + apply map.map_ext. Search OfFunc.map.of_func. intros.
+           + apply map.map_ext. intros.
              rewrite map.get_put_dec. destruct_one_match.
-             -- Search (map.get (map.putmany _ _)). rewrite map.get_putmany_left.
+             -- rewrite map.get_putmany_left.
                 ++ rewrite map.get_put_same. reflexivity.
-                ++ Search OfFunc.map.of_func. apply OfFunc.map.get_of_func_notIn.
-                   intros H'. Search (In _ (seq _ _)). Search (In _ (map _ _)).
-                   apply in_map_iff in H'. fwd. apply in_seq in H'p1. Search word.of_Z.
-                   Search word.of_Z.
+                ++ apply OfFunc.map.get_of_func_notIn.
+                   intros H'. apply in_map_iff in H'. fwd. apply in_seq in H'p1.
                    pose proof @Properties.word.of_Z_inj_small width word word_ok as P.
                    specialize P with (1 := H'p0).
                    specialize (P ltac:(lia) ltac:(lia)). clear H'p0. lia.
@@ -760,9 +756,7 @@ Section WithParams.
                 rewrite map.get_put_diff by auto. rewrite map.get_empty. reflexivity.
            + apply map.disjoint_put_l. 2: apply map.disjoint_empty_l.
              apply OfFunc.map.get_of_func_notIn.
-                   intros H'. Search (In _ (seq _ _)). Search (In _ (map _ _)).
-                   apply in_map_iff in H'. fwd. apply in_seq in H'p1. Search word.of_Z.
-                   Search word.of_Z.
+                   intros H'. apply in_map_iff in H'. fwd. apply in_seq in H'p1.
                    pose proof @Properties.word.of_Z_inj_small width word word_ok as P.
                    specialize P with (1 := H'p0).
                    specialize (P ltac:(lia) ltac:(lia)). clear H'p0. lia. }
@@ -779,7 +773,7 @@ Section WithParams.
     clear H0. simpl in H1. pose proof (anybytes_exist (Z.to_nat n) 0) as somebytes.
     simpl. destruct (Z.leb 0 n && (n <=? 2 ^ width)) eqn:E; [|solve [econstructor; eauto]].
     apply andb_prop in E. destruct E as [E1 E2]. apply Z.leb_le in E1, E2.
-    specialize (somebytes ltac:(lia)). Search (Z.of_nat (Z.to_nat _)).
+    specialize (somebytes ltac:(lia)).
     rewrite Znat.Z2Nat.id in somebytes by lia.
     specialize H1 with (1 := somebytes). inversion H1. clear H1. subst. fwd.
     econstructor. 1: reflexivity. assumption.
