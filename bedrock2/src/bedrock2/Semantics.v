@@ -161,7 +161,7 @@ Module exec. Section WithParams.
   | inlinetable: forall x sz ei tbl t m l post i v,
       eval_expr l ei = Some i ->
       load sz (map.of_list_word tbl) i = Some v ->
-      post t m (map.put l x i) ->
+      post t m (map.put l x v) ->
       exec (cmd.inlinetable x sz tbl ei) t m l post
   | stackalloc: forall x n body t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->

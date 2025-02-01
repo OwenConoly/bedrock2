@@ -43,6 +43,10 @@ Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Definition anybytes'{width: Z}{BW: Bitwidth width}{word: word.word width}{listmem: map.map (word * nat) Byte.byte} a n : listmem -> Prop :=
   seps (List.map (fun i m => exists v, ptsto (word.add a (word.of_Z (Z.of_nat i))) v m) (List.seq 0 (Z.to_nat n))).
 
+Definition wordnat_eqb {width: Z}{BW: Bitwidth width}{word: word.word width} : word * nat -> word * nat -> bool. Admitted.
+  Global Instance wordnat_eqb_spec :
+  forall {width: Z}{BW: Bitwidth width}{word: word.word width},
+  word.ok word -> forall a b : word*nat, BoolSpec (a = b) (a <> b) (wordnat_eqb a b). Admitted.
 
 
 
