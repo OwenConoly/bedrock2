@@ -37,17 +37,6 @@ Infix  "<"  := (expr.op ltu)  (in custom bedrock_expr at level 10, no associativ
 Infix ".<"  := (expr.op lts)  (in custom bedrock_expr at level 10, no associativity). (* DRAFT *)
 Infix "=="  := (expr.op  eq)  (in custom bedrock_expr at level 10, no associativity).
 
-(* DRAFT *)
-(* TODO(after dropping Coq 8.14): split "load(" into 'load' '(' *)
-Notation "load1( a )" := (expr.load access_size.one a)
-  (in custom bedrock_expr, a custom bedrock_expr, format "load1( a )").
-Notation "load2( a )" := (expr.load access_size.two a)
-  (in custom bedrock_expr, a custom bedrock_expr, format "load2( a )").
-Notation "load4( a )" := (expr.load access_size.four a)
-  (in custom bedrock_expr, a custom bedrock_expr, format "load4( a )").
-Notation  "load( a )" := (expr.load access_size.word a)
-  (in custom bedrock_expr, a custom bedrock_expr, format "load( a )").
-
 (** Grammar for commands *)
 
 Import cmd.
@@ -100,6 +89,16 @@ Notation "store4( a , v )" := (store access_size.four a v)  (in custom bedrock_c
   a custom bedrock_expr , v custom bedrock_expr, format "store4( a ,  v )").
 Notation  "store( a , v )" := (store access_size.word a v)  (in custom bedrock_cmd,
   a custom bedrock_expr , v custom bedrock_expr, format "store( a ,  v )").
+(* DRAFT *)
+(* TODO(after dropping Coq 8.14): split "load(" into 'load' '(' *)
+Notation "load1( x , a )" := (cmd.load (ident_to_string! x) access_size.one a)
+  (in custom bedrock_cmd, x ident, only parsing, a custom bedrock_expr).
+Notation "load2( x , a )" := (cmd.load (ident_to_string! x) access_size.two a)
+  (in custom bedrock_cmd, x ident, only parsing, a custom bedrock_expr).
+Notation "load4( x , a )" := (cmd.load (ident_to_string! x) access_size.four a)
+  (in custom bedrock_cmd, x ident, only parsing, a custom bedrock_expr).
+Notation "load( x , a )" := (cmd.load (ident_to_string! x) access_size.word a)
+  (in custom bedrock_cmd, x ident, only parsing, a custom bedrock_expr).
 
 Declare Custom Entry bedrock_ident.
 Notation "x" := (ident_to_string! x) (in custom bedrock_ident, x ident, only parsing).
@@ -336,7 +335,7 @@ Module test.
   epose (bedrock_func_body:(stackalloc 64 as x ; /*skip*/ )).
   epose (fun n => bedrock_func_body:(stackalloc n as x ; /*skip*/ )).
   epose (fun n => bedrock_func_body:( {stackalloc n as x ; /*skip*/ } ; /*skip*/ )).
-
+  (*
   epose (bedrock_func_body:(
     stackalloc 64 as b ;
     require (load(1) ^ coq:(expr.literal 231321) ) else { /*skip*/ };
@@ -365,9 +364,9 @@ Module test.
       }
     }
   )).
-
+  *)
   epose bedrock_func_body:($"write" ($1, $"W", $1, $1, $1, $1)).
-
+  (*
   epose bedrock_func_body:(
   stackalloc 64 as $"b";
   if (load($1) ^ $231321) {
@@ -397,7 +396,7 @@ Module test.
       }
     }
   }).
-
+  *)
   epose bedrock_func_body:(
     $_
   ).
