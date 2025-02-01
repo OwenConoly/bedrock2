@@ -16,8 +16,6 @@ Module expr.
   Inductive expr: Set :=
   | literal (v: Z)
   | var (x: String.string)
-  | load (_ : access_size) (addr:expr)
-  | inlinetable (_ : access_size) (table: list Byte.byte) (index: expr)
   | op (op: bopname) (e1 e2: expr)
   | ite (c e1 e2: expr). (* if-then-else expression ("ternary if") *)
 
@@ -44,6 +42,8 @@ Module cmd.
   | set (lhs : String.string) (rhs : expr)
   | unset (lhs : String.string)
   | store (_ : access_size) (address : expr) (value : expr)
+  | load (lhs : String.string) (_ : access_size) (addr:expr)
+  | inlinetable (lhs : String.string) (_ : access_size) (table: list Byte.byte) (index: expr)
   | stackalloc (lhs : String.string) (nbytes : Z) (body : cmd)
   (* { lhs = alloca(nbytes); body; /*allocated memory freed right here*/ } *)
   | cond (condition : expr) (nonzero_branch zero_branch : cmd)
