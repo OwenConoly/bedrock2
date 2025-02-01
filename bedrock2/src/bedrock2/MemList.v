@@ -1,5 +1,16 @@
 Require Import coqutil.Map.Interface coqutil.Lift1Prop. Import map.
 
+Section MapListMap.
+  Context {key value} {map : map.map key value} {listmap : map.map (key * nat) value}.
+  Definition getlevel (n : nat) : listmap -> map :=
+    fold (fun leveln (k_i : key * nat) v => let (k, i) := k_i in
+                                 if Nat.eqb i n then
+                                   put leveln k v else
+                                   leveln) empty.
+  Definition putlevel (n : nat) : listmap -> map -> listmap :=
+    fold (fun lm k v => put lm (k, n) v).
+End MapListMap.
+
 Section Sep.
   Context {key value} {map : map (key * nat) value}.
   Definition emp (P : Prop) := fun m : map => m = empty /\ P.
