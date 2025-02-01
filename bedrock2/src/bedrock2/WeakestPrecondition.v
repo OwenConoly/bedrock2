@@ -1,24 +1,25 @@
 Require Import coqutil.Macros.subst coqutil.Macros.unique coqutil.Map.Interface coqutil.Map.OfListWord.
 Require Import Coq.ZArith.BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import coqutil.dlet bedrock2.Syntax bedrock2.Semantics.
+Require Import bedrock2.MemList.
 
 Section WeakestPrecondition.
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word Byte.byte}.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word Byte.byte} {listmem: map.map (word * nat) Byte.byte}.
   Context {locals: map.map String.string word}.
   Context {ext_spec: ExtSpec}.
-  Implicit Types (t : trace) (m : mem) (l : locals).
+  Implicit Types (t : trace) (m : listmem) (l : locals).
 
   Definition literal v (post : word -> Prop) : Prop :=
     dlet! v := word.of_Z v in post v.
   Definition get (l : locals) (x : String.string) (post : word -> Prop) : Prop :=
     exists v, map.get l x = Some v /\ post v.
-  Definition load s m a (post : _ -> Prop) : Prop :=
+  Definition load s (m : mem) a (post : _ -> Prop) : Prop :=
     exists v, load s m a = Some v /\ post v.
-  Definition store sz m a v post :=
-    exists m', store sz m a v = Some m' /\ post m'.
+  Definition store sz (m : mem) a v post :=
+    exists (m' : mem), store sz m a v = Some m' /\ post m'.
 
   Section WithMemAndLocals.
-    Context (m : mem) (l : locals).
+    Context (l : locals).
     Definition expr_body rec (e : Syntax.expr) (post : word -> Prop) : Prop :=
       match e with
       | expr.literal v =>
@@ -29,12 +30,6 @@ Section WeakestPrecondition.
         rec e1 (fun v1 =>
         rec e2 (fun v2 =>
         post (interp_binop op v1 v2)))
-      | expr.load s e =>
-        rec e (fun a =>
-        load s m a post)
-      | expr.inlinetable s t e =>
-        rec e (fun a =>
-        load s (map.of_list_word t) a post)
       | expr.ite c e1 e2 =>
         rec c (fun b => rec (if word.eqb b (word.of_Z 0) then e2 else e1) post)
     end.
@@ -56,51 +51,65 @@ Section WeakestPrecondition.
 
   Section WithFunctions.
     Context (e: env).
-    Definition dexpr m l e v := expr m l e (eq v).
-    Definition dexprs m l es vs := list_map (expr m l) es (eq vs).
+    Definition dexpr l e v := expr l e (eq v).
+    Definition dexprs l es vs := list_map (expr l) es (eq vs).
     (* All cases except cmd.while and cmd.call can be denoted by structural recursion
        over the syntax.
        For cmd.while and cmd.call, we fall back to the operational semantics *)
-    Definition cmd_body (rec:_->_->_->_->_->Prop) (c : cmd) (t : trace) (m : mem) (l : locals)
-             (post : trace -> mem -> locals -> Prop) : Prop :=
+    Definition cmd_body (rec:_->_->_->_->_->Prop) (c : cmd) (t : trace) (m : listmem) (l : locals)
+             (post : trace -> listmem -> locals -> Prop) : Prop :=
       (* give value of each pure expression when stating its subproof *)
       match c with
       | cmd.skip => post t m l
       | cmd.set x ev =>
-        exists v, dexpr m l ev v /\
+        exists v, dexpr l ev v /\
         dlet! l := map.put l x v in
         post t m l
       | cmd.unset x =>
         dlet! l := map.remove l x in
         post t m l
       | cmd.store sz ea ev =>
-        exists a, dexpr m l ea a /\
-        exists v, dexpr m l ev v /\
-        store sz m a v (fun m =>
-        post t m l)
+        exists a, dexpr l ea a /\
+        exists v, dexpr l ev v /\
+        exists n, store sz (getlevel n m) a v (fun leveln' =>
+        post t (putlevel n m leveln') l)
+    (*| expr.load s e =>
+        rec e (fun a =>
+        load s m a post)
+      | expr.inlinetable s t e =>
+        rec e (fun a =>
+        load s (map.of_list_word t) a post)*)
+      | cmd.load x sz ea =>
+        exists a, dexpr l ea a /\
+        exists n, load sz (getlevel n m) a (fun v =>
+        post t m (map.put l x v))
+      | cmd.inlinetable x sz tbl ei =>
+        exists i, dexpr l ei i /\
+        load sz (map.of_list_word tbl) i (fun v =>
+        post t m (map.put l x v))
       | cmd.stackalloc x n c =>
         Z.modulo n (bytes_per_word width) = 0 /\
-        forall a mStack mCombined,
-          anybytes a n mStack -> map.split mCombined m mStack ->
+        forall a i mStack mCombined,
+          anybytes a n mStack -> map.split mCombined m (putlevel i map.empty mStack) ->
           dlet! l := map.put l x a in
-          rec c t mCombined l (fun t' mCombined' l' =>
-          exists m' mStack',
-          anybytes a n mStack' /\ map.split mCombined' m' mStack' /\
+          rec c t mCombined l (fun t' (mCombined' : listmem) l' =>
+          exists (m' : listmem) mStack',
+          anybytes a n mStack' /\ map.split mCombined' m' (putlevel i map.empty mStack') /\
           post t' m' l')
       | cmd.cond br ct cf =>
-        exists v, dexpr m l br v /\
+        exists v, dexpr l br v /\
         (word.unsigned v <> 0%Z -> rec ct t m l post) /\
         (word.unsigned v = 0%Z -> rec cf t m l post)
       | cmd.seq c1 c2 =>
-        rec c1 t m l (fun t m l => rec c2 t m l post)
+        rec c1 t m l (fun t (m : listmem) l => rec c2 t m l post)
       | cmd.while _ _ => Semantics.exec e c t m l post
       | cmd.call binds fname arges =>
-        exists args, dexprs m l arges args /\
+        exists args, dexprs l arges args /\
         Semantics.call e fname t m args (fun t m rets =>
           exists l', map.putmany_of_list_zip binds rets l = Some l' /\
           post t m l')
       | cmd.interact binds action arges =>
-        exists args, dexprs m l arges args /\
+        exists args, dexprs l arges args /\
         exists mKeep mGive, map.split m mKeep mGive /\
         ext_spec t mGive action args (fun mReceive rets =>
           exists l', map.putmany_of_list_zip binds rets l = Some l' /\
@@ -110,7 +119,7 @@ Section WeakestPrecondition.
     Fixpoint cmd c := cmd_body cmd c.
   End WithFunctions.
 
-  Definition func call '(innames, outnames, c) (t : trace) (m : mem) (args : list word) (post : trace -> mem -> list word -> Prop) :=
+  Definition func call '(innames, outnames, c) (t : trace) (m : listmem) (args : list word) (post : trace -> listmem -> list word -> Prop) :=
       exists l, map.of_list_zip innames args = Some l /\
       cmd call c t m l (fun t m l =>
         list_map (get l) outnames (fun rets =>
