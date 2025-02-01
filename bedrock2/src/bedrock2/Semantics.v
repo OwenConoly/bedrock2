@@ -127,8 +127,8 @@ Module exec. Section WithParams.
   Context {locals: map.map String.string word}.
   Context {ext_spec: ExtSpec}.
   Section WithEnv.
-  Context (e: env).
-
+    Context (e: env).
+    
   Inductive exec: cmd -> trace -> listmem -> locals ->
                   (trace -> listmem -> locals -> Prop) -> Prop :=
   | skip: forall t m l post,
@@ -141,12 +141,15 @@ Module exec. Section WithParams.
   | unset: forall x t m l post,
       post t m (map.remove l x) ->
       exec (cmd.unset x) t m l post
-  | store: forall sz ea ev n t m l post a v leveln',
+  | store: forall sz ea ev n t m l post a v v0,
       eval_expr l ea = Some a ->
       eval_expr l ev = Some v ->
-      store sz (getlevel n m) a v = Some leveln' ->
-      post t (putlevel n m leveln') l ->
-      exec (cmd.store sz ea ev) t m l post
+      m = map.split anybytes' a (bytes_per sz) * R ->
+      m' =* array_byte a (to_bytes sz v) * R ->
+      anybytes' a (bytes_per sz) ->
+      map.get m (a, n) = v0 ->
+      post t (map.put m (a, n) (word.of_Z (LittleEndianList.le_combine [v]))) l ->
+      exec (cmd.store access_size.one ea ev) t m l post
   (*| expr.load aSize a => *)
   (* a' <- eval_expr a; *)
   (* load aSize m a' *)

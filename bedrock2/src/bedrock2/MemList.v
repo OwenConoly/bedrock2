@@ -36,17 +36,50 @@ Notation "m =* P" := ((P%sep) m) (at level 70, only parsing).
 Notation "m =*> P" := (exists R, (sep P R) m) (at level 70, only parsing).
 
 
+Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth coqutil.Word.LittleEndianList.
+Require Import bedrock2.Syntax.
+Print LittleEndianList.le_combine.
+Print LittleEndianList.le_split.
+Search access_size.access_size.
+Require Import Coq.ZArith.ZArith.
 
+Section WithParameters.
+  Context {width: Z}{BW: Bitwidth width}{word: word.word width}{listmem: map.map (word * nat) Byte.byte}.
 
-Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
+Definition wordnat_eqb : word * nat -> word * nat -> bool. Admitted.
 
-Definition anybytes'{width: Z}{BW: Bitwidth width}{word: word.word width}{listmem: map.map (word * nat) Byte.byte} a n : listmem -> Prop :=
-  seps (List.map (fun i m => exists v, ptsto (word.add a (word.of_Z (Z.of_nat i))) v m) (List.seq 0 (Z.to_nat n))).
-
-Definition wordnat_eqb {width: Z}{BW: Bitwidth width}{word: word.word width} : word * nat -> word * nat -> bool. Admitted.
-  Global Instance wordnat_eqb_spec :
-  forall {width: Z}{BW: Bitwidth width}{word: word.word width},
+Global Instance wordnat_eqb_spec :
   word.ok word -> forall a b : word*nat, BoolSpec (a = b) (a <> b) (wordnat_eqb a b). Admitted.
+
+(*Lemma load_one_of_sep (addr : word) (value : Init.Byte.byte) (R : listmem -> Prop) (m : listmem) :
+    m =* ptsto addr value * R ->
+    Memory.load access_size.one m addr = Some (word.of_Z (Byte.byte.unsigned value)).*)
+
+  Open Scope Z_scope.
+
+  Definition bytes_per_word(width: Z): Z := (width + 7) / 8.
+
+  Definition bytes_per sz :=
+    match sz with
+      | access_size.one => 1 | access_size.two => 2 | access_size.four => 4
+      | access_size.word => Z.to_nat (bytes_per_word width)
+    end%nat. Print LittleEndianList.le_split.
+
+  Definition to_bytes (w : word) (sz : access_size) : list Byte.byte :=
+    LittleEndianList.le_split (bytes_per sz) (word.unsigned w).
+
+  Definition of_bytes (l : list Byte.byte) : word :=
+    word.of_Z (LittleEndianList.le_combine l).
+  
+  Fixpoint array_byte (start : word) (xs : list Byte.byte) :=
+    match xs with
+    | nil => emp True
+    | cons x xs => sep (ptsto start x) (array_byte (word.add start (word.of_Z 1)) xs)
+    end.
+
+  Definition anybytes' a n m : Prop :=
+    exists l, length l = n /\ array_byte a l m.
+End WithParameters.
 
 
 
