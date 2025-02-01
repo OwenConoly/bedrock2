@@ -89,12 +89,12 @@ Section WeakestPrecondition.
         post t m (map.put l x v))
       | cmd.stackalloc x n c =>
         Z.modulo n (bytes_per_word width) = 0 /\
-        forall a i mStack mCombined,
-          anybytes a n mStack -> map.split mCombined m (putlevel i map.empty mStack) ->
+        forall a mStack mCombined,
+          anybytes' a n mStack -> map.split mCombined m mStack ->
           dlet! l := map.put l x a in
           rec c t mCombined l (fun t' (mCombined' : listmem) l' =>
           exists (m' : listmem) mStack',
-          anybytes a n mStack' /\ map.split mCombined' m' (putlevel i map.empty mStack') /\
+          anybytes' a n mStack' /\ map.split mCombined' m' mStack' /\
           post t' m' l')
       | cmd.cond br ct cf =>
         exists v, dexpr l br v /\

@@ -165,14 +165,14 @@ Module exec. Section WithParams.
       exec (cmd.inlinetable x sz tbl ei) t m l post
   | stackalloc: forall x n body t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
-      (forall a i mStack mCombined,
-        anybytes a n mStack ->
-        map.split mCombined mSmall (putlevel i map.empty mStack) ->
+      (forall a mStack mCombined,
+        anybytes' a n mStack ->
+        map.split mCombined mSmall mStack ->
         exec body t mCombined (map.put l x a)
           (fun t' mCombined' l' =>
             exists mSmall' mStack',
-              anybytes a n mStack' /\
-              map.split mCombined' mSmall' (putlevel i map.empty mStack') /\
+              anybytes' a n mStack' /\
+              map.split mCombined' mSmall' mStack' /\
               post t' mSmall' l')) ->
       exec (cmd.stackalloc x n body) t mSmall l post
   | if_true: forall t m l e c1 c2 post v,

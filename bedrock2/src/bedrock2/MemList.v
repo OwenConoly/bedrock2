@@ -38,6 +38,13 @@ Notation "m =*> P" := (exists R, (sep P R) m) (at level 70, only parsing).
 
 
 
+Require Import BinIntDef coqutil.Word.Interface coqutil.Word.Bitwidth.
+
+Definition anybytes'{width: Z}{BW: Bitwidth width}{word: word.word width}{listmem: map.map (word * nat) Byte.byte} a n : listmem -> Prop :=
+  seps (List.map (fun i m => exists v, ptsto (word.add a (word.of_Z (Z.of_nat i))) v m) (List.seq 0 (Z.to_nat n))).
+
+
+
 
 
 
