@@ -4,7 +4,7 @@ Require coqutil.Datatypes.ListSet.
 Require Import bedrock2.Syntax.
 Require Import bedrock2.WeakestPrecondition.
 Require Import bedrock2.WeakestPreconditionProperties.
-Require Import bedrock2.Loops.
+(*Require Import bedrock2.Loops.*)
 Require Import bedrock2.Map.SeparationLogic bedrock2.Scalars.
 
 Definition spec_of (procname:String.string) := Semantics.env -> Prop.
@@ -276,10 +276,10 @@ Ltac straightline :=
       let get' := eval cbv [get] in @get in
       change (get' w W L l x P); cbv beta
   | |- load _ _ _ _ => cbv beta delta [load]
-  | |- @Loops.enforce ?width ?word ?locals ?names ?values ?map =>
+  (*| |- @Loops.enforce ?width ?word ?locals ?names ?values ?map =>
     let values := eval cbv in values in
     change (@Loops.enforce width word locals names values map);
-    exact (conj (eq_refl values) eq_refl)
+    exact (conj (eq_refl values) eq_refl)*)
   | |- @eq (@coqutil.Map.Interface.map.rep String.string Interface.word.rep _) _ _ =>
     eapply SortedList.eq_value; exact eq_refl
   | |- @map.get String.string Interface.word.rep ?M ?m ?k = Some ?e' =>
@@ -322,7 +322,7 @@ Ltac straightline :=
   | |- exists x, ?P /\ ?Q =>
     let x := fresh x in refine (let x := _ in ex_intro (fun x => P /\ Q) x _);
                         split; [solve [repeat straightline]|]
-  | |- exists x, Markers.split (?P /\ ?Q) =>
+  (*| |- exists x, Markers.split (?P /\ ?Q) =>
     let x := fresh x in refine (let x := _ in ex_intro (fun x => P /\ Q) x _);
                         split; [solve [repeat straightline]|]
   | |- Markers.unique (exists x, Markers.split (?P /\ ?Q)) =>
@@ -335,7 +335,7 @@ Ltac straightline :=
                        split; [eabstract (repeat straightline) | change Q]
                      | |- exists _, _ => letexists
                      end); []
-  | |- Markers.split ?G => change G; split
+  | |- Markers.split ?G => change G; split*)
   | |- True => exact I
   | |- False \/ _ => right
   | |- _ \/ False => left
