@@ -33,7 +33,6 @@ Require Import bedrock2.ProgramLogic bedrock2.Scalars.
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Tactics.rdelta.
 Require Import bedrock2.MemList.
-Check Scalars.load_one_of_sep.
 Require Import coqutil.Map.Properties.
 Require Import coqutil.Word.Bitwidth.
 
@@ -41,14 +40,12 @@ Section WithParameters.
   Context {BW: Bitwidth 32} {word: word.word 32} {mem: map.map word Byte.byte} {listmem: map.map (word * nat) Byte.byte} {locals: map.map String.string word}.
   Context {word_ok: word.ok word} {locals_ok: map.ok locals} {mem_ok: map.ok mem} {listmem_ok: map.ok listmem}.
   Context {ext_spec: ExtSpec} {ext_spec_ok: ext_spec.ok ext_spec}.
-  Locate "=*".
+  
   Instance spec_of_swap : spec_of "swap" :=
     fnspec! "swap" a_addr b_addr / a b R,
     { requires t m := m =* ptsto a_addr a * ptsto b_addr b * R;
       ensures T M :=  M =* ptsto a_addr b * ptsto b_addr a * R /\ T = t }.
 
-  Check cmd. Print cmd.load.
-  Check load_one_of_sep. Check dexpr.
   Lemma load_one_of_sep_memlist t m l addr value R x ea e  :
     m =* ptsto addr value * R ->
     dexpr l ea addr ->
@@ -63,7 +60,7 @@ Section WithParameters.
       - assumption.
       - cbv [emp]. auto. }
     auto.
-  Qed. Check cmd.store.
+  Qed.
 
   Lemma store_one_of_sep_memlist t m l addr val0 val R ea ev e :
     m =* ptsto addr val0 * R ->
@@ -230,13 +227,10 @@ Section WithParameters.
     load1(b, y)
   }.
 
-  Check byte_to_word_to_byte.
   Instance spec_of_stackswap : spec_of "stackswap" :=
     fnspec! "stackswap" a b / abyte bbyte ~> B A,
     { requires t m := a = of_bytes [abyte] /\ b = of_bytes [bbyte];
       ensures t' m' := t' = t /\ m' = m /\ A = b /\ B = a }.
-
-  Check load_one_of_sep_memlist.
   
   Lemma cmd_stackalloc e x n s t m l post :
     cmd e (cmd.stackalloc x n s) t m l post = (n mod bytes_per_word 32 = 0 /\
@@ -252,7 +246,6 @@ Section WithParameters.
             map.split mCombined' m' mStack' /\ post t' m' l')))).
   Proof. reflexivity. Qed.
 
-  Check cmd.call.
   Lemma cmd_call e args f rets t m l post :
     cmd e (cmd.call args f rets) t m l post = (exists args0 : list word,
      dexprs l rets args0 /\
