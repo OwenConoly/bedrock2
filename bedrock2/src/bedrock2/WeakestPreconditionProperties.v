@@ -1,5 +1,6 @@
 Require Import coqutil.Macros.subst coqutil.Macros.unique coqutil.Map.Interface coqutil.Word.Properties.
 Require Import coqutil.Word.Bitwidth.
+Require Import coqutil.Tactics.fwd.
 Require bedrock2.WeakestPrecondition.
 
 Require Import Coq.Classes.Morphisms.
@@ -91,9 +92,8 @@ Section WeakestPrecondition.
         { eapply Proper_expr.
           { cbv [pointwise_relation Basics.impl]; intuition eauto 2. }
           { eauto. } }
-        { destruct H3. eexists. eapply Proper_store; eauto; cbv [pointwise_relation Basics.impl]; eauto. } } }
-    { destruct H1. destruct H1. destruct H2. eexists. split; [eapply H1|].
-      eexists. eapply Proper_load. 2: eapply H2. repeat intro. eauto. }
+        { fwd. do 4 eexists. intuition eauto. } } }
+    { fwd. eexists. intuition eauto. do 3 eexists. intuition eauto. }
     { destruct H1 as (?&?&?). eexists. split.
       { eapply Proper_expr.
         { cbv [pointwise_relation Basics.impl]; intuition eauto 2. }
@@ -236,7 +236,6 @@ Section WeakestPrecondition.
   Proof.
     ind_on Syntax.cmd; repeat (t; try match reverse goal with H : WeakestPrecondition.expr _ _ _ |- _ => eapply expr_sound in H end).
     { destruct H0. econstructor; t. }
-    { destruct H0. econstructor; t. }
     { destruct (BinInt.Z.eq_dec (Interface.word.unsigned x) (BinNums.Z0)) as [Hb|Hb]; cycle 1.
       { econstructor; t. }
       { eapply Semantics.exec.if_false; t. } }
@@ -285,7 +284,7 @@ Section WeakestPrecondition.
       eapply expr_complete in H0.
       eexists. split. 1: eassumption.
       eexists. split. 1: eassumption.
-      eexists. eexists. eauto. }
+      do 4 eexists. eauto. }
     { eapply expr_complete in H.
       eexists. split. 1: eassumption.
       eexists. eexists. eauto. }

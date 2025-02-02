@@ -149,7 +149,7 @@ Module exec. Section WithParams.
       map.split m mStore mSmall ->
       map.split m' mStore' mSmall ->
       post t m' l ->
-      exec (cmd.store access_size.one ea ev) t m l post
+      exec (cmd.store sz ea ev) t m l post
   (*| expr.load aSize a => *)
   (* a' <- eval_expr a; *)
   (* load aSize m a' *)

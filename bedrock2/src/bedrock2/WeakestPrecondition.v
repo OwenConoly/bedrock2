@@ -71,8 +71,12 @@ Section WeakestPrecondition.
       | cmd.store sz ea ev =>
         exists a, dexpr l ea a /\
         exists v, dexpr l ev v /\
-        exists n, store sz (getlevel n m) a v (fun leveln' =>
-        post t (putlevel n m leveln') l)
+        exists mStore mStore' mSmall m',
+        anybytes' a (bytes_per (width := width) sz) mStore /\
+        array_byte a (to_bytes v sz) mStore' /\
+        map.split m mStore mSmall /\
+        map.split m' mStore' mSmall /\
+        post t m' l
     (*| expr.load s e =>
         rec e (fun a =>
         load s m a post)
@@ -81,8 +85,10 @@ Section WeakestPrecondition.
         load s (map.of_list_word t) a post)*)
       | cmd.load x sz ea =>
         exists a, dexpr l ea a /\
-        exists n, load sz (getlevel n m) a (fun v =>
-        post t m (map.put l x v))
+        exists v mLoad mSmall, length v = bytes_per (width := width) sz /\
+        array_byte a v mLoad /\
+        map.split m mLoad mSmall /\
+        post t m (map.put l x (of_bytes v))
       | cmd.inlinetable x sz tbl ei =>
         exists i, dexpr l ei i /\
         load sz (map.of_list_word tbl) i (fun v =>
@@ -90,11 +96,11 @@ Section WeakestPrecondition.
       | cmd.stackalloc x n c =>
         Z.modulo n (bytes_per_word width) = 0 /\
         forall a mStack mCombined,
-          anybytes' a n mStack -> map.split mCombined m mStack ->
+          anybytes' a (Z.to_nat n) mStack -> map.split mCombined m mStack ->
           dlet! l := map.put l x a in
           rec c t mCombined l (fun t' (mCombined' : listmem) l' =>
           exists (m' : listmem) mStack',
-          anybytes' a n mStack' /\ map.split mCombined' m' mStack' /\
+          anybytes' a (Z.to_nat n) mStack' /\ map.split mCombined' m' mStack' /\
           post t' m' l')
       | cmd.cond br ct cf =>
         exists v, dexpr l br v /\
