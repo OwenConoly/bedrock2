@@ -141,22 +141,24 @@ Module exec. Section WithParams.
   | unset: forall x t m l post,
       post t m (map.remove l x) ->
       exec (cmd.unset x) t m l post
-  | store: forall sz ea ev n t m l post a v v0,
+  | store: forall sz ea ev t m mStore mStore' mSmall m' l post a v,
       eval_expr l ea = Some a ->
       eval_expr l ev = Some v ->
-      m = map.split anybytes' a (bytes_per sz) * R ->
-      m' =* array_byte a (to_bytes sz v) * R ->
-      anybytes' a (bytes_per sz) ->
-      map.get m (a, n) = v0 ->
-      post t (map.put m (a, n) (word.of_Z (LittleEndianList.le_combine [v]))) l ->
+      anybytes' a (bytes_per (width := width) sz) mStore ->
+      array_byte a (to_bytes v sz) mStore' ->
+      map.split m mStore mSmall ->
+      map.split m' mStore' mSmall ->
+      post t m' l ->
       exec (cmd.store access_size.one ea ev) t m l post
   (*| expr.load aSize a => *)
   (* a' <- eval_expr a; *)
   (* load aSize m a' *)
-  | load: forall x sz ea n t m l post a v,
+  | load: forall x sz ea t m mLoad mSmall l post a v,
       eval_expr l ea = Some a ->
-      load sz (getlevel n m) a = Some v ->
-      post t m (map.put l x v) ->
+      length v = bytes_per (width := width) sz ->
+      array_byte a v mLoad ->
+      map.split m mLoad mSmall ->
+      post t m (map.put l x (of_bytes v)) ->
       exec (cmd.load x sz ea) t m l post
   (* | expr.inlinetable aSize t index => *)
   (*     index' <- eval_expr index; *)
@@ -169,12 +171,12 @@ Module exec. Section WithParams.
   | stackalloc: forall x n body t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
       (forall a mStack mCombined,
-        anybytes' a n mStack ->
+        anybytes' a (Z.to_nat n) mStack ->
         map.split mCombined mSmall mStack ->
         exec body t mCombined (map.put l x a)
           (fun t' mCombined' l' =>
             exists mSmall' mStack',
-              anybytes' a n mStack' /\
+              anybytes' a (Z.to_nat n) mStack' /\
               map.split mCombined' mSmall' mStack' /\
               post t' mSmall' l')) ->
       exec (cmd.stackalloc x n body) t mSmall l post
