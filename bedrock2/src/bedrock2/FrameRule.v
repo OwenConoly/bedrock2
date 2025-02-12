@@ -238,3 +238,268 @@ Section semantics.
   Qed.
 
 End semantics.
+
+Section semantics.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {locals: map.map String.string word}.
+  Context {ext_spec: ExtSpec}.
+  Context {mem_ok: map.ok mem} {word_ok: word.ok word}.
+  Print mmap.
+
+  Lemma sub_domain_disj {k v} {map : map.map k v} (m mSmall mAdd1 mAdd2 : map) :
+    map.disjoint mAdd1 mAdd2 ->
+    map.sub_domain m (map.putmany mSmall mAdd1) ->
+    map.sub_domain m (map.putmany mSmall mAdd2) ->
+    map.sub_domain m mSmall.
+  Proof. Admitted.
+
+  Lemma sub_split {k v} {map : map.map k v} (mBig mSmall mAdd m garbage : map) :
+    map.split mBig mSmall mAdd ->
+    map.sub_domain m mSmall ->
+    map.split mBig m garbage ->
+    exists garbage',
+      map.split mSmall m garbage'.
+  Proof. Admitted.
+
+  Lemma intersect_load_bytes: forall mSmall (mBig1 mBig2 mAdd1 mAdd2 : mem) sz a v v0,
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      map.disjoint mAdd1 mAdd2 ->
+      load_bytes (bytes_per (width := width) sz) mBig1 a = Some v0 ->
+      load_bytes (bytes_per (width := width) sz) mBig2 a = Some v ->
+      load_bytes (bytes_per (width := width) sz) mSmall a = Some v.
+  Proof.
+    intros *. intros  ? ? ? E0 E1. eapply sep_of_load_bytes in E0, E1.
+    2,3: destruct sz; simpl; destruct width_cases as [W | W]; rewrite W; cbv; discriminate.
+    fwd. unfold sep in E0, E1. fwd.
+    Search ptsto_bytes.
+    assert (H2: map.sub_domain mp mp0).
+    { clear -mem_ok word_ok BW E0p1 E1p1.
+      apply ptsto_bytes_iff_eq_of_list_word_at in E0p1, E1p1.
+      2,3: destruct sz; simpl; destruct width_cases as [W | W]; rewrite W; cbv; discriminate.
+      repeat intro. assert (H': map.get mp k <> None) by congruence.
+      enough (map.get mp0 k <> None).
+      { destruct (map.get mp0 k); eauto || congruence. }
+      subst. Search map.of_list_word_at. apply map.get_of_list_word_at_domain in H'.
+      apply map.get_of_list_word_at_domain. Search (length (tuple.to_list _)).
+      rewrite tuple.length_to_list in *. assumption. }
+    (*clear H3.*) clear E0p2 E1p2 R.
+    assert (H3: map.sub_domain mp mBig1 /\ map.sub_domain mp mBig2).
+    { split.
+      - destruct E0p0 as [? _]; subst. apply map.sub_domain_putmany_r. assumption.
+      - destruct E1p0 as [? _]; subst. apply map.sub_domain_putmany_r. apply map.sub_domain_refl. }
+    clear H2.
+    assert (H4: map.sub_domain mp mSmall).
+    { fwd. destruct H, H0; subst. eapply sub_domain_disj; eauto. }
+
+    erewrite load_bytes_of_sep; [reflexivity|].
+    pose proof (@sub_split _ _ mem) as H'.
+    specialize H' with (1 := H0) (2 := H4) (3 := E1p0). destruct H' as [garbage' H'].
+    exists mp, garbage'. split; [assumption|]. split; [assumption|].
+    instantiate (1 := fun _ => True). exact I.
+  Qed.
+  
+  Lemma intersect_load: forall mSmall mBig1 mBig2 mAdd1 mAdd2 a r (v: word),
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      map.disjoint mAdd1 mAdd2 ->
+      load a mBig1 r = Some v ->
+      load a mBig2 r = Some v ->
+      load a mSmall r = Some v.
+  Proof.
+    unfold load, load_Z. intros. fwd. pose proof intersect_load_bytes as H'.
+    specialize H' with (1 := H) (2 := H0) (3 := H1) (4 := E1) (5 := E0).
+    rewrite H'. reflexivity.
+  Qed.
+
+  Lemma intersect_store_bytes sz (mBig1 mBig2 mBig1' mBig2' mSmall mAdd1 mAdd2 : mem) a v :
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      map.disjoint mAdd1 mAdd2 ->
+      Memory.store_bytes (bytes_per (width := width) sz) mBig1 a v = Some mBig1' ->
+      Memory.store_bytes (bytes_per (width := width) sz) mBig2 a v = Some mBig2' ->
+      exists mSmall',
+        Memory.store_bytes (bytes_per (width := width) sz) mSmall a v = Some mSmall' /\
+          map.split mBig1' mSmall' mAdd1.
+    Proof.
+      intros. Check disjoint_putmany_preserves_store_bytes.
+      enough (exists mSmall', store_bytes _ mSmall a v = Some mSmall') as [mSmall' H'].
+      { exists mSmall'. split; [assumption|].
+        destruct H as [? Hdisj]; subst.
+        pose proof disjoint_putmany_preserves_store_bytes as H''.
+        specialize H'' with (1 := H') (2 := Hdisj).
+        rewrite H2 in H''. inversion H''. subst. clear H''. split; [reflexivity|].
+        Search map.sub_domain. eapply map.sub_domain_disjoint; [eassumption|].
+        Search store_bytes. apply store_bytes_preserves_footprint in H'.
+        apply H'. }
+      unfold store_bytes in H2,H3. destruct_one_match_hyp; [|congruence].
+      destruct_one_match_hyp; [|congruence]. Search (load_bytes).
+      pose proof intersect_load_bytes as H'.
+      specialize H' with (1 := H) (2 := H0) (3 := H1) (4 := E0) (5 := E).
+      unfold store_bytes. rewrite H'. eexists. reflexivity.
+    Qed.
+
+    Lemma intersect_store: forall sz (mSmall mBig1 mBig2 mBig1' mBig2' mAdd1 mAdd2: mem) a v,
+        map.split mBig1 mSmall mAdd1 ->
+        map.split mBig2 mSmall mAdd2 ->
+        map.disjoint mAdd1 mAdd2 ->
+        store sz mBig1 a v = Some mBig1' ->
+        store sz mBig2 a v = Some mBig2' ->
+        exists mSmall',
+          store sz mSmall a v = Some mSmall' /\
+            map.split mBig1' mSmall' mAdd1.
+  Proof.
+    intros. unfold store, store_Z in H2, H3.
+    remember (LittleEndianList.le_split _ _) as x.
+    pose proof intersect_store_bytes as H'.
+    specialize H' with (1 := H) (2 := H0) (3 := H1). remember (tuple.of_list x) as y.
+    set (z := length x). specialize (H' sz).
+    replace (bytes_per sz) with (length x) in H'.
+    2: { subst. Search (length (LittleEndianList.le_split _ _)). apply LittleEndianList.length_le_split. }
+    specialize H' with (1 := H2) (2 := H3).
+    destruct H' as (mSmall'&H1'&H2').
+    exists mSmall'. split; [|assumption]. unfold store, store_Z. subst. assumption.
+  Qed.
+  
+  Lemma frame_eval_expr: forall l e mSmall mBig mAdd mc (v: word) mc',
+      mmap.split mBig mSmall mAdd ->
+      eval_expr mSmall l e mc = Some (v, mc') ->
+      eval_expr mBig l e mc = Some (v, mc').
+  Proof.
+    induction e; cbn; intros; fwd; try reflexivity;
+      erewrite ?IHe by eassumption;
+      erewrite ?IHe1 by eassumption;
+      try match goal with
+        | |- context[word.eqb ?L ?R] => destr (word.eqb L R)
+        end;
+      erewrite ?IHe2 by eassumption;
+      erewrite ?IHe3 by eassumption;
+      erewrite ?frame_load by eassumption;
+      rewrite_match;
+      try reflexivity.
+  Qed.
+
+  Lemma frame_evaluate_call_args_log: forall l mSmall mBig mAdd arges
+                                             mc (args: list word) mc',
+      mmap.split mBig mSmall mAdd ->
+      eval_call_args mSmall l arges mc = Some (args, mc') ->
+      eval_call_args mBig   l arges mc = Some (args, mc').
+  Proof.
+    induction arges; cbn; intros.
+    - assumption.
+    - fwd. erewrite frame_eval_expr by eassumption. erewrite IHarges.
+      1: reflexivity. all: assumption.
+  Qed.
+
+  Lemma frame_exec: forall e c t mSmall l mc P,
+      exec e c t mSmall l mc P ->
+      forall mBig mAdd,
+        mmap.split mBig mSmall mAdd ->
+        exec e c t mBig l mc (fun t' mBig' l' mc' =>
+          exists mSmall', mmap.split mBig' mSmall' mAdd /\ P t' mSmall' l' mc').
+  Proof.
+    induction 1; intros;
+      try match goal with
+        | H: store _ _ _ _ = _ |- _ => eapply frame_store in H; [ | eassumption]
+        end;
+      fwd;
+      try solve [econstructor; eauto using frame_eval_expr].
+    { eapply exec.stackalloc. 1: eassumption.
+      intros.
+      rename mCombined into mCombinedBig.
+      specialize H1 with (1 := H3).
+      specialize (H1 (mmap.force (mmap.du (mmap.Def mSmall) (mmap.Def mStack)))).
+      eapply map.split_alt in H4. pose proof H4 as D0. unfold mmap.split in D0.
+      rewrite H2 in D0.
+      rewrite (mmap.du_comm (mmap.Def mSmall) (mmap.Def mAdd)) in D0.
+      rewrite mmap.du_assoc in D0. unfold mmap.du at 1 in D0.
+      unfold mmap.of_option in D0. fwd. rename r into mCombinedBig.
+      symmetry in E0. rename E0 into D0.
+      eapply exec.weaken. 1: eapply H1.
+      { simpl. eapply map.split_alt. unfold mmap.split. symmetry. assumption. }
+      { unfold mmap.split. simpl. rewrite map.du_comm. unfold mmap.of_option.
+        rewrite <- D0. reflexivity. }
+      cbv beta. intros. fwd.
+      move D0 at bottom.
+      repeat match reverse goal with
+             | H: map.split _ _ _ |- _ => eapply map.split_alt in H
+             | H: mmap.split _ _ _ |- _ =>
+                 unfold mmap.split in H;
+                 let F := fresh "D0" in
+                 rename H into F;
+                 move F at bottom
+             end.
+      rewrite D1 in D2. clear D1 mBig. rewrite D4 in D3. clear D4 mSmall'.
+      rewrite mmap.du_assoc in D3. rewrite (mmap.du_comm mStack') in D3.
+      rewrite <- mmap.du_assoc in D3.
+      eexists (mmap.force (mmap.du mSmall'0 mAdd)). exists mStack'. ssplit.
+      1: eassumption.
+      { simpl. eapply map.split_alt. unfold mmap.split.
+        rewrite D3. f_equal. unfold mmap.du at 1 in D3. fwd. simpl in E0. rewrite E0.
+        reflexivity. }
+      eexists; split. 2: eassumption.
+      unfold mmap.split. simpl.
+      unfold mmap.du at 1 in D3. fwd. simpl in E0. rewrite E0. reflexivity. }
+    { eapply exec.seq. 1: eapply IHexec; eassumption.
+      cbv beta. intros. fwd. eapply H1. 1: eassumption. assumption. }
+    { eapply exec.while_true.
+      1: eauto using frame_eval_expr.
+      1: eassumption.
+      { eapply IHexec. 1: eassumption. }
+      cbv beta. intros. fwd. eauto. }
+    { (* call *)
+      econstructor. 1: eassumption.
+      { eauto using frame_evaluate_call_args_log. }
+      1: eassumption.
+      1: eapply IHexec. 1: eassumption.
+      cbv beta. intros. fwd.
+      specialize H3 with (1 := H5p1). fwd. eauto 10. }
+    { (* interact *)
+      eapply map.split_alt in H. pose proof H3 as A.
+      unfold mmap.split in H3, H. rewrite H in H3.
+      rewrite mmap.du_assoc in H3. rewrite (mmap.du_comm mGive) in H3.
+      rewrite <- mmap.du_assoc in H3.
+      assert (exists mKeepBig, mmap.Def mKeepBig = mmap.du mKeep mAdd) as Sp0. {
+        exists (mmap.force (mmap.du mKeep mAdd)).
+        unfold mmap.du in H3 at 1. unfold mmap.of_option in *.
+        fwd. simpl in E. unfold mmap.of_option in E. fwd. reflexivity.
+      }
+      destruct Sp0 as (mKeepBig & Sp0).
+      assert (mmap.split mBig mKeepBig mGive) as Sp.
+      { unfold mmap.split. rewrite Sp0. assumption. }
+      econstructor. 1: eapply map.split_alt; exact Sp.
+      { eauto using frame_evaluate_call_args_log. }
+      1: eassumption.
+      intros.
+      specialize H2 with (1 := H4). fwd.
+      eexists. split. 1: eassumption.
+      intros.
+      eapply map.split_alt in H2. unfold mmap.split in *.
+      assert (exists mSmall', mmap.split mSmall' mKeep mReceive) as Sp1. {
+        exists (mmap.force (mmap.du mKeep mReceive)).
+        eapply map.split_alt. rewrite Sp0 in H2.
+        rewrite mmap.du_assoc in H2. rewrite (mmap.du_comm mAdd) in H2.
+        rewrite <- mmap.du_assoc in H2.
+        unfold mmap.du at 1 in H2. fwd.
+        eapply map.split_alt. unfold mmap.split. simpl in E. simpl. rewrite E. reflexivity.
+      }
+      destruct Sp1 as (mSmall' & Sp1).
+      exists mSmall'. split. 2: eapply H2p1.
+      2: { eapply map.split_alt. exact Sp1. }
+      rewrite Sp0 in H2.
+      unfold mmap.split in Sp1. rewrite Sp1. rewrite mmap.du_assoc in H2.
+      rewrite (mmap.du_comm mAdd) in H2. rewrite <- mmap.du_assoc in H2.
+      exact H2.
+    }
+  Qed.
+
+End semantics.
+
+Print map.fold.
+Print map.putmany.
+Check map.fold.
+Definition intersect { k v } (m1 m2 : map.map k v) :=
+  map.fold (fun int k1 v1 => match map.get m2 k1 with
+                          | Some _ =
+
+Search (map.map -> map.map -> map.map).
