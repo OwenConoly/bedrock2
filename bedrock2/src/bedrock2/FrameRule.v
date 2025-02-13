@@ -239,6 +239,8 @@ Section semantics.
 
 End semantics.
 
+Require Import bedrock2.Semantics.
+
 Section semantics.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
@@ -299,13 +301,13 @@ Section semantics.
     instantiate (1 := fun _ => True). exact I.
   Qed.
   
-  Lemma intersect_load: forall mSmall mBig1 mBig2 mAdd1 mAdd2 a r (v: word),
+  Lemma intersect_load: forall mSmall mBig1 mBig2 mAdd1 mAdd2 a r (v v0: word),
       map.split mBig1 mSmall mAdd1 ->
       map.split mBig2 mSmall mAdd2 ->
       map.disjoint mAdd1 mAdd2 ->
       load a mBig1 r = Some v ->
-      load a mBig2 r = Some v ->
-      load a mSmall r = Some v.
+      load a mBig2 r = Some v0 ->
+      load a mSmall r = Some v0.
   Proof.
     unfold load, load_Z. intros. fwd. pose proof intersect_load_bytes as H'.
     specialize H' with (1 := H) (2 := H0) (3 := H1) (4 := E1) (5 := E0).
@@ -340,9 +342,9 @@ Section semantics.
     Qed.
 
     Lemma intersect_store: forall sz (mSmall mBig1 mBig2 mBig1' mBig2' mAdd1 mAdd2: mem) a v,
+        map.disjoint mAdd1 mAdd2 ->
         map.split mBig1 mSmall mAdd1 ->
         map.split mBig2 mSmall mAdd2 ->
-        map.disjoint mAdd1 mAdd2 ->
         store sz mBig1 a v = Some mBig1' ->
         store sz mBig2 a v = Some mBig2' ->
         exists mSmall',
@@ -352,7 +354,7 @@ Section semantics.
     intros. unfold store, store_Z in H2, H3.
     remember (LittleEndianList.le_split _ _) as x.
     pose proof intersect_store_bytes as H'.
-    specialize H' with (1 := H) (2 := H0) (3 := H1). remember (tuple.of_list x) as y.
+    specialize H' with (1 := H0) (2 := H1) (3 := H). remember (tuple.of_list x) as y.
     set (z := length x). specialize (H' sz).
     replace (bytes_per sz) with (length x) in H'.
     2: { subst. Search (length (LittleEndianList.le_split _ _)). apply LittleEndianList.length_le_split. }
@@ -361,44 +363,107 @@ Section semantics.
     exists mSmall'. split; [|assumption]. unfold store, store_Z. subst. assumption.
   Qed.
   
-  Lemma frame_eval_expr: forall l e mSmall mBig mAdd mc (v: word) mc',
-      mmap.split mBig mSmall mAdd ->
-      eval_expr mSmall l e mc = Some (v, mc') ->
-      eval_expr mBig l e mc = Some (v, mc').
+  Lemma intersect_eval_expr: forall l e mSmall mBig1 mBig2 mAdd1 mAdd2 (v v0: word),
+      map.disjoint mAdd1 mAdd2 ->
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      eval_expr mBig1 l e = Some v ->
+      eval_expr mBig2 l e = Some v0 ->
+      (v = v0 /\ eval_expr mSmall l e = Some v).
   Proof.
-    induction e; cbn; intros; fwd; try reflexivity;
-      erewrite ?IHe by eassumption;
-      erewrite ?IHe1 by eassumption;
-      try match goal with
-        | |- context[word.eqb ?L ?R] => destr (word.eqb L R)
-        end;
-      erewrite ?IHe2 by eassumption;
-      erewrite ?IHe3 by eassumption;
-      erewrite ?frame_load by eassumption;
-      rewrite_match;
-      try reflexivity.
+    intros * H1 H2 H3. revert v v0.
+    induction e; cbn; intros; fwd; auto;
+      repeat match goal with
+      | IHe: forall _ _, _ = _ -> _ = _ -> _ |- _ =>
+          specialize (IHe _ _ eq_refl eq_refl); destruct IHe as [?IHe1 ?IHe2];
+          subst; repeat rewrite ?IHe2
+        end.
+    - rewrite H in H0. inversion H0. subst. auto.
+    - pose proof intersect_load as H'.
+      specialize H' with (1 := H2) (2 := H3) (3 := H1) (4 := H) (5 := H0).
+      pose proof intersect_load as H''.
+      Search map.disjoint. apply map.disjoint_comm in H1.
+      specialize H'' with (1 := H3) (2 := H2) (3 := H1) (4 := H0) (5 := H).
+      rewrite H' in H''. inversion H''. subst. auto.
+    - rewrite H in H0. inversion H0. subst. auto.
+    - rewrite IHe0. auto.
+    - rewrite IHe0. match goal with
+      | |- context[word.eqb ?L ?R] => destr (word.eqb L R)
+      end; eauto.
   Qed.
 
-  Lemma frame_evaluate_call_args_log: forall l mSmall mBig mAdd arges
-                                             mc (args: list word) mc',
-      mmap.split mBig mSmall mAdd ->
-      eval_call_args mSmall l arges mc = Some (args, mc') ->
-      eval_call_args mBig   l arges mc = Some (args, mc').
+  Lemma intersect_eval_expr': forall l e mSmall mBig1 mBig2 mAdd1 mAdd2 (v v0: word),
+      map.disjoint mAdd1 mAdd2 ->
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      eval_expr mBig1 l e = Some v ->
+      eval_expr mBig2 l e = Some v0 ->
+      eval_expr mSmall l e = Some v.
+  Proof. apply intersect_eval_expr. Qed.
+
+  Lemma intersect_evaluate_call_args_log: forall  arges
+                                             (args args0: list word),
+      forall l mSmall mBig1 mBig2 mAdd1 mAdd2,
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      map.disjoint mAdd1 mAdd2 ->
+      eval_call_args mBig1 l arges = Some args ->
+      eval_call_args mBig2 l arges = Some args0 ->
+      eval_call_args mSmall l arges = Some args.
   Proof.
     induction arges; cbn; intros.
     - assumption.
-    - fwd. erewrite frame_eval_expr by eassumption. erewrite IHarges.
-      1: reflexivity. all: assumption.
+    - fwd.
+      specialize intersect_eval_expr with (1 := H1) (2 := H) (3 := H0) (4 := E1) (5 := E).
+      intros [H1' H2']. rewrite H2'. subst. erewrite IHarges.
+      1: reflexivity. 3: eassumption. all: eassumption.
   Qed.
 
-  Lemma frame_exec: forall e c t mSmall l mc P,
-      exec e c t mSmall l mc P ->
-      forall mBig mAdd,
-        mmap.split mBig mSmall mAdd ->
-        exec e c t mBig l mc (fun t' mBig' l' mc' =>
-          exists mSmall', mmap.split mBig' mSmall' mAdd /\ P t' mSmall' l' mc').
+  Ltac speck H0 :=
+    repeat match goal with | H: _ |- _ => specialize H0 with (1 := H) end.
+
+  Lemma intersect_exec: forall e c t mBig1 mBig2 mAdd1 mAdd2 mSmall l P1 P2,
+      map.split mBig1 mSmall mAdd1 ->
+      map.split mBig2 mSmall mAdd2 ->
+      map.disjoint mAdd1 mAdd2 ->
+      exec e c t mBig1 l P1 ->
+      exec e c t mBig2 l P2 ->
+      exec e c t mSmall l (fun t' mSmall' l' =>
+                             exists mBig1', map.split mBig1' mSmall' mAdd1 /\ P1 t' mBig1' l').
   Proof.
-    induction 1; intros;
+    intros. revert H.
+    pose proof intersect_eval_expr as Hint. specialize Hint with (1 := H1) (3 := H0).
+    induction H2; inversion H3; subst; intros H''; specialize Hint with (1 := H'');
+      pose proof Hint as Hint';
+      repeat match goal with
+        | H: eval_expr _ _ _ = _ |- _ => specialize Hint' with (1 := H)
+        end;
+      fwd;
+      try solve [econstructor; eauto].
+    - specialize Hint with (1 := H). speck Hint. fwd. pose proof intersect_store as store.
+      speck store. fwd. econstructor; eauto.
+    - econstructor; eauto. intros. eapply exec.weaken.
+      Abort. (*not true*)
+      1: eapply H13; eauto.
+      (*program that works with m + m1 and m + m2 but not m...
+        
+        stackalloc 4 as x;
+        stackalloc 4 as y;
+        assert (x not in m1) \/ (y not in m2).
+        
+       *)
+      + intersect_store; e.auto.
+    induction 4; intros; fwd;
+      pose proof intersect_eval_expr as H';
+      speck H'; try solve [econstructor; eauto].
+    - econstructor; eauto. inversion H4. subst. eapply intersect_eval_expr; eauto.
+    - inversion H6. subst. pose proof intersect_eval_expr as H'. speck H'. fwd.
+      clear H2 H10. pose proof intersect_eval_expr as H'. speck H'. fwd.
+      
+      econstructor; eauto using intersect_eval_expr'.
+      + edestruct intersect_store; eauto. 3: eauto.
+      1: eapply intersect_eval_expr; eauto.
+    try solve [econstructor; eauto using 
       try match goal with
         | H: store _ _ _ _ = _ |- _ => eapply frame_store in H; [ | eassumption]
         end;
@@ -494,12 +559,3 @@ Section semantics.
   Qed.
 
 End semantics.
-
-Print map.fold.
-Print map.putmany.
-Check map.fold.
-Definition intersect { k v } (m1 m2 : map.map k v) :=
-  map.fold (fun int k1 v1 => match map.get m2 k1 with
-                          | Some _ =
-
-Search (map.map -> map.map -> map.map).
