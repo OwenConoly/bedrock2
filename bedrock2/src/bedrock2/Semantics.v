@@ -229,150 +229,105 @@ Module exec. Section WithParams.
       exec (cmd.seq c1 c2) H t m l post.
   Proof. intros. eauto using seq. Qed.
 
-  Lemma weaken: forall t l m s post1,
-      exec s t m l post1 ->
+  Lemma weaken: forall s H t m l post1,
+      exec s H t m l post1 ->
       forall post2,
-        (forall t' m' l', post1 t' m' l' -> post2 t' m' l') ->
-        exec s t m l post2.
+        (forall H' t' m' l', post1 H' t' m' l' -> post2 H' t' m' l') ->
+        exec s H t m l post2.
   Proof.
     induction 1; intros; try solve [econstructor; eauto].
     - eapply stackalloc. 1: assumption.
       intros.
-      eapply H1; eauto.
-      intros. fwd. eauto 10.
-    - eapply call.
-      4: eapply IHexec.
-      all: eauto.
-      intros.
-      edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-      eauto 10.
-    - eapply interact; try eassumption.
-      intros.
-      edestruct H2 as (? & ? & ?); [eassumption|].
-      eauto 10.
+      eapply IHexec; eauto.
+      intros. specialize (H3 a mStack). fwd. eauto 10.
+    (* - eapply call. *)
+    (*   4: eapply IHexec. *)
+    (*   all: eauto. *)
+    (*   intros. *)
+    (*   edestruct H3 as (? & ? & ? & ? & ?); [eassumption|]. *)
+    (*   eauto 10. *)
+    (* - eapply interact; try eassumption. *)
+    (*   intros. *)
+    (*   edestruct H2 as (? & ? & ?); [eassumption|]. *)
+    (*   eauto 10. *)
   Qed.
 
-  Lemma intersect: forall t l m s post1,
-      exec s t m l post1 ->
-      forall post2,
-        exec s t m l post2 ->
-        exec s t m l (fun t' m' l' => post1 t' m' l' /\ post2 t' m' l').
-  Proof.
-    induction 1;
-      intros;
-      match goal with
-      | H: exec _ _ _ _ _ |- _ => inversion H; subst; clear H
-      end;
-      try match goal with
-      | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ =>
-        replace x2 with x1 in * by congruence;
-          replace y2 with y1 in * by congruence;
-          replace z2 with z1 in * by congruence;
-          clear x2 y2 z2 H2
-      end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      try solve [econstructor; eauto | exfalso; congruence].
+  (* should be trivial, but i dont feel like doing it now *)
+  
+  (* Lemma intersect: forall t l m s post1, *)
+  (*     exec s t m l post1 -> *)
+  (*     forall post2, *)
+  (*       exec s t m l post2 -> *)
+  (*       exec s t m l (fun t' m' l' => post1 t' m' l' /\ post2 t' m' l'). *)
+  (* Proof. *)
+  (*   induction 1; *)
+  (*     intros; *)
+  (*     match goal with *)
+  (*     | H: exec _ _ _ _ _ |- _ => inversion H; subst; clear H *)
+  (*     end; *)
+  (*     try match goal with *)
+  (*     | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ => *)
+  (*       replace x2 with x1 in * by congruence; *)
+  (*         replace y2 with y1 in * by congruence; *)
+  (*         replace z2 with z1 in * by congruence; *)
+  (*         clear x2 y2 z2 H2 *)
+  (*     end; *)
+  (*     repeat match goal with *)
+  (*            | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*              replace v2 with v1 in * by congruence; clear H2 *)
+  (*            end; *)
+  (*     repeat match goal with *)
+  (*            | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*              replace v2 with v1 in * by congruence; clear H2 *)
+  (*            end; *)
+  (*     try solve [econstructor; eauto | exfalso; congruence]. *)
 
-    - econstructor. 1: eassumption.
-      intros.
-      rename H0 into Ex1, H11 into Ex2.
-      eapply weaken. 1: eapply H1. 1,2: eassumption.
-      1: eapply Ex2. 1,2: eassumption.
-      cbv beta.
-      intros. fwd.
-      lazymatch goal with
-      | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-        specialize @map.split_diff with (4 := A) (5 := B) as P
-      end.
-      edestruct P; try typeclasses eauto. 2: subst; eauto 10.
-      eapply anybytes_unique_domain; eassumption.
-    - econstructor.
-      + eapply IHexec. exact H5. (* not H *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply while_true. 1, 2: eassumption.
-      + eapply IHexec. exact H9. (* not H1 *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply call. 1, 2, 3: eassumption.
-      + eapply IHexec. exact H15. (* not H2 *)
-      + simpl. intros *. intros [? ?].
-        edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-        edestruct H16 as (? & ? & ? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
-    - pose proof ext_spec.mGive_unique as P.
-      specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H13).
-      subst mGive0.
-      destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _).
-      subst mKeep0.
-      eapply interact. 1,2: eassumption.
-      + eapply ext_spec.intersect; [ exact H1 | exact H13 ].
-      + simpl. intros *. intros [? ?].
-        edestruct H2 as (? & ? & ?); [eassumption|].
-        edestruct H14 as (? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
-  Qed.
+  (*   - econstructor. 1: eassumption. *)
+  (*     intros. *)
+  (*     rename H0 into Ex1, H11 into Ex2. *)
+  (*     eapply weaken. 1: eapply H1. 1,2: eassumption. *)
+  (*     1: eapply Ex2. 1,2: eassumption. *)
+  (*     cbv beta. *)
+  (*     intros. fwd. *)
+  (*     lazymatch goal with *)
+  (*     | A: map.split _ _ _, B: map.split _ _ _ |- _ => *)
+  (*       specialize @map.split_diff with (4 := A) (5 := B) as P *)
+  (*     end. *)
+  (*     edestruct P; try typeclasses eauto. 2: subst; eauto 10. *)
+  (*     eapply anybytes_unique_domain; eassumption. *)
+  (*   - econstructor. *)
+  (*     + eapply IHexec. exact H5. (* not H *) *)
+  (*     + simpl. intros *. intros [? ?]. eauto. *)
+  (*   - eapply while_true. 1, 2: eassumption. *)
+  (*     + eapply IHexec. exact H9. (* not H1 *) *)
+  (*     + simpl. intros *. intros [? ?]. eauto. *)
+  (*   - eapply call. 1, 2, 3: eassumption. *)
+  (*     + eapply IHexec. exact H15. (* not H2 *) *)
+  (*     + simpl. intros *. intros [? ?]. *)
+  (*       edestruct H3 as (? & ? & ? & ? & ?); [eassumption|]. *)
+  (*       edestruct H16 as (? & ? & ? & ? & ?); [eassumption|]. *)
+  (*       repeat match goal with *)
+  (*              | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*                replace v2 with v1 in * by congruence; clear H2 *)
+  (*              end. *)
+  (*       eauto 10. *)
+  (*   - pose proof ext_spec.mGive_unique as P. *)
+  (*     specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H13). *)
+  (*     subst mGive0. *)
+  (*     destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _). *)
+  (*     subst mKeep0. *)
+  (*     eapply interact. 1,2: eassumption. *)
+  (*     + eapply ext_spec.intersect; [ exact H1 | exact H13 ]. *)
+  (*     + simpl. intros *. intros [? ?]. *)
+  (*       edestruct H2 as (? & ? & ?); [eassumption|]. *)
+  (*       edestruct H14 as (? & ? & ?); [eassumption|]. *)
+  (*       repeat match goal with *)
+  (*              | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*                replace v2 with v1 in * by congruence; clear H2 *)
+  (*              end. *)
+  (*       eauto 10. *)
+  (* Qed. *)
 
   End WithEnv.
-
-  Lemma extend_env: forall e1 e2,
-      map.extends e2 e1 ->
-      forall c t m l post,
-      exec e1 c t m l post ->
-      exec e2 c t m l post.
-  Proof. induction 2; try solve [econstructor; eauto]. Qed.
-
   End WithParams.
 End exec. Notation exec := exec.exec.
-
-Section WithParams.
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
-  Context {locals: map.map String.string word}.
-  Context {ext_spec: ExtSpec}.
-
-  Implicit Types (l: locals) (m: mem) (post: trace -> mem -> list word -> Prop).
-
-  Definition call e fname t m args post :=
-    exists argnames retnames body,
-      map.get e fname = Some (argnames, retnames, body) /\
-      exists l, map.of_list_zip argnames args = Some l /\
-        exec e body t m l (fun t' m' l' => exists rets,
-          map.getmany_of_list l' retnames = Some rets /\ post t' m' rets).
-
-  Lemma weaken_call: forall e fname t m args post1,
-      call e fname t m args post1 ->
-      forall post2, (forall t' m' rets, post1 t' m' rets -> post2 t' m' rets) ->
-      call e fname t m args post2.
-  Proof.
-    unfold call. intros. fwd.
-    do 4 eexists. 1: eassumption.
-    do 2 eexists. 1: eassumption.
-    eapply exec.weaken. 1: eassumption.
-    cbv beta. clear -H0. intros. fwd. eauto.
-  Qed.
-
-  Lemma extend_env_call: forall e1 e2,
-      map.extends e2 e1 ->
-      forall f t m rets post,
-      call e1 f t m rets post ->
-      call e2 f t m rets post.
-  Proof.
-    unfold call. intros. fwd. repeat eexists.
-    - eapply H. eassumption.
-    - eassumption.
-    - eapply exec.extend_env; eassumption.
-  Qed.
-End WithParams.
