@@ -134,81 +134,95 @@ Module exec. Section WithParams.
   Section WithEnv.
   Context (e: env).
 
+  Definition nst := list (word * mem). (*'nondeterministic state', list of stackalloc addrs*)
+
   Implicit Types post : trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
-  Inductive exec: cmd -> trace -> mem -> locals ->
+  Inductive exec: cmd -> (nst -> Prop) -> (nst -> trace) -> (nst -> mem) -> (nst -> locals) ->
                   (trace -> mem -> locals -> Prop) -> Prop :=
-  | skip: forall t m l post,
-      post t m l ->
-      exec cmd.skip t m l post
-  | set: forall x e t m l post v,
-      eval_expr m l e = Some v ->
-      post t m (map.put l x v) ->
-      exec (cmd.set x e) t m l post
-  | unset: forall x t m l post,
-      post t m (map.remove l x) ->
-      exec (cmd.unset x) t m l post
-  | store: forall sz ea ev t m l post a v m',
-      eval_expr m l ea = Some a ->
-      eval_expr m l ev = Some v ->
-      store sz m a v = Some m' ->
-      post t m' l ->
-      exec (cmd.store sz ea ev) t m l post
-  | stackalloc: forall x n body t mSmall l post,
-      Z.modulo n (bytes_per_word width) = 0 ->
+  | skip: forall H t m l post,
+      (forall n, H n -> post (t n) (m n) (l n)) ->
+      exec cmd.skip H t m l post
+  | set: forall x e H t m l post v,
+      (forall n, H n ->
+            eval_expr (m n) (l n) e = Some (v n) /\
+            post (t n) (m n) (map.put (l n) x (v n))) ->
+      exec (cmd.set x e) H t m l post
+  | unset: forall x H t m l post,
+      (forall n, H n ->
+            post (t n) (m n) (map.remove (l n) x)) ->
+      exec (cmd.unset x) H t m l post
+  | store: forall sz ea ev H t m l post a v m',
+      (forall n, H n ->
+            eval_expr (m n) (l n) ea = Some (a n) /\
+            eval_expr (m n) (l n) ev = Some (v n) /\
+              store sz (m n) (a n) (v n) = Some (m' n) /\
+              post (t n) (m' n) (l n)) ->
+      exec (cmd.store sz ea ev) H t m l post
+  | stackalloc: forall x nbytes body t mSmall l post,
+      Z.modulo nbytes (bytes_per_word width) = 0 ->
       (forall a mStack mCombined,
-        anybytes a n mStack ->
-        map.split mCombined mSmall mStack ->
-        exec body t mCombined (map.put l x a)
+        exec body (fun n => exists a mStack,
+                       n = (a, mStack) :: n' /\
+                         anybytes a nbytes mStack /\
+                         map.split mCombined mSmall mStack)
+          (fun n =>
+             match n with
+             | (a, mStack) :: n' => t n'
+             | _ => []
+             end)
+          (fun n =>
+             match n with
+             | (a, mStack :: n') => map.putmany (mSmall n') mStack
+             | _ => map.empty
+             end)
+          (fun n =>
+             match n with
+             | (a, mStack) :: n' => map.put (l n') x a
+             | _ => map.empty
+             end)
           (fun t' mCombined' l' =>
             exists mSmall' mStack',
-              anybytes a n mStack' /\
+              anybytes a nbytes mStack' /\
               map.split mCombined' mSmall' mStack' /\
               post t' mSmall' l')) ->
-      exec (cmd.stackalloc x n body) t mSmall l post
-  | if_true: forall t m l e c1 c2 post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v <> 0 ->
-      exec c1 t m l post ->
-      exec (cmd.cond e c1 c2) t m l post
-  | if_false: forall e c1 c2 t m l post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v = 0 ->
-      exec c2 t m l post ->
-      exec (cmd.cond e c1 c2) t m l post
-  | seq: forall c1 c2 t m l post mid,
-      exec c1 t m l mid ->
-      (forall t' m' l', mid t' m' l' -> exec c2 t' m' l' post) ->
-      exec (cmd.seq c1 c2) t m l post
-  | while_false: forall e c t m l post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v = 0 ->
-      post t m l ->
-      exec (cmd.while e c) t m l post
-  | while_true: forall e c t m l post v mid,
-      eval_expr m l e = Some v ->
-      word.unsigned v <> 0 ->
-      exec c t m l mid ->
-      (forall t' m' l', mid t' m' l' -> exec (cmd.while e c) t' m' l' post) ->
-      exec (cmd.while e c) t m l post
-  | call: forall binds fname arges t m l post params rets fbody args lf mid,
-      map.get e fname = Some (params, rets, fbody) ->
-      eval_call_args m l arges = Some args ->
-      map.of_list_zip params args = Some lf ->
-      exec fbody t m lf mid ->
-      (forall t' m' st1, mid t' m' st1 ->
-          exists retvs, map.getmany_of_list st1 rets = Some retvs /\
-          exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post t' m' l') ->
-      exec (cmd.call binds fname arges) t m l post
-  | interact: forall binds action arges args t m l post mKeep mGive mid,
-      map.split m mKeep mGive ->
-      eval_call_args m l arges = Some args ->
-      ext_spec t mGive action args mid ->
-      (forall mReceive resvals, mid mReceive resvals ->
-          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
-          forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) t m l post.
+      exec (cmd.stackalloc x nbytes body) t mSmall l post
+  | if_true_false: forall H t m l e c1 c2 post v,
+      (forall n, H n ->
+            eval_expr (m n) (l n) e = Some (v n)) ->
+      exec c1 (fun n => word.unsigned (v n) <> 0 /\ H n) t m l post ->
+      exec c2 (fun n => word.unsigned (v n) = 0 /\ H n) t m l post -> 
+      exec (cmd.cond e c1 c2) H t m l post
+  | seq: forall c1 c2 H t m l post mid,
+      exec c1 H t m l mid ->
+      (forall t' m' l', (forall n, H n -> mid (t' n) (m' n) (l' n)) -> exec c2 H t' m' l' post) ->
+      exec (cmd.seq c1 c2) H t m l post
+  | while_true_false: forall e c H t m l post mid v,
+      (forall n, H n ->
+            eval_expr (m n) (l n) e = Some (v n)) ->
+      (forall n, word.unsigned (v n) = 0 /\ H n -> post (t n) (m n) (l n)) ->
+      exec c (fun n => word.unsigned (v n) <> 0 /\ H n) t m l mid ->
+      (forall t' m' l', (forall n, word.unsigned (v n) <> 0 /\ H n -> mid (t' n) (m' n) (l' n)) ->
+                   exec (cmd.while e c) (fun n => word.unsigned (v n) <> 0 /\ H n) t' m' l' post) ->
+      exec (cmd.while e c) H t m l post
+  (* | call: forall binds fname arges t m l post params rets fbody args lf mid, *)
+  (*     map.get e fname = Some (params, rets, fbody) -> *)
+  (*     eval_call_args m l arges = Some args -> *)
+  (*     map.of_list_zip params args = Some lf -> *)
+  (*     exec fbody t m lf mid -> *)
+  (*     (forall t' m' st1, mid t' m' st1 -> *)
+  (*         exists retvs, map.getmany_of_list st1 rets = Some retvs /\ *)
+  (*         exists l', map.putmany_of_list_zip binds retvs l = Some l' /\ *)
+  (*         post t' m' l') -> *)
+  (*     exec (cmd.call binds fname arges) t m l post *)
+  (* | interact: forall binds action arges args t m l post mKeep mGive mid, *)
+  (*     map.split m mKeep mGive -> *)
+  (*     eval_call_args m l arges = Some args -> *)
+  (*     ext_spec t mGive action args mid -> *)
+  (*     (forall mReceive resvals, mid mReceive resvals -> *)
+  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
+  (*         forall m', map.split m' mKeep mReceive -> *)
+  (*         post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
+  (*     exec (cmd.interact binds action arges) t m l post. *).
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
