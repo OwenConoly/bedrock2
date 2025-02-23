@@ -13,10 +13,14 @@ End MapListMap.
 
 Section Sep.
   Context {key value} {map : map (key * nat) value}.
+  Context {addrs levels : Type}.
   Definition emp (P : Prop) := fun m : map => m = empty /\ P.
   Definition sep (p q : map -> Prop) m :=
     exists mp mq, split m mp mq /\ p mp /\ q mq.
-  Definition ptsto k v := fun m : map => exists n, m = put empty (k, n) v.
+  Definition ptsto k v := fun (H : addrs * levels -> Prop) (m : addrs * levels -> map) =>
+                            exists n, forall a ls,
+                              H (a, ls) ->
+                              m (a, ls) = put empty (k, n ls) v.
   (*what is this*)
   (* Definition read k (P : value -> rep -> Prop) := (ex1 (fun v => sep (ptsto k v) (P v))). *)
 
