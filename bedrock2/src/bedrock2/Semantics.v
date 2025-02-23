@@ -374,3 +374,20 @@ Section WithParams.
     - eapply exec.extend_env; eassumption.
   Qed.
 End WithParams.
+
+Section WithParams.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {locals: map.map String.string word}.
+  Context {ext_spec: ExtSpec}.
+
+  Implicit Types (l: locals) (m: mem) (post: trace -> mem -> list word -> Prop).
+
+  Check cmd.stackalloc. Check cmd.call.
+  Import ListNotations.
+  Lemma alloc_store_call_load m mExtra mBig x y a e f :
+    anybytes a 4 mExtra ->
+    mBig = map.split m mExtra ->
+    exec (cmd.stackalloc x 4 (cmd.seq (cmd.store access_size.one (expr.var x) e)
+                                (cmd.seq (cmd.call [] f [])
+                                         (cmd.set y (expr.load (expr.var x)))))).
+End WithParams.

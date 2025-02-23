@@ -428,8 +428,8 @@ Section semantics.
       map.disjoint mAdd1 mAdd2 ->
       exec e c t mBig1 l P1 ->
       exec e c t mBig2 l P2 ->
-      exec e c t mSmall l (fun t' mSmall' l' =>
-                             exists mBig1', map.split mBig1' mSmall' mAdd1 /\ P1 t' mBig1' l').
+      exec e c t mBig1 l (fun t' mBig1' l' =>
+                             exists mSmall', map.split mBig1' mSmall' mAdd1).
   Proof.
     intros. revert H.
     pose proof intersect_eval_expr as Hint. specialize Hint with (1 := H1) (3 := H0).
