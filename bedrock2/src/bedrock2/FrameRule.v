@@ -422,6 +422,58 @@ Section semantics.
   Ltac speck H0 :=
     repeat match goal with | H: _ |- _ => specialize H0 with (1 := H) end.
 
+  Lemma split_sub_domain (m m1 m2 m' m1' m2' : mem) :
+    map.split m m1 m2 ->
+    map.split m' m1' m2' ->
+    map.sub_domain m m' ->
+    map.sub_domain m1' m1 ->
+    map.sub_domain m2 m2'.
+  Proof.
+    intros H1 H2 H3 H4. repeat intro. Search map.split.
+    pose proof map.get_split_grow_l as Hm. specialize Hm with (1 := H1) (2 := H).
+    pose proof map.get_split as Hm'. specialize Hm' with (1 := H1). specialize (Hm' k).
+    destruct Hm' as [Hm'|Hm']; [fwd; congruence|]. destruct Hm' as [_ Hm'].
+    apply H3 in Hm. fwd. pose proof map.get_split as Hm'0. specialize (Hm'0 k).
+    specialize Hm'0 with (1 := H2). destruct Hm'0 as [Hm'0 | Hm'0].
+    - fwd. exfalso. rewrite Hm'0p0 in Hm. apply H4 in Hm. fwd. congruence.
+    - fwd. rewrite Hm'0p0 in Hm. eexists. eapply Hm.
+  Qed.
+
+  Lemma split_same_domain (m m1 m2 m' m1' m2' : mem) :
+    map.split m m1 m2 ->
+    map.split m' m1' m2' ->
+    map.same_domain m m' ->
+    map.same_domain m1' m1 ->
+    map.same_domain m2 m2'.
+  Proof. intros. destruct H1, H2. split; eauto using split_sub_domain. Qed.
+                          
+  Lemma intersect_same_domain e c t m l post :
+    exec e c t m l post ->
+    exec e c t m l (fun t' m' l' => post t' m' l' /\ map.same_domain m m').
+  Proof.
+    intros H. induction H; try solve [econstructor; eauto using map.same_domain_refl].
+    - econstructor; eauto. split; [assumption|]. eapply store_preserves_domain.
+      eassumption.
+    - econstructor; eauto. intros. eapply exec.weaken. 1: eapply H1; eauto.
+      simpl. intros. fwd. do 2 eexists. intuition eauto.
+      eapply (split_same_domain mCombined _ _ m' _ _).
+      { eapply map.split_comm. eassumption. }
+      { eapply map.split_comm. eassumption. }
+      { assumption. }
+      { eapply anybytes_unique_domain; eassumption. }
+    - econstructor; eauto. simpl. intros. fwd. eapply exec.weaken.
+      1: eapply H1; assumption.
+      simpl. intros. fwd. split; auto. eapply map.same_domain_trans; eauto.
+    - eapply exec.while_true; eauto. simpl. intros. fwd. eapply exec.weaken.
+      1: eapply H3; assumption.
+      simpl. intros. fwd. split; auto. eapply map.same_domain_trans; eauto.
+    - econstructor; eauto. simpl. intros. fwd. apply H3 in H4p0. fwd. eauto 10.
+    - econstructor; eauto. intros. apply H2 in H3. fwd. eexists. intuition eauto.
+      Abort.
+
+  (*this is not true---we need an enough-stack-space hypothesis for execution number 2.
+    after all, exec e c t mBig2 l P2 says nothing useful if mBig2 is the whole address
+    space and c is a stackalloc.*)
   Lemma intersect_exec: forall e c t mBig1 mBig2 mAdd1 mAdd2 mSmall l P1 P2,
       map.split mBig1 mSmall mAdd1 ->
       map.split mBig2 mSmall mAdd2 ->
@@ -429,7 +481,8 @@ Section semantics.
       exec e c t mBig1 l P1 ->
       exec e c t mBig2 l P2 ->
       exec e c t mBig1 l (fun t' mBig1' l' =>
-                             exists mSmall', map.split mBig1' mSmall' mAdd1).
+                            P1 t' mBig1' l' /\
+                              exists mSmall', map.split mBig1' mSmall' mAdd1).
   Proof.
     intros. revert H.
     pose proof intersect_eval_expr as Hint. specialize Hint with (1 := H1) (3 := H0).
@@ -443,15 +496,10 @@ Section semantics.
     - specialize Hint with (1 := H). speck Hint. fwd. pose proof intersect_store as store.
       speck store. fwd. econstructor; eauto.
     - econstructor; eauto. intros. eapply exec.weaken.
-      Abort. (*not true*)
-      1: eapply H13; eauto.
-      (*program that works with m + m1 and m + m2 but not m...
-        
-        stackalloc 4 as x;
-        stackalloc 4 as y;
-        assert (x not in m1) \/ (y not in m2).
-        
-       *)
+      Search exec.
+      1: eapply H4; eauto.
+      { Check H3. inversion H3. subst. assumption. simpl. intros. fwd. eexists. eexists. intuition eauto.
+      eexists. eauto.
       + intersect_store; e.auto.
     induction 4; intros; fwd;
       pose proof intersect_eval_expr as H';
