@@ -202,25 +202,31 @@ Module exec. Section WithParams.
       exec c (fun n => word.unsigned (v n) <> 0 /\ H n) t m l mid ->
       (forall H' t' m' l', mid H' t' m' l' -> exec (cmd.while e c) H' t' m' l' post) ->
       exec (cmd.while e c) H t m l post
-  (* | call: forall binds fname arges t m l post params rets fbody args lf mid, *)
-  (*     map.get e fname = Some (params, rets, fbody) -> *)
-  (*     eval_call_args m l arges = Some args -> *)
-  (*     map.of_list_zip params args = Some lf -> *)
-  (*     exec fbody t m lf mid -> *)
-  (*     (forall t' m' st1, mid t' m' st1 -> *)
-  (*         exists retvs, map.getmany_of_list st1 rets = Some retvs /\ *)
-  (*         exists l', map.putmany_of_list_zip binds retvs l = Some l' /\ *)
-  (*         post t' m' l') -> *)
-  (*     exec (cmd.call binds fname arges) t m l post *)
-  (* | interact: forall binds action arges args t m l post mKeep mGive mid, *)
-  (*     map.split m mKeep mGive -> *)
-  (*     eval_call_args m l arges = Some args -> *)
-  (*     ext_spec t mGive action args mid -> *)
-  (*     (forall mReceive resvals, mid mReceive resvals -> *)
-  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
-  (*         forall m', map.split m' mKeep mReceive -> *)
-  (*         post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
-  (*     exec (cmd.interact binds action arges) t m l post. *).
+  | call: forall binds fname arges H t m l post params rets fbody args lf mid,
+      (forall n, H n ->
+            map.get e fname = Some (params, rets, fbody) /\
+            eval_call_args (m n) (l n) arges = Some (args n) /\
+            map.of_list_zip params (args n) = Some (lf n)) ->
+      exec fbody H t m lf mid ->
+      (forall H' t' m' st1,
+          mid H' t' m' st1 ->
+          exists l',
+            (forall n, H' n ->
+                  exists retvs, map.getmany_of_list (st1 n) rets = Some retvs /\
+                             map.putmany_of_list_zip binds retvs (l n) = Some (l' n)) /\
+              post H' t' m' l') ->
+      exec (cmd.call binds fname arges) H t m l post
+  | interact: forall binds action arges args H t m l post mKeep mGive mid,
+      (forall n, H n ->
+            map.split (m n) (mKeep n) (mGive n) ->
+            eval_call_args (m n) (l n) arges = Some (args n) ->
+            ext_spec (t n) (mGive n) action (args n) (mid n)) ->
+      (forall mReceive resvals,
+          (forall n, H n -> mid n (mReceive n) (resvals n)) ->
+          exists l', (forall n, H n -> map.putmany_of_list_zip binds (resvals n) (l n) = Some (l' n)) /\
+          forall m', (forall n, H n -> map.split (m' n) (mKeep n) (mReceive n)) ->
+          post H (fun n => cons ((mGive n, action, args n), (mReceive n, resvals n)) (t n)) m' l') ->
+      exec (cmd.interact binds action arges) H t m l post.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
@@ -240,16 +246,15 @@ Module exec. Section WithParams.
       intros.
       eapply IHexec; eauto.
       intros. specialize (H3 a mStack). fwd. eauto 10.
-    (* - eapply call. *)
-    (*   4: eapply IHexec. *)
-    (*   all: eauto. *)
-    (*   intros. *)
-    (*   edestruct H3 as (? & ? & ? & ? & ?); [eassumption|]. *)
-    (*   eauto 10. *)
-    (* - eapply interact; try eassumption. *)
-    (*   intros. *)
-    (*   edestruct H2 as (? & ? & ?); [eassumption|]. *)
-    (*   eauto 10. *)
+    - eapply call.
+      2: eapply IHexec.
+      all: eauto.
+      intros.
+      apply H2 in H4. fwd. eexists. split; [|eauto]. intros. apply H4p0 in H4.
+      fwd. eauto.
+    - eapply interact; try eassumption.
+      intros.
+      apply H1 in H3. fwd. eexists. split; [eassumption|]. eauto.
   Qed.
 
   (* should be trivial, but i dont feel like doing it now *)
