@@ -710,3 +710,18 @@ Section WithParams.
       + intros. subst. instantiate (1 := nil). assumption.
       + intros. subst. simpl. destruct H1. destruct H1p0p1. subst. auto.
   Qed.
+
+  Lemma multiexec_implies_exec_prettified e c H A t m l post :
+    multiexec e c H A t m l (fun H' _ t' m' l' => forall n, H' n -> post (t' n) (m' n) (l' n)) ->
+    forall n,
+      H n ->
+      exec e c (t n) (m n) (l n) post.
+  Proof.
+    intros Hmexec. pose proof multiexec_implies_exec as M.
+    specialize M with (1 := Hmexec). simpl in M. specialize (M _ (fun _ _ _ _ _ p => p)).
+    simpl in M. intros. eapply exec.weaken.
+    { apply M; auto. intros. specialize H2 with (1 := H4). fwd.
+      rewrite H2p1, H2p2, H2p3. auto. }
+    simpl. intros. fwd. specialize (H1 _ eq_refl). apply H1.
+  Qed.
+End WithParams.
