@@ -135,7 +135,7 @@ Module multiexec. Section WithParams.
   Context (e: env).
 
   Definition nst := list (word * mem). (*'nondeterministic state', a trace of stackalloc addrs*)
-  Definition addrs := list word. (* a _stack_ of stackalloc addrs *)
+  Definition addrs := list (word + locals). (* a _stack_ of stackalloc addrs *)
 
   Implicit Types post : (nst -> Prop) -> (nst -> addrs) -> (nst -> trace) -> (nst -> mem) -> (nst -> locals) -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
   Inductive exec: cmd -> (nst -> Prop) -> (nst -> addrs) -> (nst -> trace) -> (nst -> mem) -> (nst -> locals) ->
@@ -165,7 +165,7 @@ Module multiexec. Section WithParams.
                          map.split mCombined (mSmall n') mStack)
           (fun n =>
              match n with
-             | (a, mStack) :: n' => a :: A n'
+             | (a, mStack) :: n' => inl a :: A n'
              | _ => nil
              end)
           (fun n =>
@@ -186,7 +186,7 @@ Module multiexec. Section WithParams.
           (fun H' A' t' mCombined' l' =>
              exists mSmall' mStack',
                (forall n, H' n ->
-                     exists a, A' n = a :: A n /\
+                     exists a, A' n = inl a :: A n /\
                      anybytes a nbytes (mStack' n) /\
                        map.split (mCombined' n) (mSmall' n) (mStack' n)) /\
                  post H' A t' mSmall' l') ->
@@ -213,25 +213,30 @@ Module multiexec. Section WithParams.
             map.get e fname = Some (params, rets, fbody) /\
             eval_call_args (m n) (l n) arges = Some (args n) /\
             map.of_list_zip params (args n) = Some (lf n)) ->
-      exec fbody H A t m lf mid ->
+      exec fbody H (fun n => inr (l n) :: A n) t m lf mid ->
       (forall H' A' t' m' st1,
           mid H' A' t' m' st1 ->
           exists l',
             (forall n, H' n ->
-                  exists retvs, map.getmany_of_list (st1 n) rets = Some retvs /\
-                             map.putmany_of_list_zip binds retvs (l n) = Some (l' n)) /\
-              post H' A' t' m' l') ->
+                  exists l0,
+                    A' n = inr l0 :: A n /\
+                  exists retvs, map.getmany_of_list (st1 n) rets = Some (retvs n) /\
+                             map.putmany_of_list_zip binds (retvs n) l0 = Some (l' n)) /\
+              post H' A t' m' l') ->
       exec (cmd.call binds fname arges) H A t m l post
   | interact: forall binds action arges args H A t m l post mKeep mGive mid,
       (forall n, H n ->
-            map.split (m n) (mKeep n) (mGive n) ->
-            eval_call_args (m n) (l n) arges = Some (args n) ->
-            ext_spec (t n) (mGive n) action (args n) (mid n)) ->
+            map.split (m n) (mKeep n) (mGive n) /\
+            eval_call_args (m n) (l n) arges = Some (args n) /\
+              ext_spec (t n) (mGive n) action (args n) (mid n)) ->
+      (*this is a bit weird.  when given mReceive and resvals that are valid (according to ext_spec), this requires (as you'd expect) that every state of the multistate behaves as it's required to.  but interestingly, when given mReceive and resvals that are partially valid, it requires the states for which they're valid to behave as they're required to.  so we get 'partially vacuous' behaviour.  of course this has no practical relevance, since we only care about valid mReceive and resvals, and it's not any extra effort to prove the partly-correct hing.*)
       (forall mReceive resvals,
-          (forall n, H n -> mid n (mReceive n) (resvals n)) ->
-          exists l', (forall n, H n -> map.putmany_of_list_zip binds (resvals n) (l n) = Some (l' n)) /\
-          forall m', (forall n, H n -> map.split (m' n) (mKeep n) (mReceive n)) ->
-          post H A (fun n => cons ((mGive n, action, args n), (mReceive n, resvals n)) (t n)) m' l') ->
+          exists m' l',
+            (forall n, H n ->
+                  mid n (mReceive n) (resvals n) ->
+                  map.putmany_of_list_zip binds (resvals n) (l n) = Some (l' n) /\
+                    map.split (m' n) (mKeep n) (mReceive n)) /\
+            post H A (fun n => cons ((mGive n, action, args n), (mReceive n, resvals n)) (t n)) m' l') ->
       exec (cmd.interact binds action arges) H A t m l post.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
@@ -259,9 +264,8 @@ Module multiexec. Section WithParams.
       intros.
       apply H2 in H4. fwd. eexists. split; [|eauto]. intros. apply H4p0 in H4.
       fwd. eauto.
-    - eapply interact; try eassumption.
-      intros.
-      apply H1 in H3. fwd. eexists. split; [eassumption|]. eauto.
+    - econstructor; eauto. intros. specialize (H1 mReceive resvals).
+      fwd. eauto.
   Qed.
 
   (* should be trivial, but i dont feel like doing it now *)
@@ -575,11 +579,13 @@ Section WithParams.
 
   Lemma multiexec_implies_exec e c H A t m l post :
     multiexec e c H A t m l post ->
+    forall post0,
+      (forall H0 A0 t0 m0 l0, post H0 A0 t0 m0 l0 -> post0 H0 A0 t0 m0 l0) ->
     (*don't really need this much generality...*)
     (forall H' H'0 A' A'0 t' t'0 m' m'0 l' l'0,
         (forall n, H'0 n -> H' n) ->
         (forall n, H'0 n -> A'0 n = A' n /\ t'0 n = t' n /\ m'0 n = m' n /\ l'0 n = l' n) ->
-        post H' A' t' m' l' -> post H'0 A'0 t'0 m'0 l'0) ->
+        post0 H' A' t' m' l' -> post0 H'0 A'0 t'0 m'0 l'0) ->
     (*the condition on the postcondition is really quite reasonable;
       for instance, it's satisfied by any postcondition of the form
       forall n, H n -> P (t n) (m n) (l n)*)
@@ -588,17 +594,27 @@ Section WithParams.
       exec e c (t n) (m n) (l n) (fun t' m' l' =>
                                     (*the appending postcondition feels horribly hacky somehow*)
                                     exists n',
-                                      post (eq (n' ++ n)) (fun n => A (skipn (length n') n)) (fun _ => t') (fun _ => m') (fun _ => l')).
+                                      post0 (eq (n' ++ n)) (fun n => A (skipn (length n') n)) (fun _ => t') (fun _ => m') (fun _ => l')).
   Proof.
-    intros Hmexec. induction Hmexec; intros Hpost; try match goal with | H: _ |- _ => specialize Hpost with (3 := H) end; intros; try solve [econstructor; try (exists nil); eauto; apply Hpost; intros; subst; eauto]. 
-    - specialize H0 with (1 := H2). fwd. econstructor; eauto. exists nil. eapply Hpost; intros; subst; auto.
-    - eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
-      { intros. fwd. do 2 eexists. split.
+    intros Hmexec. induction Hmexec; intros post0 post_to_post0 Hpost0; try match goal with | H: _ |- _ => specialize Hpost with (3 := H) end; intros; try solve [econstructor; try (exists nil); match goal with | H : _ |- _ => apply post_to_post0 in H; specialize Hpost0 with (3 := H) end; apply Hpost0; intros; subst; eauto].
+    - specialize H0 with (1 := H2). fwd. econstructor; eauto. exists nil. eapply Hpost0; intros; subst; simpl; eauto. cbv beta. auto.
+    - specialize H0 with (1 := H2). fwd. econstructor; eauto. exists nil. eapply Hpost0; intros; subst; simpl; eauto.
+    - specialize (IHHmexec (fun H0 A0 t0 m0 l0 => exists mSmall' mStack' : multiexec.nst -> mem,
+                                (forall n : multiexec.nst,
+                                    H0 n ->
+                                    exists a : word,
+                                      A0 n = inl a :: A n /\
+                                        anybytes a nbytes (mStack' n) /\ map.split (m0 n) (mSmall' n) (mStack' n)) /\
+                                  post0 H0 A t0 mSmall' l0)).
+      eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
+      { simpl. intros. fwd. eauto. }
+      eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
+      { simpl. intros. fwd. do 2 eexists. split.
         - intros. specialize H2 with (1 := H4). specialize H4p0 with (1 := H2).
           specialize H3 with (1 := H4).
           fwd. eexists. rewrite H3p0. split; [eassumption|].
           split; [eassumption|]. rewrite H3p2. eassumption.
-        - specialize Hpost with (3 := H4p1). apply Hpost; auto. intros.
+        - specialize Hpost0 with (3 := H4p1). apply Hpost0; auto. intros.
           specialize H3 with (1 := H4). fwd. auto. }
       econstructor; eauto. intros.
       specialize (IHHmexec ((a, mStack) :: n)). simpl in IHHmexec.
@@ -607,16 +623,90 @@ Section WithParams.
       simpl. intros. fwd. specialize (H3p0 _ eq_refl). fwd. Search skipn.
       rewrite List.skipn_app_r in E by reflexivity. injection E. intros. subst.
       eexists (mSmall' _), (mStack' _). intuition eauto. eexists.
-      specialize Hpost with (3 := H3p1). apply Hpost; auto.
+      specialize Hpost0 with (3 := H3p1). apply Hpost0; auto.
       { intros. Search (_ ++ _ :: _ = _ ++ _ ++ _). replace (n' ++ (a0, r0) :: l0) with (n' ++ (cons (a0, r0) nil) ++ l0) by reflexivity.
         rewrite app_assoc. apply H5. }
       intros. subst. rewrite List.skipn_app_r by reflexivity.
       rewrite <- app_assoc. simpl. auto.
-    - 
-      split; [|auto].
-        apply H5. instantiate (1 := n' ++ (a0, r0)).
-      do 2 eexists. intuition eauto.
-      { move H3p0p2 at bottom. destruct H3 as (H5&H6&H7). destruct n'; try congruence. destruct p.
-      inversion H5. subst. clear H5.
-      do 2 eexists. split; [exact H6|]. intuition eauto. 1apply H
-       eauto 10.
+    - specialize (IHHmexec1 ltac:(auto)). specialize (IHHmexec2 ltac:(auto)).
+      destruct (Z.eqb (word.unsigned (v n)) 0) eqn:E.
+      + Search Z.eqb. apply BinInt.Z.eqb_eq in E. eapply exec.if_false; eauto.
+      + apply BinInt.Z.eqb_neq in E. eapply exec.if_true; eauto.
+    - specialize (IHHmexec _ (fun _ _ _ _ _ p => (H1 _ _ _ _ _ p))).
+      eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
+      { simpl. intros. Search t'0. specialize H4 with (1 := H8). move H4 at bottom.
+        fwd. rewrite H4p1, H4p2, H4p3. specialize (H5 post1 H6). eapply exec.weaken.
+        { apply H5; auto. }
+        simpl. intros. fwd. eexists. specialize H7 with (3 := H4). apply H7; eauto.
+        intros. subst. rewrite List.skipn_app_r by reflexivity. auto. }
+      econstructor.
+      { apply IHHmexec. assumption. }
+      clear IHHmexec. simpl. intros. fwd. specialize (H3 post0 ltac:(assumption)).
+      specialize (H3 ltac:(auto) _ eq_refl). eapply exec.weaken. 1: exact H3.
+      simpl. intros. fwd. eexists. specialize Hpost0 with (3 := H4).
+      apply Hpost0; eauto.
+      + intros. rewrite app_assoc. eassumption.
+      + intros. subst. rewrite List.skipn_app_r by reflexivity.
+        rewrite <- app_assoc. do 2 rewrite List.skipn_app_r by reflexivity.
+        auto.
+    - specialize (IHHmexec _ (fun _ _ _ _ _ p => (H3 _ _ _ _ _ p))).
+      eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
+      { simpl. intros. Search t'0. specialize H6 with (1 := H10). move H6 at bottom.
+        fwd. rewrite H6p1, H6p2, H6p3. specialize (H7 post1 H8). eapply exec.weaken.
+        { auto. }
+        simpl. intros. fwd. eexists. specialize H9 with (3 := H6). apply H9; eauto.
+        intros. subst. rewrite List.skipn_app_r by reflexivity. auto. }
+      destruct (Z.eqb (word.unsigned (v n)) 0) eqn:E.
+      + apply BinInt.Z.eqb_eq in E. eapply exec.while_false; eauto. Check H1.
+        specialize post_to_post0 with (1 := H1).
+        specialize Hpost0 with (3 := post_to_post0).
+        exists nil. apply Hpost0; eauto.
+        -- intros. subst. simpl. auto.
+        -- intros. subst. simpl. auto.
+      + apply BinInt.Z.eqb_neq in E. eapply exec.while_true; eauto. simpl.
+        intros. fwd. specialize (H5 post0 post_to_post0 Hpost0 _ eq_refl).
+        eapply exec.weaken. 1: exact H5. simpl. intros. fwd. eexists.
+        specialize Hpost0 with (3 := H6). apply Hpost0; auto.
+        -- intros. subst. rewrite app_assoc. reflexivity.
+        -- intros. subst. rewrite List.skipn_app_r by reflexivity.
+           rewrite <- app_assoc. do 2 rewrite List.skipn_app_r by reflexivity. auto.
+    - move H0 at bottom. specialize H0 with (1 := H2). fwd.
+      specialize (IHHmexec (fun H' A' t' m' st1 => exists l' : multiexec.nst -> locals,
+      (forall n : multiexec.nst,
+       H' n ->
+       exists l0 : locals,
+         A' n = inr l0 :: A n /\
+         (exists retvs : multiexec.nst -> list word,
+            map.getmany_of_list (st1 n) rets = Some (retvs n) /\
+            map.putmany_of_list_zip binds (retvs n) l0 = Some (l' n))) /\
+      post0 H' A t' m' l')).
+      eassert _ as blah. 2: specialize (IHHmexec blah); clear blah.
+      { simpl. intros. Search mid. apply H1 in H3. fwd. eexists. split.
+        - eauto.
+        - apply post_to_post0. assumption.
+      } 
+      econstructor; eauto.
+      { eapply IHHmexec; eauto. intros. fwd. eexists. split.
+        - intros. specialize H0 with (1 := H4). specialize H4p0 with (1 := H0).
+          fwd. specialize H3 with (1 := H4). fwd. rewrite H3p0, H3p3. eauto.
+        - specialize Hpost0 with (3 := H4p1). eapply Hpost0; auto.
+          intros. specialize H3 with (1 := H4). fwd. rewrite H3p1, H3p2.
+          auto. }
+      simpl. intros. fwd. specialize (H0p3 _ eq_refl). fwd. eexists. intuition eauto.
+      rewrite List.skipn_app_r in H0p3p1p1 by reflexivity.
+      eexists. intuition eauto. eexists.
+      specialize Hpost0 with (3 := H0p4). apply Hpost0; eauto.
+      intros. subst. rewrite List.skipn_app_r by reflexivity.
+      rewrite List.skipn_app_r in H0 by reflexivity. auto.
+    - intros. Search mid. move H1 at bottom. move H0 at bottom.
+      specialize (H0 _ ltac:(eassumption)). fwd. econstructor; eauto.
+      intros.
+      specialize (H1 (fun _ => mReceive) (fun _ => resvals)).
+      fwd. specialize (H1p0 _ ltac:(eassumption) ltac:(assumption)).
+      fwd. eexists. intuition eauto. eexists.
+      specialize post_to_post0 with (1 := H1p1).
+      specialize Hpost0 with (3 := post_to_post0).
+      apply Hpost0; auto.
+      + intros. subst. instantiate (1 := nil). assumption.
+      + intros. subst. simpl. destruct H1. destruct H1p0p1. subst. auto.
+  Qed.
