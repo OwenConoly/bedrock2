@@ -159,11 +159,11 @@ Module exec. Section WithParams.
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
         exec body true t mCombined (map.put l x a)
-          (fun true' t' mCombined' l' =>
+          (fun q' t' mCombined' l' =>
             exists mSmall' mStack',
               anybytes a n mStack' /\
               map.split mCombined' mSmall' mStack' /\
-              post true' t' mSmall' l')) ->
+              post q' t' mSmall' l')) ->
       exec (cmd.stackalloc x n body) true t mSmall l post
   | if_true: forall t m l e c1 c2 post v,
       eval_expr m l e = Some v ->
@@ -177,7 +177,7 @@ Module exec. Section WithParams.
       exec (cmd.cond e c1 c2) true t m l post
   | seq: forall c1 c2 t m l post mid,
       exec c1 true t m l mid ->
-      (forall true' t' m' l', mid true' t' m' l' -> exec c2 true' t' m' l' post) ->
+      (forall q' t' m' l', mid q' t' m' l' -> exec c2 q' t' m' l' post) ->
       exec (cmd.seq c1 c2) true t m l post
   | while_false: forall e c t m l post v,
       eval_expr m l e = Some v ->
@@ -188,17 +188,17 @@ Module exec. Section WithParams.
       eval_expr m l e = Some v ->
       word.unsigned v <> 0 ->
       exec c true t m l mid ->
-      (forall true' t' m' l', mid true' t' m' l' -> exec (cmd.while e c) true' t' m' l' post) ->
+      (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) ->
       exec (cmd.while e c) true t m l post
   | call: forall binds fname arges t m l post params rets fbody args lf mid,
       map.get e fname = Some (params, rets, fbody) ->
       eval_call_args m l arges = Some args ->
       map.of_list_zip params args = Some lf ->
       exec fbody true t m lf mid ->
-      (forall true' t' m' st1, mid true' t' m' st1 ->
+      (forall q' t' m' st1, mid q' t' m' st1 ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post true' t' m' l') ->
+          post q' t' m' l') ->
       exec (cmd.call binds fname arges) true t m l post
   | interact: forall binds action arges args t m l post mKeep mGive mid,
       map.split m mKeep mGive ->
@@ -438,5 +438,14 @@ Section WithParams.
       (fun q' t' m' l' => q' = false /\ length t' = n).
   Proof.
     intros. eapply exec.weaken. 1: apply goes_forever'. simpl. intros. fwd. eauto.
+  Qed.
+
+  Lemma nested_quit e t m l : exec e (cmd.seq cmd.skip cmd.skip) true t m l (fun _ _ _ _ => True).
+  Proof.
+    apply exec.seq_cps.
+    apply exec.quit.
+    Fail apply exec.skip. (*as it should be: cannot quit and then start executing again*)
+    apply exec.quit.
+    exact I.
   Qed.
 End WithParams.
