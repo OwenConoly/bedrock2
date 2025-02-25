@@ -134,104 +134,107 @@ Module exec. Section WithParams.
   Section WithEnv.
   Context (e: env).
 
-  Implicit Types post : trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
-  Inductive exec: cmd -> trace -> mem -> locals ->
-                  (trace -> mem -> locals -> Prop) -> Prop :=
-  | skip: forall t m l post,
-      post t m l ->
-      exec cmd.skip t m l post
-  | set: forall x e t m l post v,
+  Implicit Types post : bool -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  Inductive exec: cmd -> bool -> trace -> mem -> locals ->
+                  (bool -> trace -> mem -> locals -> Prop) -> Prop :=
+  | skip: forall q(*stands for 'quit'*) t m l post,
+      post q t m l ->
+      exec cmd.skip q t m l post
+  | set: forall x e q t m l post v,
       eval_expr m l e = Some v ->
-      post t m (map.put l x v) ->
-      exec (cmd.set x e) t m l post
-  | unset: forall x t m l post,
-      post t m (map.remove l x) ->
-      exec (cmd.unset x) t m l post
-  | store: forall sz ea ev t m l post a v m',
+      post q t m (map.put l x v) ->
+      exec (cmd.set x e) q t m l post
+  | unset: forall x q t m l post,
+      post q t m (map.remove l x) ->
+      exec (cmd.unset x) q t m l post
+  | store: forall sz ea ev q t m l post a v m',
       eval_expr m l ea = Some a ->
       eval_expr m l ev = Some v ->
       store sz m a v = Some m' ->
-      post t m' l ->
-      exec (cmd.store sz ea ev) t m l post
-  | stackalloc: forall x n body t mSmall l post,
+      post q t m' l ->
+      exec (cmd.store sz ea ev) q t m l post
+  | stackalloc: forall x n body q t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
       (forall a mStack mCombined,
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body t mCombined (map.put l x a)
-          (fun t' mCombined' l' =>
+        exec body q t mCombined (map.put l x a)
+          (fun q' t' mCombined' l' =>
             exists mSmall' mStack',
               anybytes a n mStack' /\
               map.split mCombined' mSmall' mStack' /\
-              post t' mSmall' l')) ->
-      exec (cmd.stackalloc x n body) t mSmall l post
-  | if_true: forall t m l e c1 c2 post v,
+              post q' t' mSmall' l')) ->
+      exec (cmd.stackalloc x n body) q t mSmall l post
+  | if_true: forall q t m l e c1 c2 post v,
       eval_expr m l e = Some v ->
       word.unsigned v <> 0 ->
-      exec c1 t m l post ->
-      exec (cmd.cond e c1 c2) t m l post
-  | if_false: forall e c1 c2 t m l post v,
+      exec c1 q t m l post ->
+      exec (cmd.cond e c1 c2) q t m l post
+  | if_false: forall e c1 c2 q t m l post v,
       eval_expr m l e = Some v ->
       word.unsigned v = 0 ->
-      exec c2 t m l post ->
-      exec (cmd.cond e c1 c2) t m l post
-  | seq: forall c1 c2 t m l post mid,
-      exec c1 t m l mid ->
-      (forall t' m' l', mid t' m' l' -> exec c2 t' m' l' post) ->
-      exec (cmd.seq c1 c2) t m l post
-  | while_false: forall e c t m l post v,
+      exec c2 q t m l post ->
+      exec (cmd.cond e c1 c2) q t m l post
+  | seq: forall c1 c2 q t m l post mid,
+      exec c1 q t m l mid ->
+      (forall q' t' m' l', mid q' t' m' l' -> exec c2 q' t' m' l' post) ->
+      exec (cmd.seq c1 c2) q t m l post
+  | while_false: forall e c q t m l post v,
       eval_expr m l e = Some v ->
       word.unsigned v = 0 ->
-      post t m l ->
-      exec (cmd.while e c) t m l post
-  | while_true: forall e c t m l post v mid,
+      post q t m l ->
+      exec (cmd.while e c) q t m l post
+  | while_true: forall e c q t m l post v mid,
       eval_expr m l e = Some v ->
       word.unsigned v <> 0 ->
-      exec c t m l mid ->
-      (forall t' m' l', mid t' m' l' -> exec (cmd.while e c) t' m' l' post) ->
-      exec (cmd.while e c) t m l post
-  | call: forall binds fname arges t m l post params rets fbody args lf mid,
+      exec c q t m l mid ->
+      (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) ->
+      exec (cmd.while e c) q t m l post
+  | call: forall binds fname arges q t m l post params rets fbody args lf mid,
       map.get e fname = Some (params, rets, fbody) ->
       eval_call_args m l arges = Some args ->
       map.of_list_zip params args = Some lf ->
-      exec fbody t m lf mid ->
-      (forall t' m' st1, mid t' m' st1 ->
+      exec fbody q t m lf mid ->
+      (forall q' t' m' st1, mid q' t' m' st1 ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post t' m' l') ->
-      exec (cmd.call binds fname arges) t m l post
-  | interact: forall binds action arges args t m l post mKeep mGive mid,
+          post q' t' m' l') ->
+      exec (cmd.call binds fname arges) q t m l post
+  | interact: forall binds action arges args q t m l post mKeep mGive mid,
       map.split m mKeep mGive ->
       eval_call_args m l arges = Some args ->
       ext_spec t mGive action args mid ->
       (forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) t m l post.
+          post q (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) q t m l post
+  | quit: forall c q t m l post,
+      post false t m l ->
+      exec c q t m l post.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma interact_cps: forall binds action arges args t m l post mKeep mGive,
+  Lemma interact_cps: forall binds action arges args q t m l post mKeep mGive,
       map.split m mKeep mGive ->
       eval_call_args m l arges = Some args ->
       ext_spec t mGive action args (fun mReceive resvals =>
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) t m l post.
+          post q (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) q t m l post.
   Proof. intros. eauto using interact. Qed.
 
-  Lemma seq_cps: forall c1 c2 t m l post,
-      exec c1 t m l (fun t' m' l' => exec c2 t' m' l' post) ->
-      exec (cmd.seq c1 c2) t m l post.
+  Lemma seq_cps: forall c1 c2 q t m l post,
+      exec c1 q t m l (fun q' t' m' l' => exec c2 q' t' m' l' post) ->
+      exec (cmd.seq c1 c2) q t m l post.
   Proof. intros. eauto using seq. Qed.
 
-  Lemma weaken: forall t l m s post1,
-      exec s t m l post1 ->
+  Lemma weaken: forall q t l m s post1,
+      exec s q t m l post1 ->
       forall post2,
-        (forall t' m' l', post1 t' m' l' -> post2 t' m' l') ->
-        exec s t m l post2.
+        (forall q' t' m' l', post1 q' t' m' l' -> post2 q' t' m' l') ->
+        exec s q t m l post2.
   Proof.
     induction 1; intros; try solve [econstructor; eauto].
     - eapply stackalloc. 1: assumption.
@@ -250,16 +253,21 @@ Module exec. Section WithParams.
       eauto 10.
   Qed.
 
-  Lemma intersect: forall t l m s post1,
-      exec s t m l post1 ->
+  Lemma intersect: forall s q t m l post1,
+      (forall t m l, post1 false t m l -> False) ->
+      exec s q t m l post1 ->
       forall post2,
-        exec s t m l post2 ->
-        exec s t m l (fun t' m' l' => post1 t' m' l' /\ post2 t' m' l').
+        (forall t m l, post2 false t m l -> False) ->
+        exec s q t m l post2 ->
+        exec s q t m l (fun q' t' m' l' => post1 q' t' m' l' /\ post2 q' t' m' l').
   Proof.
+    intros * Hpost1.
     induction 1;
-      intros;
+      intros post2 Hpost2 ?;
       match goal with
-      | H: exec _ _ _ _ _ |- _ => inversion H; subst; clear H
+      | H: exec _ _ _ _ _ _ |- _ => inversion H;
+                                  try solve [exfalso; eauto];
+                                  subst; clear H
       end;
       try match goal with
       | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ =>
@@ -277,12 +285,14 @@ Module exec. Section WithParams.
                replace v2 with v1 in * by congruence; clear H2
              end;
       try solve [econstructor; eauto | exfalso; congruence].
-
     - econstructor. 1: eassumption.
       intros.
-      rename H0 into Ex1, H11 into Ex2.
+      rename H0 into Ex1, H12 into Ex2.
       eapply weaken. 1: eapply H1. 1,2: eassumption.
-      1: eapply Ex2. 1,2: eassumption.
+      { intros. fwd. eauto. }
+      2: eapply Ex2.
+      { simpl. intros. fwd. eauto. }
+      1,2: eassumption.
       cbv beta.
       intros. fwd.
       lazymatch goal with
@@ -292,45 +302,48 @@ Module exec. Section WithParams.
       edestruct P; try typeclasses eauto. 2: subst; eauto 10.
       eapply anybytes_unique_domain; eassumption.
     - econstructor.
-      + eapply IHexec. exact H5. (* not H *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply while_true. 1, 2: eassumption.
-      + eapply IHexec. exact H9. (* not H1 *)
-      + simpl. intros *. intros [? ?]. eauto.
-    - eapply call. 1, 2, 3: eassumption.
-      + eapply IHexec. exact H15. (* not H2 *)
-      + simpl. intros *. intros [? ?].
-        edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-        edestruct H16 as (? & ? & ? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
-    - pose proof ext_spec.mGive_unique as P.
-      specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H13).
-      subst mGive0.
-      destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _).
-      subst mKeep0.
-      eapply interact. 1,2: eassumption.
-      + eapply ext_spec.intersect; [ exact H1 | exact H13 ].
-      + simpl. intros *. intros [? ?].
-        edestruct H2 as (? & ? & ?); [eassumption|].
-        edestruct H14 as (? & ? & ?); [eassumption|].
-        repeat match goal with
-               | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-                 replace v2 with v1 in * by congruence; clear H2
-               end.
-        eauto 10.
-  Qed.
+      + eapply weaken. 1: eapply IHexec.
+  Abort. (*this should be true, but looks like a few minutes of effort*)
+  (*       --  *)
+  (*       exact H5. (* not H *) *)
+  (*     + simpl. intros *. intros [? ?]. eauto. *)
+  (*   - eapply while_true. 1, 2: eassumption. *)
+  (*     + eapply IHexec. exact H9. (* not H1 *) *)
+  (*     + simpl. intros *. intros [? ?]. eauto. *)
+  (*   - eapply call. 1, 2, 3: eassumption. *)
+  (*     + eapply IHexec. exact H16. (* not H2 *) *)
+  (*     + simpl. intros *. intros [? ?]. *)
+  (*       edestruct H3 as (? & ? & ? & ? & ?); [eassumption|]. *)
+  (*       edestruct H17 as (? & ? & ? & ? & ?); [eassumption|]. *)
+  (*       repeat match goal with *)
+  (*              | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*                replace v2 with v1 in * by congruence; clear H2 *)
+  (*              end. *)
+  (*       eauto 10. *)
+  (*   - pose proof ext_spec.mGive_unique as P. *)
+  (*     specialize P with (1 := H) (2 := H7) (3 := H1) (4 := H14). *)
+  (*     subst mGive0. *)
+  (*     destruct (map.split_diff (map.same_domain_refl mGive) H H7) as (? & _). *)
+  (*     subst mKeep0. *)
+  (*     eapply interact. 1,2: eassumption. *)
+  (*     + eapply ext_spec.intersect; [ exact H1 | exact H14 ]. *)
+  (*     + simpl. intros *. intros [? ?]. *)
+  (*       edestruct H2 as (? & ? & ?); [eassumption|]. *)
+  (*       edestruct H15 as (? & ? & ?); [eassumption|]. *)
+  (*       repeat match goal with *)
+  (*              | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*                replace v2 with v1 in * by congruence; clear H2 *)
+  (*              end. *)
+  (*       eauto 10. *)
+  (* Qed. *)
 
   End WithEnv.
 
   Lemma extend_env: forall e1 e2,
       map.extends e2 e1 ->
-      forall c t m l post,
-      exec e1 c t m l post ->
-      exec e2 c t m l post.
+      forall c q t m l post,
+      exec e1 c q t m l post ->
+      exec e2 c q t m l post.
   Proof. induction 2; try solve [econstructor; eauto]. Qed.
 
   End WithParams.
@@ -341,19 +354,19 @@ Section WithParams.
   Context {locals: map.map String.string word}.
   Context {ext_spec: ExtSpec}.
 
-  Implicit Types (l: locals) (m: mem) (post: trace -> mem -> list word -> Prop).
+  Implicit Types (l: locals) (m: mem) (post: bool -> trace -> mem -> list word -> Prop).
 
-  Definition call e fname t m args post :=
+  Definition call e fname q t m args post :=
     exists argnames retnames body,
       map.get e fname = Some (argnames, retnames, body) /\
       exists l, map.of_list_zip argnames args = Some l /\
-        exec e body t m l (fun t' m' l' => exists rets,
-          map.getmany_of_list l' retnames = Some rets /\ post t' m' rets).
+        exec e body q t m l (fun q' t' m' l' => exists rets,
+          map.getmany_of_list l' retnames = Some rets /\ post q' t' m' rets).
 
-  Lemma weaken_call: forall e fname t m args post1,
-      call e fname t m args post1 ->
-      forall post2, (forall t' m' rets, post1 t' m' rets -> post2 t' m' rets) ->
-      call e fname t m args post2.
+  Lemma weaken_call: forall e fname q t m args post1,
+      call e fname q t m args post1 ->
+      forall post2, (forall q' t' m' rets, post1 q' t' m' rets -> post2 q' t' m' rets) ->
+      call e fname q t m args post2.
   Proof.
     unfold call. intros. fwd.
     do 4 eexists. 1: eassumption.
@@ -364,13 +377,66 @@ Section WithParams.
 
   Lemma extend_env_call: forall e1 e2,
       map.extends e2 e1 ->
-      forall f t m rets post,
-      call e1 f t m rets post ->
-      call e2 f t m rets post.
+      forall f q t m rets post,
+      call e1 f q t m rets post ->
+      call e2 f q t m rets post.
   Proof.
     unfold call. intros. fwd. repeat eexists.
     - eapply H. eassumption.
     - eassumption.
     - eapply exec.extend_env; eassumption.
+  Qed.
+End WithParams.
+
+Require Import coqutil.Word.SimplWordExpr.
+From Coq Require Import ZArith.
+From Coq Require Import Lia.
+
+Section WithParams.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {locals: map.map String.string word}.
+  Context {word_ok : word.ok word} {mem_ok: map.ok mem}.
+
+  Instance ext_spec : ExtSpec := fun t m action args post =>
+                                   post map.empty nil.
+
+  Definition example := cmd.while (expr.literal 1) (cmd.interact nil String.EmptyString nil).
+
+  Lemma one_not_zero : word.unsigned (word := word) (word.of_Z 1) <> 0.
+  Proof.
+    rewrite word.unsigned_of_Z. cbv [word.wrap]. 
+    destruct word_ok. clear - width_pos.
+    assert (2 ^ 1 <= 2 ^ width).
+    { Search (_ ^ _ <= _ ^ _).  apply Z.pow_le_mono_r; lia. }
+    replace (2 ^ 1) with 2 in H by reflexivity.
+    remember (2 ^ width) as blah. clear Heqblah.
+    Fail Z.div_mod_to_equations; lia. (*?*)
+    rewrite Z.mod_small by lia. lia.
+  Qed.
+  
+  Lemma goes_forever' e n t m l :
+      exec e example true t m l
+        (fun q' t' m' l' => q' = false /\ length t' = length t + n)%nat.
+  Proof.
+    revert t m l. induction n; intros t m l.
+    - apply exec.quit. auto.
+    - eapply exec.while_true with (mid := fun q0 t0 m0 l0 => q0 = true /\ t0 = _ :: t /\ m0 = m /\ l0 = l).
+      + reflexivity.
+      + apply one_not_zero.
+      + eapply exec.interact_cps.
+        -- Search (map.split _ _ map.empty). apply map.split_empty_r. reflexivity.
+        -- reflexivity.
+        -- cbv [ext_spec]. eexists. intuition eauto.
+           apply map.split_empty_r. assumption.
+      + intros. fwd. eapply exec.weaken. 1: apply IHn. simpl. intros. fwd.
+        intuition auto. lia.
+  Qed.
+
+  Lemma goes_forever e m l :
+    forall n,
+    exec e example true nil m l
+      (fun q' t' m' l' => q' = false /\ length t' = n).
+  Proof.
+    intros. eapply exec.weaken. 1: apply goes_forever'. simpl. intros. fwd. eauto.
   Qed.
 End WithParams.
