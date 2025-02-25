@@ -137,97 +137,97 @@ Module exec. Section WithParams.
   Implicit Types post : bool -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
   Inductive exec: cmd -> bool -> trace -> mem -> locals ->
                   (bool -> trace -> mem -> locals -> Prop) -> Prop :=
-  | skip: forall q(*stands for 'quit'*) t m l post,
-      post q t m l ->
-      exec cmd.skip q t m l post
-  | set: forall x e q t m l post v,
+  | skip: forall t m l post,
+      post true t m l ->
+      exec cmd.skip true t m l post
+  | set: forall x e t m l post v,
       eval_expr m l e = Some v ->
-      post q t m (map.put l x v) ->
-      exec (cmd.set x e) q t m l post
-  | unset: forall x q t m l post,
-      post q t m (map.remove l x) ->
-      exec (cmd.unset x) q t m l post
-  | store: forall sz ea ev q t m l post a v m',
+      post true t m (map.put l x v) ->
+      exec (cmd.set x e) true t m l post
+  | unset: forall x t m l post,
+      post true t m (map.remove l x) ->
+      exec (cmd.unset x) true t m l post
+  | store: forall sz ea ev t m l post a v m',
       eval_expr m l ea = Some a ->
       eval_expr m l ev = Some v ->
       store sz m a v = Some m' ->
-      post q t m' l ->
-      exec (cmd.store sz ea ev) q t m l post
-  | stackalloc: forall x n body q t mSmall l post,
+      post true t m' l ->
+      exec (cmd.store sz ea ev) true t m l post
+  | stackalloc: forall x n body t mSmall l post,
       Z.modulo n (bytes_per_word width) = 0 ->
       (forall a mStack mCombined,
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body q t mCombined (map.put l x a)
-          (fun q' t' mCombined' l' =>
+        exec body true t mCombined (map.put l x a)
+          (fun true' t' mCombined' l' =>
             exists mSmall' mStack',
               anybytes a n mStack' /\
               map.split mCombined' mSmall' mStack' /\
-              post q' t' mSmall' l')) ->
-      exec (cmd.stackalloc x n body) q t mSmall l post
-  | if_true: forall q t m l e c1 c2 post v,
+              post true' t' mSmall' l')) ->
+      exec (cmd.stackalloc x n body) true t mSmall l post
+  | if_true: forall t m l e c1 c2 post v,
       eval_expr m l e = Some v ->
       word.unsigned v <> 0 ->
-      exec c1 q t m l post ->
-      exec (cmd.cond e c1 c2) q t m l post
-  | if_false: forall e c1 c2 q t m l post v,
+      exec c1 true t m l post ->
+      exec (cmd.cond e c1 c2) true t m l post
+  | if_false: forall e c1 c2 t m l post v,
       eval_expr m l e = Some v ->
       word.unsigned v = 0 ->
-      exec c2 q t m l post ->
-      exec (cmd.cond e c1 c2) q t m l post
-  | seq: forall c1 c2 q t m l post mid,
-      exec c1 q t m l mid ->
-      (forall q' t' m' l', mid q' t' m' l' -> exec c2 q' t' m' l' post) ->
-      exec (cmd.seq c1 c2) q t m l post
-  | while_false: forall e c q t m l post v,
+      exec c2 true t m l post ->
+      exec (cmd.cond e c1 c2) true t m l post
+  | seq: forall c1 c2 t m l post mid,
+      exec c1 true t m l mid ->
+      (forall true' t' m' l', mid true' t' m' l' -> exec c2 true' t' m' l' post) ->
+      exec (cmd.seq c1 c2) true t m l post
+  | while_false: forall e c t m l post v,
       eval_expr m l e = Some v ->
       word.unsigned v = 0 ->
-      post q t m l ->
-      exec (cmd.while e c) q t m l post
-  | while_true: forall e c q t m l post v mid,
+      post true t m l ->
+      exec (cmd.while e c) true t m l post
+  | while_true: forall e c t m l post v mid,
       eval_expr m l e = Some v ->
       word.unsigned v <> 0 ->
-      exec c q t m l mid ->
-      (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) ->
-      exec (cmd.while e c) q t m l post
-  | call: forall binds fname arges q t m l post params rets fbody args lf mid,
+      exec c true t m l mid ->
+      (forall true' t' m' l', mid true' t' m' l' -> exec (cmd.while e c) true' t' m' l' post) ->
+      exec (cmd.while e c) true t m l post
+  | call: forall binds fname arges t m l post params rets fbody args lf mid,
       map.get e fname = Some (params, rets, fbody) ->
       eval_call_args m l arges = Some args ->
       map.of_list_zip params args = Some lf ->
-      exec fbody q t m lf mid ->
-      (forall q' t' m' st1, mid q' t' m' st1 ->
+      exec fbody true t m lf mid ->
+      (forall true' t' m' st1, mid true' t' m' st1 ->
           exists retvs, map.getmany_of_list st1 rets = Some retvs /\
           exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post q' t' m' l') ->
-      exec (cmd.call binds fname arges) q t m l post
-  | interact: forall binds action arges args q t m l post mKeep mGive mid,
+          post true' t' m' l') ->
+      exec (cmd.call binds fname arges) true t m l post
+  | interact: forall binds action arges args t m l post mKeep mGive mid,
       map.split m mKeep mGive ->
       eval_call_args m l arges = Some args ->
       ext_spec t mGive action args mid ->
       (forall mReceive resvals, mid mReceive resvals ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post q (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) q t m l post
+          post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) true t m l post
   | quit: forall c q t m l post,
       post false t m l ->
       exec c q t m l post.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
-  Lemma interact_cps: forall binds action arges args q t m l post mKeep mGive,
+  Lemma interact_cps: forall binds action arges args t m l post mKeep mGive,
       map.split m mKeep mGive ->
       eval_call_args m l arges = Some args ->
       ext_spec t mGive action args (fun mReceive resvals =>
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post q (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) q t m l post.
+          post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) true t m l post.
   Proof. intros. eauto using interact. Qed.
 
-  Lemma seq_cps: forall c1 c2 q t m l post,
-      exec c1 q t m l (fun q' t' m' l' => exec c2 q' t' m' l' post) ->
-      exec (cmd.seq c1 c2) q t m l post.
+  Lemma seq_cps: forall c1 c2 t m l post,
+      exec c1 true t m l (fun q' t' m' l' => exec c2 q' t' m' l' post) ->
+      exec (cmd.seq c1 c2) true t m l post.
   Proof. intros. eauto using seq. Qed.
 
   Lemma weaken: forall q t l m s post1,
@@ -286,24 +286,24 @@ Module exec. Section WithParams.
              end;
       try solve [econstructor; eauto | exfalso; congruence].
     - econstructor. 1: eassumption.
-      intros.
-      rename H0 into Ex1, H12 into Ex2.
-      eapply weaken. 1: eapply H1. 1,2: eassumption.
-      { intros. fwd. eauto. }
-      2: eapply Ex2.
-      { simpl. intros. fwd. eauto. }
-      1,2: eassumption.
-      cbv beta.
-      intros. fwd.
-      lazymatch goal with
-      | A: map.split _ _ _, B: map.split _ _ _ |- _ =>
-        specialize @map.split_diff with (4 := A) (5 := B) as P
-      end.
-      edestruct P; try typeclasses eauto. 2: subst; eauto 10.
-      eapply anybytes_unique_domain; eassumption.
-    - econstructor.
-      + eapply weaken. 1: eapply IHexec.
   Abort. (*this should be true, but looks like a few minutes of effort*)
+    (*   intros. *)
+    (*   rename H0 into Ex1, H12 into Ex2. *)
+    (*   eapply weaken. 1: eapply H1. 1,2: eassumption. *)
+    (*   { intros. fwd. eauto. } *)
+    (*   2: eapply Ex2. *)
+    (*   { simpl. intros. fwd. eauto. } *)
+    (*   1,2: eassumption. *)
+    (*   cbv beta. *)
+    (*   intros. fwd. *)
+    (*   lazymatch goal with *)
+    (*   | A: map.split _ _ _, B: map.split _ _ _ |- _ => *)
+    (*     specialize @map.split_diff with (4 := A) (5 := B) as P *)
+    (*   end. *)
+    (*   edestruct P; try typeclasses eauto. 2: subst; eauto 10. *)
+    (*   eapply anybytes_unique_domain; eassumption. *)
+    (* - econstructor. *)
+    (*   + eapply weaken. 1: eapply IHexec. *)
   (*       --  *)
   (*       exact H5. (* not H *) *)
   (*     + simpl. intros *. intros [? ?]. eauto. *)
