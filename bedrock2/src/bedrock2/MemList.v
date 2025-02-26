@@ -17,7 +17,7 @@ Section Sep.
   Definition emp (P : Prop) := fun m : map => m = empty /\ P.
   Definition sep (p q : map -> Prop) m :=
     exists mp mq, split m mp mq /\ p mp /\ q mq.
-  Definition ptsto H k v := fun (m : list (word * nat * map) -> map) =>
+  Definition ptsto (H : _ -> Prop) k v := fun (m : list (word * nat * map) -> map) =>
                             exists l, forall n,
                               H n ->
                               m n = put empty (k n, l (List.map snd (List.map fst n))) (v n).

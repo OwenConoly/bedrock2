@@ -132,7 +132,7 @@ Module multiexec. Section WithParams.
   Definition addrs := list (word * nat + locals). (* a _stack_ of stackalloc addrs *)
 
   Implicit Types post : (nst -> Prop) -> (nst -> addrs) -> (nst -> mem) -> (nst -> locals) -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
-  Check ptsto. Search (_ -> Init.Byte.byte).
+  Check ptsto. Search (_ -> Init.Byte.byte). Search (Init.Byte.byte -> Z).
   Inductive exec: cmd -> (nst -> Prop) -> (nst -> addrs) -> (nst -> mem) -> (nst -> locals) ->
                   ((nst -> Prop) -> (nst -> addrs) -> (nst -> mem) -> (nst -> locals) -> Prop) -> Prop :=
   | skip: forall H A m l post,
@@ -154,16 +154,15 @@ Module multiexec. Section WithParams.
       ptsto H a (fun n' => byte.of_Z (word.unsigned (word := word) (v0 n'))) mbyte ->
       ptsto H a (fun n' => byte.of_Z (word.unsigned (word := word) (v n'))) mbyte' ->
       post H A m' l ->
-      exec (cmd.store access_size.one ea ev) H A m l post
-  | load: forall ea ev (H : nst -> Prop) A m mbyte mrest l post a v m',
+      exec (cmd.store ea ev) H A m l post
+  | load: forall ea (H : nst -> Prop) A m mbyte mrest l post x a v,
       (forall n, H n ->
             eval_expr (l n) ea = Some (a n) /\
               map.split (m n) (mbyte n) (mrest n)) ->
-      ptsto H a (fun n' => byte.of_Z (word.unsigned (word := word) (v n'))) mbyte ->
-      post H A m' l ->
-      exec (cmd.store access_size.one ea ev) H A m l post
+      ptsto H a v mbyte ->
+      post H A m (fun n => map.put (l n) x (word.of_Z (byte.unsigned (v n)))) ->
+      exec (cmd.load x ea) H A m l post
   | stackalloc: forall x nbytes body H A mSmall l post,
-      Z.modulo nbytes (bytes_per_word width) = 0 ->
       exec body (fun n => exists a lvl mStack mCombined n' b,
                      n = (a, lvl, mStack) :: n' /\
                        mStack = map.put map.empty (a, lvl) b /\
@@ -211,6 +210,20 @@ Module multiexec. Section WithParams.
 
   Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
 
+  Check cmd.load. Check ptsto. Print mem. Check ptsto. Print nst.
+  Lemma can_load: forall (H : nst -> Prop) A (m : _ -> mem) l (a : Z) (lvl : nat) v x,
+      ptsto (key := word) (map := mem) H (fun _ => (word.of_Z a)) v m ->
+      exec (cmd.load x (expr.literal a)) H A m l (fun H' A' m' l' => H' = H /\ A' = A /\ m' = m /\ l' = fun n => map.put (l n) x (word.of_Z (byte.unsigned (v n)))).
+  Proof.
+    intros. econstructor.
+    - intros. split.
+      + simpl. reflexivity.
+      + instantiate (2 := m). instantiate (1 := fun _ => map.empty).
+        apply map.split_empty_r. reflexivity.
+    - eassumption.
+    - auto.
+  Qed.
+  
   Lemma seq_cps: forall c1 c2 H A t m l post,
       exec c1 H A t m l (fun H' A' t' m' l' => exec c2 H' A' t' m' l' post) ->
       exec (cmd.seq c1 c2) H A t m l post.
