@@ -13,14 +13,14 @@ End MapListMap.
 
 Section Sep.
   Context {key value} {map : map (key * nat) value}.
-  Context {addrs levels : Type}.
+  Context {word : Type}.
   Definition emp (P : Prop) := fun m : map => m = empty /\ P.
   Definition sep (p q : map -> Prop) m :=
     exists mp mq, split m mp mq /\ p mp /\ q mq.
-  Definition ptsto k v := fun (H : addrs * levels -> Prop) (m : addrs * levels -> map) =>
-                            exists n, forall a ls,
-                              H (a, ls) ->
-                              m (a, ls) = put empty (k, n ls) v.
+  Definition ptsto H k v := fun (m : list (word * nat * map) -> map) =>
+                            exists l, forall n,
+                              H n ->
+                              m n = put empty (k n, l (List.map snd (List.map fst n))) (v n).
   (*what is this*)
   (* Definition read k (P : value -> rep -> Prop) := (ex1 (fun v => sep (ptsto k v) (P v))). *)
 
@@ -75,14 +75,14 @@ Global Instance wordnat_eqb_spec :
   Definition of_bytes (l : list Byte.byte) : word :=
     word.of_Z (LittleEndianList.le_combine l).
   
-  Fixpoint array_byte (start : word) (xs : list Byte.byte) :=
-    match xs with
-    | nil => emp True
-    | cons x xs => sep (ptsto start x) (array_byte (word.add start (word.of_Z 1)) xs)
-    end.
+  (* Fixpoint array_byte (start : word) (xs : list Byte.byte) := *)
+  (*   match xs with *)
+  (*   | nil => emp True *)
+  (*   | cons x xs => sep (ptsto start x) (array_byte (word.add start (word.of_Z 1)) xs) *)
+  (*   end. *)
 
-  Definition anybytes' a n m : Prop :=
-    exists l, length l = n /\ array_byte a l m.
+  (* Definition anybytes' a n m : Prop := *)
+  (*   exists l, length l = n /\ array_byte a l m. *)
 End WithParameters.
 
 
