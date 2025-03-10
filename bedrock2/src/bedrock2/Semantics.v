@@ -140,15 +140,33 @@ Module exec. Section WithParams.
       (first_this_happens : forall (q: bool) (t: trace) (m : mem) (l : locals), Prop)
       (and_then_later_this_happens : forall (q : bool) (t: trace) (m : mem) (l : locals), forall (idx: nat), mids_and_post).
 
-  Fixpoint whole_splits (prefix: mids_and_post) post_prefix (whole: mids_and_post) rest : Prop :=
-    match prefix, whole with
-    | postcond post, _ => post = post_prefix /\ rest = whole
-    | and_then mid1 prefix, and_then mid2 whole => (forall q t m l n, mid1 q t m l -> mid2 q t m l /\ whole_splits (prefix q t m l n) post_prefix (whole q t m l n) rest)
-    | _, _ => False
-    end.
+  Record state := { q: bool; t: trace; m: mem; l: locals }.
+  Definition appl_to_state {T: Type} (f : _ -> _ -> _ -> _ -> T) st := f st.(q) st.(t) st.(m) st.(l).
+  Definition state_satisfies (st: state) (post: _ -> _ -> _ -> _ -> Prop) :=
+    appl_to_state post st.
+  
+  (*this fixpoint answers the question: when does an exectution
+    (infinite sequence of states) satisfy a postcondition?*)
+  (*this isn't actually used anywhere for now.  it is mainly documentation.*)
+  Fixpoint interp_mids_and_post (P : mids_and_post) : (nat -> state) -> Prop :=
+    fun f =>
+      match P with
+      | postcond post => exists n, state_satisfies (f n) post
+      | and_then noww later => exists n, state_satisfies (f n) noww /\
+                                     let later := appl_to_state later (f n) in
+                                     forall m,
+                                       interp_mids_and_post (later m) f
+      end.
 
-  (*suffix_good: bool -> trace -> mem -> locals -> mids_and_post -> Prop
-    given a state holding after s1 finishes executing, say whether the given postcondition holds*)
+  (*suffix_good says, given a state after prefix stuff finishes executing, whether the given postcondition holds*)
+  (*idk how to explain what this fixpoint does without reference to seq.*)
+  (*preconditions:
+    - s1 satisfies `prefix`
+    - forall q t m l post', if suffix_good q t m l post' is inhabited, then
+      executing state s2 starting from state (q,t,m,l) will satisfy post'
+   postcondition:
+    - if return value (a Prop) is inhabited, then (seq s1 s2) satisfies `whole`
+   *)
   Fixpoint sat (prefix: mids_and_post) (suffix_good: bool -> trace -> mem -> locals -> mids_and_post -> Prop) (whole : mids_and_post) : Prop :=
     match prefix, whole with
     | postcond post, _ => (forall q t m l, post q t m l -> suffix_good q t m l whole)
@@ -180,18 +198,35 @@ Module exec. Section WithParams.
       (forall q' t' m' l' post', mid q' t' m' l' post' -> exec c2 q' t' m' l' post') ->
       sat prefix mid post ->
       exec (cmd.seq c1 c2) true t m l post
-  (* | stackalloc: forall x n body t mSmall l post, *)
-  (*     Z.modulo n (bytes_per_word width) = 0 -> *)
-  (*     (forall a mStack mCombined, *)
-  (*       anybytes a n mStack -> *)
-  (*       map.split mCombined mSmall mStack -> *)
-  (*       exec body true t mCombined (map.put l x a) *)
-  (*         (fun q' t' mCombined' l' => *)
-  (*           exists mSmall' mStack', *)
-  (*             anybytes a n mStack' /\ *)
-  (*             map.split mCombined' mSmall' mStack' /\ *)
-  (*             post q' t' mSmall' l')) -> *)
-  (*     exec (cmd.stackalloc x n body) true t mSmall l post *)
+  | while_true: forall e c t m l v prefix post mid,
+      eval_expr m l e = Some v ->
+      word.unsigned v <> 0 ->
+      exec c true t m l prefix ->
+      (forall q' t' m' l' post', mid q' t' m' l' post' -> exec (cmd.while e c) q' t' m' l' post') ->
+      sat prefix mid post ->
+      exec (cmd.while e c) true t m l post
+  | while_false: forall e c t m l post v,
+      eval_expr m l e = Some v ->
+      word.unsigned v = 0 ->
+      post true t m l ->
+      exec (cmd.while e c) true t m l (postcond post)
+  | stackalloc: forall x n body t mSmall l post,
+      Z.modulo n (bytes_per_word width) = 0 ->
+      (forall a mStack mCombined,
+        anybytes a n mStack ->
+        map.split mCombined mSmall mStack ->
+        exists prefix,
+        exec body true t mCombined (map.put l x a) prefix /\
+        sat
+          prefix
+          (fun q' t' mCombined' l' suffix =>
+             exists post', suffix = postcond post' /\
+                        exists mSmall' mStack',
+                          anybytes a n mStack' /\
+                            map.split mCombined' mSmall' mStack' /\
+                            post' q' t' mSmall' l')
+          post) ->
+      exec (cmd.stackalloc x n body) true t mSmall l post
   (* | if_true: forall t m l e c1 c2 post v, *)
   (*     eval_expr m l e = Some v -> *)
   (*     word.unsigned v <> 0 -> *)
@@ -202,17 +237,6 @@ Module exec. Section WithParams.
   (*     word.unsigned v = 0 -> *)
   (*     exec c2 true t m l post -> *)
   (*     exec (cmd.cond e c1 c2) true t m l post *)
-  (* | while_false: forall e c t m l post v, *)
-  (*     eval_expr m l e = Some v -> *)
-  (*     word.unsigned v = 0 -> *)
-  (*     post true t m l -> *)
-  (*     exec (cmd.while e c) true t m l post *)
-  (* | while_true: forall e c t m l post v mid, *)
-  (*     eval_expr m l e = Some v -> *)
-  (*     word.unsigned v <> 0 -> *)
-  (*     exec c true t m l mid -> *)
-  (*     (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) -> *)
-  (*     exec (cmd.while e c) true t m l post *)
   (* | call: forall binds fname arges t m l post params rets fbody args lf mid, *)
   (*     map.get e fname = Some (params, rets, fbody) -> *)
   (*     eval_call_args m l arges = Some args -> *)
@@ -223,18 +247,18 @@ Module exec. Section WithParams.
   (*         exists l', map.putmany_of_list_zip binds retvs l = Some l' /\ *)
   (*         post q' t' m' l') -> *)
   (*     exec (cmd.call binds fname arges) true t m l post *)
-  (* | interact: forall binds action arges args t m l post mKeep mGive mid, *)
-  (*     map.split m mKeep mGive -> *)
-  (*     eval_call_args m l arges = Some args -> *)
-  (*     ext_spec t mGive action args mid -> *)
-  (*     (forall mReceive resvals, mid mReceive resvals -> *)
-  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
-  (*         forall m', map.split m' mKeep mReceive -> *)
-  (*         post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
-  (*     exec (cmd.interact binds action arges) true t m l post *)
-  (* | quit: forall c q t m l post, *)
-  (*     post false t m l -> *)
-  (*     exec c q t m l post *)
+  | interact: forall binds action arges args t m l post mKeep mGive mid,
+      map.split m mKeep mGive ->
+      eval_call_args m l arges = Some args ->
+      ext_spec t mGive action args mid ->
+      (forall mReceive resvals, mid mReceive resvals ->
+          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
+          forall m', map.split m' mKeep mReceive ->
+          post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
+      exec (cmd.interact binds action arges) true t m l (postcond post)
+  | quit: forall c q t m l post,
+      post false t m l ->
+      exec c q t m l (postcond post)
   | mid: forall c q t m l mid post,
       mid q t m l ->
       (*the quantifier here slipped past the nondeterminism! this is the whole point*)
@@ -248,6 +272,21 @@ Module exec. Section WithParams.
   Proof.
     intros. eapply seq with (mid := exec c2). 1: eassumption. 1: auto. 1: assumption.
   Qed.
+
+  Lemma seq_cps_for_real c1 c2 t m l post :
+    exec c1 true t m l
+      (postcond (fun q' t' m' l' =>
+                   exec c2 q' t' m' l' post)) ->
+    exec (cmd.seq c1 c2) true t m l post.
+  Proof. intros. eapply seq_cps_sorta. 1: apply H. simpl. auto. Qed.
+
+  Lemma while_true_cps_sorta ee c t m l v prefix post :
+      eval_expr m l ee = Some v ->
+      word.unsigned v <> 0 ->
+      exec c true t m l prefix ->
+      sat prefix (exec (cmd.while ee c)) post ->
+      exec (cmd.while ee c) true t m l post.
+  Proof. intros. eapply while_true with (mid := exec _); eauto. Qed.
 
   Open Scope string_scope.
   Require Import Strings.String.
@@ -279,71 +318,100 @@ Module exec. Section WithParams.
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
           post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) true t m l post.
+      exec (cmd.interact binds action arges) true t m l (postcond post).
   Proof. intros. eauto using interact. Qed.
+  
+  (* Lemma seq_cps: forall c1 c2 t m l post, *)
+  (*     exec c1 true t m l (fun q' t' m' l' => exec c2 q' t' m' l' post) -> *)
+  (*     exec (cmd.seq c1 c2) true t m l post. *)
+  (* Proof. intros. eauto using seq. Qed. *)
 
-  Lemma seq_cps: forall c1 c2 t m l post,
-      exec c1 true t m l (fun q' t' m' l' => exec c2 q' t' m' l' post) ->
-      exec (cmd.seq c1 c2) true t m l post.
-  Proof. intros. eauto using seq. Qed.
+  (*could be cleverer about this... seems unnecessary though*)
+  Fixpoint implies (post1 post2 : mids_and_post) :=
+    match post1, post2 with
+    | and_then mid1 post1', and_then mid2 post2' =>
+        (forall q' t' m' l', mid1 q' t' m' l' -> mid2 q' t' m' l') /\
+          (forall q' t' m' l' n, implies (post1' q' t' m' l' n) (post2' q' t' m' l' n))
+    | postcond post1', postcond post2' => forall q' t' m' l', post1' q' t' m' l' -> post2' q' t' m' l'
+    | _, _ => False
+    end.
+
+  Lemma weaken_sat post1 suffix_good1 suffix_good2 mid :
+    (forall q t m l post1 post2, implies post1 post2 -> suffix_good1 q t m l post1 -> suffix_good2 q t m l post2) ->
+    sat mid suffix_good1 post1 ->
+    forall post2,
+    implies post1 post2 ->
+    sat mid suffix_good2 post2.
+  Proof.
+    intros. revert post1 post2 H0 H1. induction mid; intros.
+    - destruct post1; simpl in H0; destruct post2; simpl in H1; try solve [destruct H1].
+      + simpl. intros. apply H with (post1 := postcond post0); auto.
+      + simpl. intros. fwd. eapply H. 2: auto. simpl. auto.
+    - destruct post1; simpl in H1; try solve [destruct H1].
+      destruct post2; simpl in H2; try solve [destruct H2].
+      simpl. fwd. eauto.
+  Qed.
 
   Lemma weaken: forall q t l m s post1,
       exec s q t m l post1 ->
       forall post2,
-        (forall q' t' m' l', post1 q' t' m' l' -> post2 q' t' m' l') ->
+        implies post1 post2 ->
         exec s q t m l post2.
   Proof.
-    induction 1; intros; try solve [econstructor; eauto].
+    induction 1; intros; simpl in *; fwd; try solve [econstructor; eauto].
+    - eapply seq_cps_sorta; eauto. eapply weaken_sat; eauto.
+    - eapply while_true_cps_sorta; eauto. eapply weaken_sat; eauto.
     - eapply stackalloc. 1: assumption.
-      intros.
-      eapply H1; eauto.
-      intros. fwd. eauto 10.
-    - eapply call.
-      4: eapply IHexec.
-      all: eauto.
-      intros.
-      edestruct H3 as (? & ? & ? & ? & ?); [eassumption|].
-      eauto 10.
+      intros. specialize (H0 _ _ _ ltac:(eassumption) ltac:(eassumption)).
+      fwd. exists prefix. split; [assumption|]. eapply weaken_sat; eauto.
+      simpl. intros. fwd. destruct post0; try solve [destruct H0].
+      exists post0. split; [reflexivity|]. simpl in H0. eauto 10.
+    (* - eapply call. *)
+    (*   4: eapply IHexec. *)
+    (*   all: eauto. *)
+    (*   intros. *)
+    (*   edestruct H3 as (? & ? & ? & ? & ?); [eassumption|]. *)
+    (*   eauto 10. *)
     - eapply interact; try eassumption.
       intros.
       edestruct H2 as (? & ? & ?); [eassumption|].
       eauto 10.
   Qed.
 
-  Lemma intersect: forall s q t m l post1,
-      (forall t m l, post1 false t m l -> False) ->
-      exec s q t m l post1 ->
-      forall post2,
-        (forall t m l, post2 false t m l -> False) ->
-        exec s q t m l post2 ->
-        exec s q t m l (fun q' t' m' l' => post1 q' t' m' l' /\ post2 q' t' m' l').
-  Proof.
-    intros * Hpost1.
-    induction 1;
-      intros post2 Hpost2 ?;
-      match goal with
-      | H: exec _ _ _ _ _ _ |- _ => inversion H;
-                                  try solve [exfalso; eauto];
-                                  subst; clear H
-      end;
-      try match goal with
-      | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ =>
-        replace x2 with x1 in * by congruence;
-          replace y2 with y1 in * by congruence;
-          replace z2 with z1 in * by congruence;
-          clear x2 y2 z2 H2
-      end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      repeat match goal with
-             | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ =>
-               replace v2 with v1 in * by congruence; clear H2
-             end;
-      try solve [econstructor; eauto | exfalso; congruence].
-    - econstructor. 1: eassumption.
-  Abort. (*this should be true, but looks like a few minutes of effort*)
+  (* Lemma intersect: forall s q t m l post1, *)
+  (*     (forall t m l, post1 false t m l -> False) -> *)
+  (*     exec s q t m l post1 -> *)
+  (*     forall post2, *)
+  (*       (forall t m l, post2 false t m l -> False) -> *)
+  (*       exec s q t m l post2 -> *)
+  (*       exec s q t m l (fun q' t' m' l' => post1 q' t' m' l' /\ post2 q' t' m' l'). *)
+  (* Proof. *)
+  (*   intros * Hpost1. *)
+  (*   induction 1; *)
+  (*     intros post2 Hpost2 ?; *)
+  (*     match goal with *)
+  (*     | H: exec _ _ _ _ _ _ |- _ => inversion H; *)
+  (*                                 try solve [exfalso; eauto]; *)
+  (*                                 subst; clear H *)
+  (*     end; *)
+  (*     try match goal with *)
+  (*     | H1: ?e = Some (?x1, ?y1, ?z1), H2: ?e = Some (?x2, ?y2, ?z2) |- _ => *)
+  (*       replace x2 with x1 in * by congruence; *)
+  (*         replace y2 with y1 in * by congruence; *)
+  (*         replace z2 with z1 in * by congruence; *)
+  (*         clear x2 y2 z2 H2 *)
+  (*     end; *)
+  (*     repeat match goal with *)
+  (*            | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*              replace v2 with v1 in * by congruence; clear H2 *)
+  (*            end; *)
+  (*     repeat match goal with *)
+  (*            | H1: ?e = Some ?v1, H2: ?e = Some ?v2 |- _ => *)
+  (*              replace v2 with v1 in * by congruence; clear H2 *)
+  (*            end; *)
+  (*     try solve [econstructor; eauto | exfalso; congruence]. *)
+  (*   - econstructor. 1: eassumption. *)
+  (* Abort. (*this should be true, but looks like a few minutes of effort*) *)
     (*   intros. *)
     (*   rename H0 into Ex1, H12 into Ex2. *)
     (*   eapply weaken. 1: eapply H1. 1,2: eassumption. *)
@@ -395,55 +463,8 @@ Module exec. Section WithParams.
   (* Qed. *)
 
   End WithEnv.
-
-  Lemma extend_env: forall e1 e2,
-      map.extends e2 e1 ->
-      forall c q t m l post,
-      exec e1 c q t m l post ->
-      exec e2 c q t m l post.
-  Proof. induction 2; try solve [econstructor; eauto]. Qed.
-
   End WithParams.
 End exec. Notation exec := exec.exec.
-
-Section WithParams.
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
-  Context {locals: map.map String.string word}.
-  Context {ext_spec: ExtSpec}.
-
-  Implicit Types (l: locals) (m: mem) (post: bool -> trace -> mem -> list word -> Prop).
-
-  Definition call e fname q t m args post :=
-    exists argnames retnames body,
-      map.get e fname = Some (argnames, retnames, body) /\
-      exists l, map.of_list_zip argnames args = Some l /\
-        exec e body q t m l (fun q' t' m' l' => exists rets,
-          map.getmany_of_list l' retnames = Some rets /\ post q' t' m' rets).
-
-  Lemma weaken_call: forall e fname q t m args post1,
-      call e fname q t m args post1 ->
-      forall post2, (forall q' t' m' rets, post1 q' t' m' rets -> post2 q' t' m' rets) ->
-      call e fname q t m args post2.
-  Proof.
-    unfold call. intros. fwd.
-    do 4 eexists. 1: eassumption.
-    do 2 eexists. 1: eassumption.
-    eapply exec.weaken. 1: eassumption.
-    cbv beta. clear -H0. intros. fwd. eauto.
-  Qed.
-
-  Lemma extend_env_call: forall e1 e2,
-      map.extends e2 e1 ->
-      forall f q t m rets post,
-      call e1 f q t m rets post ->
-      call e2 f q t m rets post.
-  Proof.
-    unfold call. intros. fwd. repeat eexists.
-    - eapply H. eassumption.
-    - eassumption.
-    - eapply exec.extend_env; eassumption.
-  Qed.
-End WithParams.
 
 Require Import coqutil.Word.SimplWordExpr.
 From Coq Require Import ZArith.
@@ -471,35 +492,156 @@ Section WithParams.
     rewrite Z.mod_small by lia. lia.
   Qed.
   
-  Lemma goes_forever' e n t m l :
-      exec e example true t m l
-        (fun q' t' m' l' => q' = false /\ length t' = length t + n)%nat.
+  Require Import Strings.String.
+  Open Scope string_scope.
+  Definition one : LogItem := ((map.empty, "1", nil), (map.empty, nil)).
+  Import exec.
+  Definition eventually_always_one :=
+    exec.and_then (fun q' t' m' l' => True)
+      (fun q' t' m' l' =>
+       fun n =>
+         exec.postcond (fun q'' t'' m'' l'' =>
+                     t'' = (repeat one n ++ t')%list)).
+  
+  Definition eventually_always_one' (f : nat -> state) :=
+    exists m, forall n,
+    exists numsteps,
+      (f numsteps).(t) = (repeat one n ++ (f m).(t))%list.
+
+  Lemma eventually_always_one_right : forall f,
+      interp_mids_and_post eventually_always_one f <-> eventually_always_one' f.
+  Proof.
+    intros. cbv [eventually_always_one eventually_always_one']. simpl. split; intros; fwd.
+    - exists n. intros n0. specialize (Hp1 n0). fwd. exists n1.
+      cbv [state_satisfies appl_to_state] in Hp1. assumption.
+    - exists m0. split; [reflexivity|]. intros m. specialize (H m).
+      fwd. exists numsteps. cbv [state_satisfies appl_to_state]. assumption.
+  Qed.
+
+  (*stackalloc 0 as x;
+    while x-- { print 1 }
+    while true { print 0 }*) Print expr.
+  Definition countdown :=
+    (cmd.while (expr.var "x")
+                  (cmd.seq
+                     (cmd.interact nil "0" nil)
+                     (cmd.set "x" (expr.op bopname.sub (expr.var "x") (expr.literal 1))))).
+
+  Context {locals_ok: map.ok locals}.
+
+  Lemma countdown_terminates t m l xval :
+    map.get l "x" = Some (word.of_Z xval) ->
+    0 <= xval ->
+    exec countdown true t m l (postcond (fun q' _ _ _ => q' = true)).
+  Proof.
+    intros. replace xval with (Z.of_nat (Z.to_nat xval)) in * by lia. clear H0.
+    remember (Z.to_nat xval) as xval'.
+    clear Heqxval' xval.
+    remember xval' as upper_bound.
+    rewrite Hequpper_bound in H.
+    assert (xval' <= upper_bound)%nat  by lia. clear Hequpper_bound. revert xval' H0 H.
+    revert t m l.
+    induction upper_bound; intros.
+    - eapply while_false.
+      + simpl. rewrite H. reflexivity.
+      + rewrite word.unsigned_of_Z. replace xval' with 0%nat by lia. reflexivity.
+      + reflexivity.
+    - assert (word.wrap (Z.of_nat xval') <> 0 \/ word.wrap (Z.of_nat xval') = 0) by lia.
+      destruct H1.
+      + eapply while_true_cps_sorta.
+        -- simpl. apply H.
+        -- rewrite word.unsigned_of_Z. assumption.
+        -- eapply seq_cps_sorta.
+           ++ eapply interact_cps.
+              --- apply map.split_empty_r. reflexivity.
+              --- reflexivity. 
+              --- cbv [ext_spec]. eexists. intuition eauto.
+                  instantiate (1 := fun q' _ _ l' => q' = true /\ map.get l' "x" = Some (word.of_Z (Z.of_nat xval'))). simpl. auto.
+           ++ simpl. intros. fwd. eapply set.
+              --- simpl. rewrite H2p1. reflexivity.
+              --- instantiate (1 := fun q' _ _ l' => q' = true /\ map.get l' "x" = Some _). simpl. intuition auto. rewrite map.get_put_same. reflexivity.
+        -- simpl. intros. fwd. eapply IHupper_bound.
+           2: { rewrite H2p1. f_equal.
+                instantiate (1 := Z.to_nat (word.unsigned _)). rewrite Z2Nat.id.
+                2: { epose proof Properties.word.unsigned_range _ as H2. apply H2. }
+                rewrite word.of_Z_unsigned. reflexivity. }
+           enough (word.unsigned (word := word) (word.sub (word.of_Z (Z.of_nat xval')) (word.of_Z 1)) <= Z.of_nat upper_bound) by lia.
+           pose proof Properties.word.decrement_nonzero_lt as H2.
+           specialize (H2 (word.of_Z (Z.of_nat xval'))).
+           rewrite word.unsigned_of_Z in H2. specialize (H2 H1).
+           remember (word.unsigned _) as blah. clear Heqblah. enough (word.wrap (Z.of_nat xval') <= 1 + (Z.of_nat upper_bound)) by lia.
+           clear H2 blah. cbv [word.wrap].
+           pose proof Z.mod_le (Z.of_nat xval') (2 ^ width) as H2.
+           specialize (H2 ltac:(lia)). eassert _ as blah. 2: specialize (H2 blah); lia.
+           assert (2 ^ 0 <= 2 ^ width).
+           { apply Z.pow_le_mono_r; try lia. destruct word_ok; clear - width_pos.
+             lia. }
+           lia.
+      + eapply while_false; eauto. rewrite word.unsigned_of_Z. assumption.
+  Qed.
+
+  Definition one_printer :=
+    (cmd.while (expr.literal 1) (cmd.interact nil "1" nil)).
+
+  Lemma one_printer_prints_ones n t m l :
+    exec one_printer true t m l
+      (postcond (fun q' t' m' l' => q' = false /\ t' = repeat one n ++ t)%nat%list).
   Proof.
     revert t m l. induction n; intros t m l.
-    - apply exec.quit. auto.
-    - eapply exec.while_true with (mid := fun q0 t0 m0 l0 => q0 = true /\ t0 = _ :: t /\ m0 = m /\ l0 = l).
+    - apply quit. simpl. auto.
+    - eapply while_true_cps_sorta.
       + reflexivity.
       + apply one_not_zero.
       + eapply exec.interact_cps.
-        -- Search (map.split _ _ map.empty). apply map.split_empty_r. reflexivity.
+        -- apply map.split_empty_r. reflexivity.
         -- reflexivity.
         -- cbv [ext_spec]. eexists. intuition eauto.
-           apply map.split_empty_r. assumption.
-      + intros. fwd. eapply exec.weaken. 1: apply IHn. simpl. intros. fwd.
-        intuition auto. lia.
+           instantiate (1 := fun q' t' _ _ => q' = true /\ t' = one :: t).
+           simpl. auto.
+      + simpl. intros. fwd. eapply weaken. 1: apply IHn. simpl. intros.
+        fwd. intuition auto.
+        replace (repeat one n ++ one :: t)%list with (repeat one (S n) ++ t)%list.
+        -- reflexivity.
+        -- replace (S n) with (n + 1)%nat by lia. rewrite repeat_app.
+           rewrite <- app_assoc. reflexivity.
+  Qed.
+          
+  (* Lemma goes_forever e m l : *)
+  (*   forall n, *)
+  (*     exec e example true nil m l *)
+  (*       (fun q' t' m' l' => q' = false /\ length t' = n). *)
+  (* Proof. *)
+  (*   intros. eapply exec.weaken. 1: apply goes_forever'. simpl. intros. fwd. eauto. *)
+  (* Qed. *)
+
+  Definition eventual_one_printer :=
+    cmd.seq (cmd.stackalloc "x" 0 cmd.skip)
+      (cmd.seq countdown one_printer).
+
+  Lemma eventual_one_printer_eventually_always_one t m l : exec eventual_one_printer true t m l eventually_always_one.
+  Proof.
+    eapply seq_cps_sorta.
+    { eapply stackalloc. 1: apply Zmod_0_l; lia. intros. eexists. split.
+      { apply skip. instantiate (1 := fun q' t' m' l' => q' = true /\ t' = t /\ m' = mCombined /\ l' = map.put l "x" a). simpl. auto. }
+      simpl. intros. fwd. eexists. split; [reflexivity|].
+      eexists. eexists. split; [eassumption|]. split; [eassumption|].
+      instantiate (1 := fun q' t' m' l' => exists a, q' = true /\ t' = t /\ m' = m /\ l' = map.put l "x" a).
+      simpl. eauto. }
+    simpl. intros. fwd. eapply seq_cps_sorta.
+    { eapply countdown_terminates.
+      - rewrite map.get_put_same. instantiate (1 := word.unsigned _). rewrite word.of_Z_unsigned. reflexivity.
+      - pose proof Properties.word.unsigned_range a. lia. }
+    simpl. intros. subst.
+    (*Note: below gets stuck, as i guess it should*)
+    (*eapply weaken. 1: apply one_printer_prints_ones. simpl.*)
+    apply mid. 1: auto. intros n. eapply weaken.
+    - apply (one_printer_prints_ones n).
+    - simpl. intros. fwd. reflexivity.
   Qed.
 
-  Lemma goes_forever e m l :
-    forall n,
-    exec e example true nil m l
-      (fun q' t' m' l' => q' = false /\ length t' = n).
+  Lemma nested_quit t m l : exec (cmd.seq cmd.skip cmd.skip) true t m l (postcond (fun _ _ _ _ => True)).
   Proof.
-    intros. eapply exec.weaken. 1: apply goes_forever'. simpl. intros. fwd. eauto.
-  Qed.
-
-  Lemma nested_quit e t m l : exec e (cmd.seq cmd.skip cmd.skip) true t m l (fun _ _ _ _ => True).
-  Proof.
-    apply exec.seq_cps.
+    eapply seq_cps_for_real.
     apply exec.quit.
     Fail apply exec.skip. (*as it should be: cannot quit and then start executing again*)
     apply exec.quit.
