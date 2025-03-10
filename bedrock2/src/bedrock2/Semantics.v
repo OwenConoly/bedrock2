@@ -134,87 +134,144 @@ Module exec. Section WithParams.
   Section WithEnv.
   Context (e: env).
 
-  Implicit Types post : bool -> trace -> mem -> locals -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
-  Inductive exec: cmd -> bool -> trace -> mem -> locals ->
-                  (bool -> trace -> mem -> locals -> Prop) -> Prop :=
+  Inductive mids_and_post :=
+  | postcond (post: forall (q: bool) (t : trace) (m : mem) (l : locals), Prop)
+  | and_then
+      (first_this_happens : forall (q: bool) (t: trace) (m : mem) (l : locals), Prop)
+      (and_then_later_this_happens : forall (q : bool) (t: trace) (m : mem) (l : locals), forall (idx: nat), mids_and_post).
+
+  Fixpoint whole_splits (prefix: mids_and_post) post_prefix (whole: mids_and_post) rest : Prop :=
+    match prefix, whole with
+    | postcond post, _ => post = post_prefix /\ rest = whole
+    | and_then mid1 prefix, and_then mid2 whole => (forall q t m l n, mid1 q t m l -> mid2 q t m l /\ whole_splits (prefix q t m l n) post_prefix (whole q t m l n) rest)
+    | _, _ => False
+    end.
+
+  (*suffix_good: bool -> trace -> mem -> locals -> mids_and_post -> Prop
+    given a state holding after s1 finishes executing, say whether the given postcondition holds*)
+  Fixpoint sat (prefix: mids_and_post) (suffix_good: bool -> trace -> mem -> locals -> mids_and_post -> Prop) (whole : mids_and_post) : Prop :=
+    match prefix, whole with
+    | postcond post, _ => (forall q t m l, post q t m l -> suffix_good q t m l whole)
+    | and_then mid1 prefix', and_then mid2 whole' =>
+        (forall q t m l, mid1 q t m l -> mid2 q t m l) /\
+          (forall q t m l n, sat (prefix' q t m l n) suffix_good (whole' q t m l n))
+    | _, _ => False
+    end.
+  
+  Inductive exec: cmd -> bool -> trace -> mem -> locals -> mids_and_post -> Prop :=
   | skip: forall t m l post,
       post true t m l ->
-      exec cmd.skip true t m l post
+      exec cmd.skip true t m l (postcond post)
   | set: forall x e t m l post v,
       eval_expr m l e = Some v ->
       post true t m (map.put l x v) ->
-      exec (cmd.set x e) true t m l post
+      exec (cmd.set x e) true t m l (postcond post)
   | unset: forall x t m l post,
       post true t m (map.remove l x) ->
-      exec (cmd.unset x) true t m l post
+      exec (cmd.unset x) true t m l (postcond post)
   | store: forall sz ea ev t m l post a v m',
       eval_expr m l ea = Some a ->
       eval_expr m l ev = Some v ->
       store sz m a v = Some m' ->
       post true t m' l ->
-      exec (cmd.store sz ea ev) true t m l post
-  | stackalloc: forall x n body t mSmall l post,
-      Z.modulo n (bytes_per_word width) = 0 ->
-      (forall a mStack mCombined,
-        anybytes a n mStack ->
-        map.split mCombined mSmall mStack ->
-        exec body true t mCombined (map.put l x a)
-          (fun q' t' mCombined' l' =>
-            exists mSmall' mStack',
-              anybytes a n mStack' /\
-              map.split mCombined' mSmall' mStack' /\
-              post q' t' mSmall' l')) ->
-      exec (cmd.stackalloc x n body) true t mSmall l post
-  | if_true: forall t m l e c1 c2 post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v <> 0 ->
-      exec c1 true t m l post ->
-      exec (cmd.cond e c1 c2) true t m l post
-  | if_false: forall e c1 c2 t m l post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v = 0 ->
-      exec c2 true t m l post ->
-      exec (cmd.cond e c1 c2) true t m l post
-  | seq: forall c1 c2 t m l post mid,
-      exec c1 true t m l mid ->
-      (forall q' t' m' l', mid q' t' m' l' -> exec c2 q' t' m' l' post) ->
+      exec (cmd.store sz ea ev) true t m l (postcond post)
+  | seq: forall c1 c2 t m l prefix post mid,
+      exec c1 true t m l prefix ->
+      (forall q' t' m' l' post', mid q' t' m' l' post' -> exec c2 q' t' m' l' post') ->
+      sat prefix mid post ->
       exec (cmd.seq c1 c2) true t m l post
-  | while_false: forall e c t m l post v,
-      eval_expr m l e = Some v ->
-      word.unsigned v = 0 ->
-      post true t m l ->
-      exec (cmd.while e c) true t m l post
-  | while_true: forall e c t m l post v mid,
-      eval_expr m l e = Some v ->
-      word.unsigned v <> 0 ->
-      exec c true t m l mid ->
-      (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) ->
-      exec (cmd.while e c) true t m l post
-  | call: forall binds fname arges t m l post params rets fbody args lf mid,
-      map.get e fname = Some (params, rets, fbody) ->
-      eval_call_args m l arges = Some args ->
-      map.of_list_zip params args = Some lf ->
-      exec fbody true t m lf mid ->
-      (forall q' t' m' st1, mid q' t' m' st1 ->
-          exists retvs, map.getmany_of_list st1 rets = Some retvs /\
-          exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-          post q' t' m' l') ->
-      exec (cmd.call binds fname arges) true t m l post
-  | interact: forall binds action arges args t m l post mKeep mGive mid,
-      map.split m mKeep mGive ->
-      eval_call_args m l arges = Some args ->
-      ext_spec t mGive action args mid ->
-      (forall mReceive resvals, mid mReceive resvals ->
-          exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
-          forall m', map.split m' mKeep mReceive ->
-          post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') ->
-      exec (cmd.interact binds action arges) true t m l post
-  | quit: forall c q t m l post,
-      post false t m l ->
-      exec c q t m l post.
+  (* | stackalloc: forall x n body t mSmall l post, *)
+  (*     Z.modulo n (bytes_per_word width) = 0 -> *)
+  (*     (forall a mStack mCombined, *)
+  (*       anybytes a n mStack -> *)
+  (*       map.split mCombined mSmall mStack -> *)
+  (*       exec body true t mCombined (map.put l x a) *)
+  (*         (fun q' t' mCombined' l' => *)
+  (*           exists mSmall' mStack', *)
+  (*             anybytes a n mStack' /\ *)
+  (*             map.split mCombined' mSmall' mStack' /\ *)
+  (*             post q' t' mSmall' l')) -> *)
+  (*     exec (cmd.stackalloc x n body) true t mSmall l post *)
+  (* | if_true: forall t m l e c1 c2 post v, *)
+  (*     eval_expr m l e = Some v -> *)
+  (*     word.unsigned v <> 0 -> *)
+  (*     exec c1 true t m l post -> *)
+  (*     exec (cmd.cond e c1 c2) true t m l post *)
+  (* | if_false: forall e c1 c2 t m l post v, *)
+  (*     eval_expr m l e = Some v -> *)
+  (*     word.unsigned v = 0 -> *)
+  (*     exec c2 true t m l post -> *)
+  (*     exec (cmd.cond e c1 c2) true t m l post *)
+  (* | while_false: forall e c t m l post v, *)
+  (*     eval_expr m l e = Some v -> *)
+  (*     word.unsigned v = 0 -> *)
+  (*     post true t m l -> *)
+  (*     exec (cmd.while e c) true t m l post *)
+  (* | while_true: forall e c t m l post v mid, *)
+  (*     eval_expr m l e = Some v -> *)
+  (*     word.unsigned v <> 0 -> *)
+  (*     exec c true t m l mid -> *)
+  (*     (forall q' t' m' l', mid q' t' m' l' -> exec (cmd.while e c) q' t' m' l' post) -> *)
+  (*     exec (cmd.while e c) true t m l post *)
+  (* | call: forall binds fname arges t m l post params rets fbody args lf mid, *)
+  (*     map.get e fname = Some (params, rets, fbody) -> *)
+  (*     eval_call_args m l arges = Some args -> *)
+  (*     map.of_list_zip params args = Some lf -> *)
+  (*     exec fbody true t m lf mid -> *)
+  (*     (forall q' t' m' st1, mid q' t' m' st1 -> *)
+  (*         exists retvs, map.getmany_of_list st1 rets = Some retvs /\ *)
+  (*         exists l', map.putmany_of_list_zip binds retvs l = Some l' /\ *)
+  (*         post q' t' m' l') -> *)
+  (*     exec (cmd.call binds fname arges) true t m l post *)
+  (* | interact: forall binds action arges args t m l post mKeep mGive mid, *)
+  (*     map.split m mKeep mGive -> *)
+  (*     eval_call_args m l arges = Some args -> *)
+  (*     ext_spec t mGive action args mid -> *)
+  (*     (forall mReceive resvals, mid mReceive resvals -> *)
+  (*         exists l', map.putmany_of_list_zip binds resvals l = Some l' /\ *)
+  (*         forall m', map.split m' mKeep mReceive -> *)
+  (*         post true (cons ((mGive, action, args), (mReceive, resvals)) t) m' l') -> *)
+  (*     exec (cmd.interact binds action arges) true t m l post *)
+  (* | quit: forall c q t m l post, *)
+  (*     post false t m l -> *)
+  (*     exec c q t m l post *)
+  | mid: forall c q t m l mid post,
+      mid q t m l ->
+      (*the quantifier here slipped past the nondeterminism! this is the whole point*)
+      (forall n, exec c q t m l (post q t m l n)) ->
+      exec c q t m l (and_then mid post).
 
-  Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
+  Lemma seq_cps_sorta c1 c2 t m l prefix post :
+    exec c1 true t m l prefix ->
+    sat prefix (exec c2) post ->
+    exec (cmd.seq c1 c2) true t m l post.
+  Proof.
+    intros. eapply seq with (mid := exec c2). 1: eassumption. 1: auto. 1: assumption.
+  Qed.
 
+  Open Scope string_scope.
+  Require Import Strings.String.
+  Definition ex := cmd.seq (cmd.set "x"%string (expr.literal 0)) (cmd.seq (cmd.set "x" (expr.literal 1)) (cmd.seq (cmd.set "x" (expr.literal 2)) cmd.skip)).
+
+  Context {locals_ok: map.ok locals} {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
+
+  Lemma ex_works t m l : exec ex true t m l (and_then (fun _ _ _ l => map.get l "x" = Some (word.of_Z 0)) (fun _ _ _ _ _ => and_then (fun _ _ _ l => map.get l "x" = (Some (word.of_Z 1))) (fun _ _ _ _ _ => and_then (fun _ _ _ l => map.get l "x" = (Some (word.of_Z 2))) (fun _ _ _ _ _ => postcond (fun q _ _ _ => q = true))))).
+  Proof.
+    eapply seq_cps_sorta.
+    { eapply set. 1: reflexivity. instantiate (1 := fun q' t' m' l' => q' = true /\ map.get l' "x" = Some (word.of_Z 0)). simpl. rewrite map.get_put_same. auto. }
+    simpl. intros. fwd. eapply mid.
+    { assumption. }
+    intros _. eapply seq_cps_sorta.
+    { eapply set. 1: reflexivity. instantiate (1 := fun q' t' m' l' => q' = true /\ map.get l' "x" = Some (word.of_Z 1)). simpl. rewrite map.get_put_same. auto. }
+    simpl. intros. fwd. eapply mid.
+    { assumption. }
+    intros _. eapply seq_cps_sorta.
+    { eapply set. 1: reflexivity. instantiate (1 := fun q' t' m' l' => q' = true /\ map.get l' "x" = Some (word.of_Z 2)). simpl. rewrite map.get_put_same. auto. }
+    simpl. intros. fwd. eapply mid.
+    { assumption. }
+    intros _. apply skip. reflexivity.
+  Qed.
+  
   Lemma interact_cps: forall binds action arges args t m l post mKeep mGive,
       map.split m mKeep mGive ->
       eval_call_args m l arges = Some args ->
