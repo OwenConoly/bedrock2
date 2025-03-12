@@ -159,7 +159,6 @@ Section SepLog.
         rewrite List.merge_adjacent_slices.
         - rewrite <- List.from_canon.
           apply List.split_at_index.
-          ZnWords.
         - ZnWords.
       }
       rewrite Hsplit in H4; clear Hsplit.
