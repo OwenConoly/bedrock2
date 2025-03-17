@@ -227,7 +227,7 @@ Section WithWordAndMem.
                                  Valid := map.forall_values ExprImp.valid_fun;
                                  Call := locals_based_call_spec Semantics.exec;
                                  SettingsInhabited := tt;
-                                 Predicts := predicts;
+                                 Predicts := compat;
                                  WeakenCall := locals_based_call_spec_weaken _ Semantics.exec.weaken;
     |}.
     (* |                 *)
@@ -238,7 +238,7 @@ Section WithWordAndMem.
                                          Valid := map.forall_values ParamsNoDup;
                                          Call := locals_based_call_spec FlatImp.exec;
                                          SettingsInhabited := tt;
-                                         Predicts := predicts;
+                                         Predicts := compat;
                                          WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
 
@@ -255,7 +255,7 @@ Section WithWordAndMem.
                                        Valid := map.forall_values ParamsNoDup;
                                        Call := locals_based_call_spec FlatImp.exec;
                                        SettingsInhabited := tt;
-                                       Predicts := predicts;
+                                       Predicts := compat;
                                        WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
     (* |                 *)
@@ -266,7 +266,7 @@ Section WithWordAndMem.
       Valid := map.forall_values FlatToRiscvDef.valid_FlatImp_fun;
                                       Call := locals_based_call_spec FlatImp.exec;
                                       SettingsInhabited := tt;
-                                      Predicts := predicts;
+                                      Predicts := compat;
                                       WeakenCall := locals_based_call_spec_weaken _ FlatImp.exec.weaken;
     |}.
     (* |                 *)
@@ -629,12 +629,12 @@ Section WithWordAndMem.
         destruct_one_match_hyp.
         + fwd. eapply valid_src_fun_correct. eassumption.
         + eapply IHfs; eassumption.
-    Qed. Print predicts.
+    Qed. Print compat.
 
-    Lemma predicts_app_one_r f k e :
+    Lemma compat_app_one_r f k e :
       (need_to_predict e -> f k = e) ->
-      predicts f k ->
-      predicts f (k ++ [e]).
+      compat f k ->
+      compat f (k ++ [e]).
     Proof.
       clear. revert f. revert e. induction k.
       - intros. constructor.
@@ -696,7 +696,7 @@ Section WithWordAndMem.
                      machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final /\
                      final.(getTrace) = kL'' ++ initial.(getTrace) /\
                      f (rev kH'') = (rev kL'') /\
-                     predicts pick_sp (rev kH'')).
+                     compat pick_sp (rev kH'')).
     Proof.
       intros.
       pose proof (phase_preserves_post composed_compiler_correct) as C.
@@ -774,7 +774,7 @@ Section WithWordAndMem.
                  machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final /\
                  final.(getTrace) = kL'' ++ initial.(getTrace) /\
                  f (rev kH'') = rev kL'' /\
-                 predicts pick_sp (rev kH'')).
+                 compat pick_sp (rev kH'')).
     Proof.
       intros.
       destruct (compiler_correct fs instrs finfo req_stack_size fname p_funcs stack_hi H H0) as

@@ -105,7 +105,7 @@ Section WithParameters.
              rets = [a; b] /\
                exists k'',
                  (k' = k'' ++ k /\
-                    (predicts pick_sp (List.rev k'') ->
+                    (compat pick_sp (List.rev k'') ->
                      k'' = f))).
     (*ctfunc! "stackswap" | a b / | ~> B A,
       { requires tr mem := True ; ensures tr' mem' := B = a /\ A = b }.*)
@@ -142,10 +142,10 @@ Section WithParameters.
     straightline_stackdealloc.
     repeat straightline. eexists. split.
     - trace_alignment.
-    - intros Hpredicts.
-      simpl in Hpredicts. rewrite List.rev_app_distr in Hpredicts. simpl in Hpredicts.
-      inversion Hpredicts. subst. inversion H12. subst. inversion H14. subst.
-      clear Hpredicts H12 H13 H14 H16. specialize (H11 I). specialize (H15 I).
+    - intros Hcompat.
+      simpl in Hcompat. rewrite List.rev_app_distr in Hcompat. simpl in Hcompat.
+      inversion Hcompat. subst. inversion H12. subst. inversion H14. subst.
+      clear Hcompat H12 H13 H14 H16. specialize (H11 I). specialize (H15 I).
       instantiate (1 := 
                      match pick_sp [] with
                      | consume_word a =>

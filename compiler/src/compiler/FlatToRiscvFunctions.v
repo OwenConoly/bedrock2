@@ -466,8 +466,8 @@ Section Proofs.
                            (body, rev k1'' ++ k1''', k20, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, f)) =
                       fst (f (rev k1'') (k20 ++ rev k2''))) /\
                   (forall k20 k1''' f,
-                      predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                      predicts (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                      compat (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
+                      compat (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
                                                 (body, k, k20, pos0, g0.(p_sp), (bytes_per_word * rem_framewords g0)%Z, (f k)))) (rev k1'' ++ k1'''))))
     (HOutcome: forall (k' : Semantics.trace) (t' : Semantics.io_trace) (m' : mem) (mc' : MetricLog) (st1 : locals),
         outcome k' t' m' st1 mc' ->
@@ -520,8 +520,8 @@ Section Proofs.
                            (rev k1'' ++ k1''') k20 pos g.(p_sp) retnames body f) =
                       fst (f (rev k1'') (k20 ++ rev k2''))) /\
                 (forall k20 k1''' f,
-                    predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                    predicts (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                    compat (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
+                    compat (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
                                               k k20 pos g.(p_sp) retnames body (f k))) (rev k1'' ++ k1'''))).
   Proof.
     intros * IHexec OC BC OL Exb GetMany Ext GE FS C V Mo Mo' Gra RaM GPC A GM.
@@ -1378,7 +1378,7 @@ Section Proofs.
       remember (p_sp + _) as new_sp. eassert (Esp: new_sp = _).
       2: { rewrite Esp. split.
            { intros. rewrite H2p10p2. repeat rewrite <- app_assoc. reflexivity. }
-           intros ? ? ? Hpredicts. apply H2p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts. }
+           intros ? ? ? Hcompat. apply H2p10p3. repeat rewrite <- app_assoc in *. apply Hcompat. }
       subst. solve_word_eq word_ok.
   Qed.
 
@@ -1505,8 +1505,8 @@ Section Proofs.
            fst (f (rev k1'') (k20 ++ rev k2''))) /\
           (forall (k20 : list LeakageEvent) (k1''' : trace)
              (f : list event -> list event -> list LeakageEvent -> list LeakageEvent * event),
-           predicts (fun k0 : trace => snd (f (rev k1'' ++ k0) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-           predicts
+           compat (fun k0 : trace => snd (f (rev k1'' ++ k0) (rev k1'') (k20 ++ rev k2''))) k1''' ->
+           compat
              (fun k0 : trace =>
               snd
                 (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
@@ -1706,7 +1706,7 @@ Section Proofs.
         simpl in H0p5p2. rewrite <- app_assoc in H0p5p2. simpl in H0p5p2.
         Fail rewrite H0p5p2. cbv [trace] in H0p5p2. rewrite H0p5p2. f_equal. f_equal.
         rewrite <- app_assoc. reflexivity. }
-      intros ? ? ? Hpredicts. eapply predicts_ext.
+      intros ? ? ? Hcompat. eapply compat_ext.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
       repeat (rewrite rev_app_distr in * ). cbn [rev List.app].
@@ -1719,7 +1719,7 @@ Section Proofs.
       repeat rewrite <- app_assoc.
       specialize (H0p5p3 (k20 ++ [leak_Jal]) k1''' (fun k skip => f (leak_unit :: k) (leak_unit :: skip))).
       repeat (rewrite <- app_assoc in * ). apply H0p5p3.
-      apply Hpredicts.
+      apply Hcompat.
 
     - idtac "Case compile_stmt_correct/SLoad".
       progress unfold Memory.load, Memory.load_Z in *. fwd.
@@ -1738,12 +1738,12 @@ Section Proofs.
       split.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
+      intros ? ? ? Hcompat. constructor.
       { intros []. }
-      eapply predicts_ext.
+      eapply compat_ext.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      apply Hpredicts.
+      apply Hcompat.
       
     - idtac "Case compile_stmt_correct/SStore".
       inline_iff1.
@@ -1772,12 +1772,12 @@ Section Proofs.
       split.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
+      intros ? ? ? Hcompat. constructor.
       { intros []. }
-      eapply predicts_ext.
+      eapply compat_ext.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      apply Hpredicts.
+      apply Hcompat.
       
     - idtac "Case compile_stmt_correct/SInlinetable".
       inline_iff1.
@@ -1805,12 +1805,12 @@ Section Proofs.
       split.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      intros ? ? ? Hpredicts. constructor.
+      intros ? ? ? Hcompat. constructor.
       { intros []. }
-      eapply predicts_ext.
+      eapply compat_ext.
       { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
         reflexivity. }
-      apply Hpredicts.
+      apply Hcompat.
       
     - idtac "Case compile_stmt_correct/SStackalloc".
       rename H1 into IHexec.
@@ -1972,13 +1972,13 @@ Section Proofs.
           { intros. rewrite rtransform_stmt_trace_step.
             repeat rewrite rev_app_distr. cbn [rev List.app rtransform_stmt_trace_body].
             simpl_addrs. rewrite H7p7p2. repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. eapply predicts_ext.
+          intros ? ? ? Hcompat. eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
             reflexivity. }
           simpl_addrs.
           repeat rewrite rev_app_distr in *. simpl in *. constructor.
           { intros _. simpl. f_equal. solve_word_eq word_ok. }
-          apply H7p7p3. repeat rewrite <- app_assoc in *. apply Hpredicts.
+          apply H7p7p3. repeat rewrite <- app_assoc in *. apply Hcompat.
 
     - idtac "Case compile_stmt_correct/SLit".
       inline_iff1.
@@ -2008,12 +2008,12 @@ Section Proofs.
         split.
         { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
           rewrite rev_involutive. reflexivity. }
-        intros ? ? ? Hpredicts.
-        eapply predicts_ext.
+        intros ? ? ? Hcompat.
+        eapply compat_ext.
         { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
           reflexivity. }
-        rewrite rev_involutive in Hpredicts.
-        apply Hpredicts.
+        rewrite rev_involutive in Hcompat.
+        apply Hcompat.
         
     - idtac "Case compile_stmt_correct/SOp".
       assert (x <> RegisterNames.sp). {
@@ -2059,7 +2059,7 @@ Section Proofs.
         { instantiate (1 := [_]). reflexivity. } split.
         { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
           reflexivity. }
-        intros ? ? ? Hpredicts. eapply predicts_ext. 2: apply Hpredicts. intros. simpl.
+        intros ? ? ? Hcompat. eapply compat_ext. 2: apply Hcompat. intros. simpl.
         rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body]. reflexivity. }
       all: try (do 2 eexists; split; [|split; [|split] ]).
       all: try (instantiate (1 := []); reflexivity).
@@ -2068,7 +2068,7 @@ Section Proofs.
       all: try (intros; rewrite rtransform_stmt_trace_step; reflexivity).
       all: intros.
       all: repeat (constructor; [intros [] | ]).
-      all: try (intros; eapply predicts_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
+      all: try (intros; eapply compat_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
       
       all: match goal with
            | y: operand, H: context[Syntax.bopname.eq] |- _ => idtac
@@ -2084,7 +2084,7 @@ Section Proofs.
       all: try (intros; rewrite rtransform_stmt_trace_step; reflexivity).
       all: intros.
       all: repeat (constructor; [intros [] | ]).
-      all: try (intros; eapply predicts_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
+      all: try (intros; eapply compat_ext; [|eassumption]; intros; simpl; rewrite rtransform_stmt_trace_step; reflexivity).
       
       all:
         match goal with
@@ -2118,11 +2118,11 @@ Section Proofs.
       { instantiate (1 := [_]). reflexivity. }
       split.
       { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-      intros ? ? ? Hpredicts.
-      eapply predicts_ext.
+      intros ? ? ? Hcompat.
+      eapply compat_ext.
       { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
       cbn [rtransform_stmt_trace_body].
-      apply Hpredicts.
+      apply Hcompat.
 
     - idtac "Case compile_stmt_correct/SIf/Then".
       (* execute branch instruction, which will not jump *)
@@ -2155,11 +2155,11 @@ Section Proofs.
           { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
             repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p2.
             repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. repeat rewrite rev_app_distr in *. constructor.
+          intros ? ? ? Hcompat. repeat rewrite rev_app_distr in *. constructor.
           { intros []. }
-          rewrite fold_app. eapply predicts_ext.
+          rewrite fold_app. eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
-          simpl. apply H4p10p3. repeat rewrite <- app_assoc in *. apply Hpredicts.
+          simpl. apply H4p10p3. repeat rewrite <- app_assoc in *. apply Hcompat.
 
     - idtac "Case compile_stmt_correct/SIf/Else".
       (* execute branch instruction, which will jump over then-branch *)
@@ -2193,12 +2193,12 @@ Section Proofs.
           { intros. rewrite rtransform_stmt_trace_step. cbn [rtransform_stmt_trace_body].
             repeat rewrite rev_app_distr in *. simpl. rewrite H4p10p2.
             repeat rewrite <- app_assoc. rewrite app_nil_r. reflexivity. }
-          intros ? ? ? Hpredicts. repeat rewrite rev_app_distr in *. constructor.
+          intros ? ? ? Hcompat. repeat rewrite rev_app_distr in *. constructor.
           { intros []. }
-          rewrite fold_app. eapply predicts_ext.
+          rewrite fold_app. eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
           simpl. apply H4p10p3. repeat rewrite <- app_assoc in *. rewrite app_nil_r.
-          apply Hpredicts.
+          apply Hcompat.
 
     - idtac "Case compile_stmt_correct/SLoop".
       match goal with
@@ -2288,19 +2288,19 @@ Section Proofs.
             rewrite List.skipn_app_r by reflexivity.
             repeat rewrite <- app_assoc in *. rewrite updown3.
             repeat rewrite <- app_assoc. reflexivity. }
-          intros ? ? ? Hpredicts. eapply predicts_ext.
+          intros ? ? ? Hcompat. eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
           simpl. repeat (rewrite rev_app_distr in * || cbn [List.app rev] in * ).
           repeat rewrite <- app_assoc in *. apply downup1.
           constructor.
           { intros []. }
-          rewrite fold_app. eapply predicts_ext.
+          rewrite fold_app. eapply compat_ext.
           { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
           cbn [RecurseWithFun.Let_In_pf_nd]. repeat rewrite <- app_assoc in *. apply downup2.
-          eapply predicts_ext.
+          eapply compat_ext.
           { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
           repeat rewrite <- app_assoc in *. apply downup3.
-          eapply predicts_ext. 2: eapply Hpredicts. intros. simpl.
+          eapply compat_ext. 2: eapply Hcompat. intros. simpl.
           repeat (rewrite <- app_assoc || simpl). reflexivity.
           
         * (* false: done, jump over body2 *)
@@ -2322,13 +2322,13 @@ Section Proofs.
             cbn [List.app RecurseWithFun.Let_In_pf_nd].
             repeat rewrite <- app_assoc. reflexivity. }
           intros. repeat rewrite rev_app_distr in *. repeat rewrite <- app_assoc in *.
-          eapply predicts_ext.
+          eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
           simpl. apply H3p5p3. constructor.
           { intros []. }
-          eapply predicts_ext.
+          eapply compat_ext.
           { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          cbn [RecurseWithFun.Let_In_pf_nd]. eapply predicts_ext. 2: eapply H3.
+          cbn [RecurseWithFun.Let_In_pf_nd]. eapply compat_ext. 2: eapply H3.
           intros. repeat rewrite <- app_assoc. reflexivity.
           
     - idtac "Case compile_stmt_correct/SSeq".
@@ -2363,12 +2363,12 @@ Section Proofs.
             repeat (rewrite rev_app_distr in * || rewrite <- app_assoc in * ).
             rewrite H1p5p2. rewrite List.skipn_app_r by reflexivity.
             rewrite H1p8p2. repeat rewrite <- app_assoc. reflexivity. }
-          intros. eapply predicts_ext.
+          intros. eapply compat_ext.
           { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
           simpl. repeat (rewrite rev_app_distr in * || rewrite <- app_assoc in * ).
-          apply H1p5p3. eapply predicts_ext.
+          apply H1p5p3. eapply compat_ext.
           { intros. rewrite List.skipn_app_r by reflexivity. reflexivity. }
-          apply H1p8p3. eapply predicts_ext. 2: eapply H1. intros. simpl.
+          apply H1p8p3. eapply compat_ext. 2: eapply H1. intros. simpl.
           repeat rewrite <- app_assoc. reflexivity.
 
     - idtac "Case compile_stmt_correct/SSkip".
@@ -2379,7 +2379,7 @@ Section Proofs.
       split.
       { intros. rewrite rtransform_stmt_trace_step. simpl.
         rewrite app_nil_r. reflexivity. }
-      intros ? ? ? Hpredicts. eapply predicts_ext. 2: eapply Hpredicts.
+      intros ? ? ? Hcompat. eapply compat_ext. 2: eapply Hcompat.
       intros. simpl. rewrite rtransform_stmt_trace_step. simpl.
       rewrite app_nil_r. reflexivity.
   Qed. (* <-- takes a while *)

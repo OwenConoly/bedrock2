@@ -90,7 +90,7 @@ Section WithParameters.
           (fun (k' : trace) (T : io_trace) (M : mem) (rets : list word) =>
              exists k'',
                k' = k'' ++ k /\
-                 (predicts pick_sp (List.rev k'') ->
+                 (compat pick_sp (List.rev k'') ->
                   T = output_event :: t)). 
 
   (* I should make this work again.
@@ -171,8 +171,8 @@ Instance ct_bad_swap : ct_spec_of "bad_swap" :=
     repeat straightline. eexists. eexists. split; [eassumption|]. split; [eassumption|].
     eexists. split.
     { instantiate (1 := [_; _]). reflexivity. }
-    intros Hpredicts. simpl in Hpredicts.
-    inversion Hpredicts. subst. specialize (H5 I).
+    intros Hcompat. simpl in Hcompat.
+    inversion Hcompat. subst. specialize (H5 I).
     instantiate (1 := match pick_sp [] with
                       | consume_word a => _
                       | _ => _

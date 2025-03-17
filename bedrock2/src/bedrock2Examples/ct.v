@@ -290,7 +290,7 @@ Print getline_io.
                t' = getline_io 8 bs ++ t /\
                length bs = l :> Z /\
                (exists k'',
-                   k' = k'' ++ k /\ (predicts pick_sp (rev k'') ->
+                   k' = k'' ++ k /\ (compat pick_sp (rev k'') ->
                                      k'' = f pick_sp password_addr l)) /\
                (word.unsigned ret = 1 <-> bs = password)).
 

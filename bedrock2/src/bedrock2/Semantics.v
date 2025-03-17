@@ -64,30 +64,30 @@ Section WithIOEvent.
     | _ => False
     end.
   
-  Inductive predicts : (trace -> event) -> trace -> Prop :=
-  | predicts_cons :
+  Inductive compat : (trace -> event) -> trace -> Prop :=
+  | compat_cons :
     forall f e k,
       (need_to_predict e -> f nil = e) ->
-      predicts (fun k' => f (e :: k')) k ->
-      predicts f (e :: k)
-  | predicts_nil :
+      compat (fun k' => f (e :: k')) k ->
+      compat f (e :: k)
+  | compat_nil :
     forall f,
-      predicts f nil.
+      compat f nil.
   
-  Lemma predicts_ext f k g :
+  Lemma compat_ext f k g :
     (forall k', f k' = g k') ->
-    predicts f k ->
-    predicts g k.
+    compat f k ->
+    compat g k.
   Proof.
     intros H1 H2. revert H1. revert g. induction H2.
     - intros g0 Hfg0. econstructor.
       + rewrite <- Hfg0. apply H.
-      + apply IHpredicts. intros. apply Hfg0.
+      + apply IHcompat. intros. apply Hfg0.
     - intros. constructor.
   Qed.
   
   Lemma predict_cons f k1 k2 e :
-    predicts f (k1 ++ e :: k2) ->
+    compat f (k1 ++ e :: k2) ->
     need_to_predict e ->
     f k1 = e.
   Proof.

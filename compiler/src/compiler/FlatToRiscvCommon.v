@@ -334,8 +334,8 @@ Section WithParameters.
                           (s, rev k1'' ++ k1''', k20, pos, g.(p_sp), (bytes_per_word * rem_framewords g), f)) =
                      fst (f (rev k1'') (k20 ++ rev k2''))) /\
                (forall k20 (*note how, unlike in 'spilling_correct_for', we don't use k20 for anything... it's just in the way.  strongly suggests I should get rid of it. *)k1''' f,
-                   predicts (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
-                   predicts (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
+                   compat (fun k => snd (f (rev k1'' ++ k) (rev k1'') (k20 ++ rev k2''))) k1''' ->
+                   compat (fun k => snd (rtransform_stmt_trace iset compile_ext_call leak_ext_call e_pos program_base e_impl_full
                                              (s, k, k20, pos, g.(p_sp), (bytes_per_word * rem_framewords g), (f k)))) (rev k1'' ++ k1'''))).
 End WithParameters.
 

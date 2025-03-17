@@ -569,7 +569,7 @@ Proof.
   eapply runsToNonDet.runsTo_weaken.
   1: eapply H with (*this is just the post of spec*)
     (post := (fun (k' : trace) (T : io_trace) (_ : mem) (_ : list Words32Naive.word) =>
-                predicts pick_sp (rev k') -> T = output_event :: getLog initial)).
+                compat pick_sp (rev k') -> T = output_event :: getLog initial)).
   13: { simpl. intros.
         destruct H9 as [kH'' [mH' [retvals [kL'' [H9 [H10 [H11 [H12 [H13 [H14 [H15 H16] ] ] ] ] ] ] ] ] ] ].
         split.

@@ -400,7 +400,7 @@ Section MMIO1.
       2: { eexists [_]. eexists [_]. split; [reflexivity|]. split; [reflexivity|].
            split.
            { intros. rewrite rtransform_stmt_trace_step. simpl. reflexivity. }
-           intros. eapply predicts_ext.
+           intros. eapply compat_ext.
            { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
            simpl. constructor.
            { intros []. }
@@ -562,7 +562,7 @@ Section MMIO1.
       2: { eexists [_]. eexists [_]. split; [reflexivity|]. split; [reflexivity|].
            split.
            { intros. rewrite rtransform_stmt_trace_step. simpl. reflexivity. }
-           intros. eapply predicts_ext.
+           intros. eapply compat_ext.
            { intros. rewrite rtransform_stmt_trace_step. reflexivity. }
            simpl. constructor.
            { intros []. }

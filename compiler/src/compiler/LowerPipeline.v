@@ -507,7 +507,7 @@ Section LowerPipeline.
                  post (kH'' ++ kH) t' m' retvals /\
                    fst (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
                           (rev kH'') [] f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, Semantics.leak_unit))) = rev kL'' /\
-                   Semantics.predicts (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
+                   Semantics.compat (fun k => snd (rtransform_fun_trace iset compile_ext_call leak_ext_call finfo p_funcs p1
                                                        k [] f_rel_pos stack_pastend retnames fbody (fun _ rk => (rk, Semantics.leak_unit)))) (rev kH'')).
   Proof.
     unfold riscv_call.
