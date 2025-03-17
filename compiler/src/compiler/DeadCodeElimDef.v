@@ -521,7 +521,7 @@ Section WithArguments1.
   Definition stmt_leakage_body
     (e: env)
     (tup : leakage * stmt var * list var * (leakage -> leakage))
-    (dtransform_stmt_trace : forall othertup, lt_tuple othertup tup -> leakage)
+    (stmt_leakage : forall othertup, lt_tuple othertup tup -> leakage)
     : leakage.
     refine (
         match tup as x return tup = x -> _ with
@@ -541,7 +541,7 @@ Section WithArguments1.
                         fun _ =>
                           match map.get e fname with
                           | Some (params, rets, fbody) =>
-                              leak_unit :: dtransform_stmt_trace (kH', fbody, rets,
+                              leak_unit :: stmt_leakage (kH', fbody, rets,
                                 fun skip => f (leak_unit :: skip)) _
                           | None => nil
                           end
@@ -549,11 +549,15 @@ Section WithArguments1.
                     end eq_refl
               | SLoad _ x _ _ =>
                   fun _ =>
+                    (*pull the address `addr` of the load out of the high-level trace `kH`*)
                     match kH with
                     | leak_word addr :: kH' =>
+                        (*check whether the high-level statement is dead code*)
                         if (existsb (eqb x) u) then
+                          (*if it is not dead, then add the corresponding load leakage event to the low-level trace (which we are returning from this function), and then do the recursive call `f`.  (this is CPS)*)
                           leak_word addr :: f [leak_word addr]
                         else
+                          (*if it is dead, then do not add the corresponding load leakage event to the low-level trace.  just do the recursive call.*)
                           f [leak_word addr]
                     | _ => nil
                     end
@@ -577,7 +581,7 @@ Section WithArguments1.
                   fun _ =>
                     match kH as x return kH = x -> _ with
                     | leak_unit :: kH' =>
-                        fun _ => leak_unit :: dtransform_stmt_trace (kH', body, u,
+                        fun _ => leak_unit :: stmt_leakage (kH', body, u,
                                   fun skip => f (leak_unit :: skip)) _
                     | _ => fun _ => nil
                     end eq_refl
@@ -615,14 +619,14 @@ Section WithArguments1.
                     match kH as x return kH = x -> _ with
                     | leak_bool b :: kH' =>
                         fun _ => leak_bool b ::
-                                dtransform_stmt_trace (kH', if b then thn else els, u,
+                                stmt_leakage (kH', if b then thn else els, u,
                                   fun skip => f (leak_bool b :: skip)) _
                     | _ => fun _ => nil
                     end eq_refl
               | SLoop s1 c s2 =>
                   fun _ =>
                     let live_before := live (SLoop s1 c s2) u in
-                    dtransform_stmt_trace (kH, s1, (list_union String.eqb
+                    stmt_leakage (kH, s1, (list_union String.eqb
                                                             (live s2 live_before)
                                                             (list_union eqb (accessed_vars_bcond c) u)),
                         fun skip1 =>
@@ -631,10 +635,10 @@ Section WithArguments1.
                                match kH' as x return kH' = x -> _ with
                                | leak_bool true :: kH'' =>
                                    fun _ => leak_bool true ::
-                                           dtransform_stmt_trace (kH'', s2, live_before,
+                                           stmt_leakage (kH'', s2, live_before,
                                              fun skip2 =>
                                                let kH''' := List.skipn (length skip2) kH'' in
-                                               dtransform_stmt_trace (kH''', s, u,
+                                               stmt_leakage (kH''', s, u,
                                                    fun skip3 =>
                                                      f (skip1 ++ [leak_bool true] ++ skip2 ++ skip3)) _) _
                                | leak_bool false :: kH'' =>
@@ -642,10 +646,10 @@ Section WithArguments1.
                                | _ => fun _ => nil
                                end eq_refl)) _
               | SSeq s1 s2 =>
-                  fun _ => dtransform_stmt_trace (kH, s1, live s2 u,
+                  fun _ => stmt_leakage (kH, s1, live s2 u,
                             fun skip1 =>
                               let kH' := List.skipn (length skip1) kH in
-                              dtransform_stmt_trace (kH', s2, u, fun skip2 => f (skip1 ++ skip2)) _) _
+                              stmt_leakage (kH', s2, u, fun skip2 => f (skip1 ++ skip2)) _) _
               | SSkip => fun _ => f nil
               end eq_refl
         end eq_refl).
