@@ -378,14 +378,15 @@ Section LowerPipeline.
                                      (FlatImp.SInteract resvars extcall argvars).
 
   (*I modeled my changes to this after my changes to call_spec in Spilling.*)
-  Definition riscv_call(p: list Instruction * pos_map * Z)
-             (f_name: string) (next: (word*Z*word) -> nat -> _ -> _) (k: Semantics.trace)(t: Semantics.io_trace)(mH: mem)(argvals: list word)
-             (post: Semantics.io_trace -> mem -> list word -> Prop): Prop :=
+  Definition riscv_call(p: list Instruction * pos_map * Z) p_funcs stack_pastend ret_addr
+             (f_name: string) (kL: _)(t: Semantics.io_trace)(mH: mem)(argvals: list word)
+             (post: _ -> Semantics.io_trace -> mem -> list word -> Prop): Prop :=
     let '(instrs, finfo, req_stack_size) := p in
     exists f_rel_pos,
       map.get finfo f_name = Some f_rel_pos /\
-      forall p_funcs stack_start stack_pastend ret_addr Rdata Rexec (initial: MetricRiscvMachine),
+      forall stack_start Rdata Rexec (initial: MetricRiscvMachine),
         map.get initial.(getRegs) RegisterNames.ra = Some ret_addr ->
+        initial.(getTrace) = kL ->
         initial.(getLog) = t ->
         word.unsigned ret_addr mod 4 = 0 ->
         arg_regs_contain initial.(getRegs) argvals ->
@@ -393,18 +394,12 @@ Section LowerPipeline.
         word.unsigned (word.sub stack_pastend stack_start) mod bytes_per_word = 0 ->
         initial.(getPc) = word.add p_funcs (word.of_Z f_rel_pos) ->
         machine_ok p_funcs stack_start stack_pastend instrs mH Rdata Rexec initial ->
-        runsTo initial (fun final => (exists mH' retvals,
+        runsTo initial (fun final => exists mH' retvals,
           arg_regs_contain final.(getRegs) retvals /\
-          post final.(getLog) mH' retvals /\
+          post final.(getTrace) final.(getLog) mH' retvals /\
           map.only_differ initial.(getRegs) reg_class.caller_saved final.(getRegs) /\
           final.(getPc) = ret_addr /\
-            machine_ok p_funcs stack_start stack_pastend instrs mH' Rdata Rexec final) /\
-            exists kL F,
-              final.(getTrace) = kL ++ initial.(getTrace) /\
-                forall fuel,
-                  le F fuel ->
-                  predictsLE (next (p_funcs, f_rel_pos, stack_pastend) fuel) (rev kL)).
-  Print machine_ok.
+            machine_ok p_funcs stack_start stack_pastend instrs mH' Rdata Rexec final).
 
   Definition same_finfo_and_length:
     list Instruction * pos_map -> list Instruction * pos_map -> Prop :=
@@ -481,25 +476,31 @@ Section LowerPipeline.
   Check (rnext_fun iset compile_ext_call leak_ext_call finfo p_funcs p1). Check riscvPhase.*)
 
   Lemma flat_to_riscv_correct: forall p1 p2,
-    forall instrs finfo req_stack_size,
-      p2 = (instrs, finfo, req_stack_size) ->
       map.forall_values FlatToRiscvDef.valid_FlatImp_fun p1 ->
       riscvPhase p1 = Success p2 ->
-      forall fname next k t m argvals post argnames retnames fbody,
+      forall fname k kL t m argvals post argnames retnames fbody,
+      forall p_funcs stack_pastend ret_addr,
+        let '(instrs, finfo, req_stack_size) := p2 in
+        let f_rel_pos :=
+          match map.get finfo fname with
+          | Some f_rel_pos => f_rel_pos
+          | None => 0
+          end in
       (exists (*argnames retnames fbody*) l,
           map.get p1 fname = Some (argnames, retnames, fbody) /\
           map.of_list_zip argnames argvals = Some l /\
           forall mc, FlatImp.exec p1 fbody k t m l mc (fun k' t' m' l' mc' =>
-                         exists retvals, map.getmany_of_list l' retnames = Some retvals /\
-                                           post t' m' retvals /\
-                                           exists k'' F,
-                                             k' = k'' ++ k /\
-                                               forall fuel,
-                                                 le F fuel ->
-                                                 Semantics.predicts (next fuel) (rev k''))) ->
-      riscv_call p2 fname
-        (fun '(p_funcs, f_rel_pos, stack_pastend) (fuel: nat) (kL : list LeakageEvent) => rnext_fun iset compile_ext_call leak_ext_call finfo p_funcs p1 fuel (next fuel) nil f_rel_pos stack_pastend argnames retnames fbody kL (fun _ _ => Some qendLE))
-        k t m argvals post.
+                                                    exists retvals, map.getmany_of_list l' retnames = Some retvals /\
+                                                                 post k' t' m' retvals)) ->
+      riscv_call p2 p_funcs stack_pastend ret_addr fname
+        kL t m argvals (fun kL' t' mH' retvals => exists kH'' kL'' F,
+                           post (kH'' ++ k) t' mH' retvals /\
+                             kL' = kL'' ++ kL /\
+                             forall next fuel,
+                               Semantics.predicts next (rev kH'') ->
+                               le F fuel ->
+                               predictsLE (fun kL0 => rnext_fun iset compile_ext_call leak_ext_call finfo p_funcs p1 fuel next nil f_rel_pos stack_pastend argnames retnames fbody kL0 (fun _ _ => Some qendLE)) (rev kL''))
+        .
   Proof.
     unfold riscv_call.
     intros p1 p2. destruct p2 as ((finstrs & finfo) & req_stack_size). intros.
@@ -509,27 +510,27 @@ Section LowerPipeline.
     fwd.
     pose proof (get_compile_funs_pos p1 (build_fun_pos_env iset compile_ext_call p1)) as P.
     rewrite E0 in P.
-    specialize P with (1 := H2p0). cbn in P.
+    specialize P with (1 := H1p0). cbn in P.
     pose proof (compile_funs_finfo_idemp _ _ _ E0) as Q. subst r. fwd.
-    eexists. split. 1: eassumption.
+    eexists. split. 1: reflexivity.
     intros.
     assert (word.unsigned p_funcs mod 4 = 0). {
       unfold machine_ok in *. fwd.
       eapply program_mod_4_0. 2: ecancel_assumption.
       eapply compile_funs_nonnil; eassumption.
     }
-    unfold map.forall_values in H0.
+    unfold map.forall_values in H.
     match goal with
     | H: map.get p1 fname = Some _ |- _ => rename H into GetFun
     end.
-    specialize H0 with (1 := GetFun) as V.
+    specialize H with (1 := GetFun) as V.
     match goal with
     | H: context[post] |- _ => rename H into Hpost
     end.
     unfold map.of_list_zip in Hpost.
     unfold valid_FlatImp_fun in V. fwd.
     eapply runsTo_weaken.
-    - pose proof compile_function_body_correct as Q. Check compile_function_body_correct.
+    - pose proof compile_function_body_correct as Q.
       specialize Q with
           (e_impl := map.remove p1 fname)
           (e_pos := FlatToRiscvDef.build_fun_pos_env iset compile_ext_call p1)
