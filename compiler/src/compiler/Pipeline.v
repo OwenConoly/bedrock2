@@ -682,9 +682,7 @@ Section WithWordAndMem.
             word.unsigned ret_addr mod 4 = 0 ->
             arg_regs_contain initial.(getRegs) argvals ->
             initial.(getLog) = t ->
-            initial.(getTrace) = kL ->(*seems kinda stupid to put this here, since execution 
-                                       doesn't depend on trace, but we're sorta forced to since 
-                                       riscv_call takes initial trace as argument*)
+            initial.(getTrace) = kL ->
             machine_ok p_funcs stack_lo stack_hi instrs mH Rdata Rexec initial ->
             runsTo initial
               (fun final : MetricRiscvMachine =>
@@ -712,7 +710,7 @@ Section WithWordAndMem.
       cbn [Settings] in C.
       specialize (C tt (p_funcs, stack_hi) fname).
       cbv iota in C.
-      fwd. cbn [Event Predicts Settings] in *. Print LeakageEvent. Print LeakageI.
+      fwd. cbn [Event Predicts Settings] in *.
       exists (f (fun _ => ILeakage Jal_leakage)).
       exists (new_pick_sp (fun _ => ILeakage Jal_leakage)).
       intuition eauto 20.
