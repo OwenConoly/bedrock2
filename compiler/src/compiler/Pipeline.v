@@ -60,13 +60,17 @@ Section WithWordAndMem.
 
   Record Lang := {
       Program: Type;
-      Event: Type;
-      QEvent: Type;
-      LeakageInfo: Type;
+      Leakage: Type;
+      Predictor: Type;
+      Predicts: Predictor -> list Leakage -> Prop;
       Valid: Program -> Prop;
-      Call(p: Program)(funcname: string)(next: LeakageInfo -> nat -> list Event -> option QEvent)
-        (k: trace)(t: io_trace)(m: mem)(argvals: list word)
-        (post: io_trace -> mem -> list word -> Prop): Prop;
+      Call(p: Program)(funcname: string)
+        (k: list Leakage)(t: io_trace)(m: mem)(argvals: list word)
+        (post: list Leakage -> io_trace -> mem -> list word -> Prop): Prop;
+      WeakenCall: forall p funcname k t m argvals post1 post2,
+        Call p funcname k t m argvals post1 ->
+        (forall k' t' m' retvals, post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
+        Call p funcname k t m argvals post2
   }.
 
   Record phase_correct{L1 L2: Lang}
@@ -79,11 +83,17 @@ Section WithWordAndMem.
     phase_preserves_post: forall p1 p2,
         L1.(Valid) p1 ->
         compile p1 = Success p2 ->
-        forall fname next,
+        forall fname,
         exists next',
-          forall k t m argvals post,
-          L1.(Call) p1 fname next k t m argvals post ->
-          L2.(Call) p2 fname next' k t m argvals post;
+          forall t m argvals post,
+          L1.(Call) p1 fname [] t m argvals post ->
+          L2.(Call) p2 fname [] t m argvals
+               (fun kL t' m' a =>
+                  exists kH,
+                    post kH t' m' a /\
+                      forall next,
+                        L1.(Predicts) next kH ->
+                        L2.(Predicts) (next' next) kL);
   }.
 
   Arguments phase_correct : clear implicits.
@@ -93,7 +103,7 @@ Section WithWordAndMem.
     fun a => match phase1 a with
              | Success b => phase2 b
              | Failure e => Failure e
-             end.
+          end.
 
   Lemma compose_phases_correct{L1 L2 L3: Lang}
         {compile12: L1.(Program) -> result L2.(Program)}
@@ -107,9 +117,11 @@ Section WithWordAndMem.
     split; intros; fwd; eauto.
     specialize (V12 p1 a E H).
     specialize (C23 a p2 V12 H0 fname).
-    specialize (C12 p1 a H E fname next). destruct C12 as [next' C12].
-    specialize (C23 next'). destruct C23 as [next'' C23].
-    eauto.
+    specialize (C12 p1 a H E fname). destruct C12 as [next' C12].
+    destruct C23 as [next'' C23]. exists (fun next => next'' (next' next)).
+    intros. eapply L3.(WeakenCall).
+    { apply C23. apply C12. apply H1. }
+    simpl. intros. fwd. eauto.
   Qed.
 
   Section WithMoreParams.
@@ -155,37 +167,58 @@ Section WithWordAndMem.
                       Cmd -> trace -> io_trace -> mem -> locals -> MetricLog ->
                       (trace -> io_trace -> mem -> locals -> MetricLog -> Prop) -> Prop)
                (e: string_keyed_map (list Var * list Var * Cmd))(f: string)
-               (next: unit -> nat -> trace -> option qevent)
                (k: trace)(t: io_trace)(m: mem)(argvals: list word)
-               (post: io_trace -> mem -> list word -> Prop): Prop :=
+               (post: trace -> io_trace -> mem -> list word -> Prop): Prop :=
       exists argnames retnames fbody l,
         map.get e f = Some (argnames, retnames, fbody) /\
         map.of_list_zip argnames argvals = Some l /\
         forall mc, Exec e fbody k t m l mc (fun k' t' m' l' mc' =>
                        exists retvals, map.getmany_of_list l' retnames = Some retvals /\
-                                         post t' m' retvals /\
-                                         exists k'' F,
-                                           k' = k'' ++ k /\
-                                             forall fuel,
-                                               le F fuel ->
-                                               predicts (next tt fuel) (rev k'')).
+                                    post k' t' m' retvals).
+
+    Lemma locals_based_call_spec_weaken{Var Cmd: Type}{locals: map.map Var word}
+      {Exec: string_keyed_map (list Var * list Var * Cmd) ->
+             Cmd -> trace -> io_trace -> mem -> locals -> MetricLog ->
+             (trace -> io_trace -> mem -> locals -> MetricLog -> Prop) -> Prop}
+      (H : forall e k t l m mc s post1,
+          Exec e s k t m l mc post1 ->
+          forall post2,
+          (forall k' t' m' l' mc', post1 k' t' m' l' mc' -> post2 k' t' m' l' mc') ->
+          Exec e s k t m l mc post2)
+      :
+      forall e f k t m argvals post1 post2,
+        locals_based_call_spec Exec e f k t m argvals post1 ->
+        (forall k' t' m' retvals, post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
+        locals_based_call_spec Exec e f k t m argvals post2.
+    Proof.
+      intros. cbv [locals_based_call_spec] in *. fwd. exists argnames, retnames, fbody, l.
+      intuition auto. eapply H. 1: eapply H0p2. simpl. intros. fwd.
+      exists retvals. auto.
+    Qed.
 
     Definition ParamsNoDup{Var: Type}: (list Var * list Var * FlatImp.stmt Var) -> Prop :=
       fun '(argnames, retnames, body) => NoDup argnames /\ NoDup retnames.
 
-    Definition SrcLang: Lang := {|
-      Program := string_keyed_map (list string * list string * Syntax.cmd);
-      Valid := map.forall_values ExprImp.valid_fun;
-      Call := locals_based_call_spec Semantics.exec;
-    |}.
+    Definition SrcLang: Lang :=
+      {|
+        Program := string_keyed_map (list string * list string * Syntax.cmd);
+        Predicts := Semantics.predicts;
+        Valid := map.forall_values ExprImp.valid_fun;
+        Call := locals_based_call_spec Semantics.exec;
+        WeakenCall := locals_based_call_spec_weaken Semantics.exec.weaken;
+      |}.
+                                
     (* |                 *)
     (* | FlattenExpr     *)
     (* V                 *)
-    Definition FlatWithStrVars: Lang := {|
-      Program := string_keyed_map (list string * list string * FlatImp.stmt string);
-      Valid := map.forall_values ParamsNoDup;
-      Call := locals_based_call_spec FlatImp.exec;
-    |}.
+    Definition FlatWithStrVars: Lang :=
+      {|
+        Program := string_keyed_map (list string * list string * FlatImp.stmt string);
+        Predicts := Semantics.predicts;
+        Valid := map.forall_values ParamsNoDup;
+        Call := locals_based_call_spec FlatImp.exec;
+        WeakenCall := locals_based_call_spec_weaken FlatImp.exec.weaken
+      |}.
 
     (* |                 *)
     (* | UseImmediate    *)
@@ -195,22 +228,28 @@ Section WithWordAndMem.
     (* |                 *)
     (* | RegAlloc        *)
     (* V                 *)
-    Definition FlatWithZVars: Lang := {|
-      Program := string_keyed_map (list Z * list Z * FlatImp.stmt Z);
-      Valid := map.forall_values ParamsNoDup;
-      Call := locals_based_call_spec FlatImp.exec;
-    |}.
+    Definition FlatWithZVars: Lang :=
+      {|
+        Program := string_keyed_map (list Z * list Z * FlatImp.stmt Z);
+        Predicts := Semantics.predicts;
+        Valid := map.forall_values ParamsNoDup;
+        Call := locals_based_call_spec FlatImp.exec;
+        WeakenCall := locals_based_call_spec_weaken FlatImp.exec.weaken;
+      |}.
     (* |                 *)
     (* | Spilling        *)
     (* V                 *)
-    Definition FlatWithRegs: Lang := {|
-      Program := string_keyed_map (list Z * list Z * FlatImp.stmt Z);
-      Valid := map.forall_values FlatToRiscvDef.valid_FlatImp_fun;
-      Call := locals_based_call_spec FlatImp.exec;
-    |}.
+    Definition FlatWithRegs: Lang :=
+      {|
+        Program := string_keyed_map (list Z * list Z * FlatImp.stmt Z);
+        Predicts := Semantics.predicts;
+        Valid := map.forall_values FlatToRiscvDef.valid_FlatImp_fun;
+        Call := locals_based_call_spec FlatImp.exec;
+        WeakenCall := locals_based_call_spec_weaken FlatImp.exec.weaken;
+      |}.
     (* |                 *)
     (* | FlatToRiscv     *)
-    (* V                 *) Print riscv_call. Print Lang. Check string_keyed_map Z.
+    (* V                 *)
     Definition RiscvLang: Lang := {|
       Program :=
         list Instruction *      (* <- code of all functions concatenated       *)
