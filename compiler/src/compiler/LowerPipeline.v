@@ -541,10 +541,7 @@ Section LowerPipeline.
           (post := fun k' t' m' l' mc' =>
                      (exists retvals,
                          map.getmany_of_list l' retnames = Some retvals /\
-                           post t' m' retvals) /\
-                       (exists (k'' : list Semantics.event) (F : nat),
-                  k' = k'' ++ k /\
-                  (forall fuel : nat, (F <= fuel)%nat -> Semantics.predicts (next fuel) (rev k''))))
+                           post k' t' m' retvals))
           .
       eapply Q with
           (g := {| rem_stackwords :=
@@ -590,7 +587,6 @@ Section LowerPipeline.
           unfold reg_class.all.
           eapply List.NoDup_filter.
           eapply List.NoDup_unfoldn_Z_seq.
-        * eauto.
       + rewrite Vp1. rewrite List.firstn_length.
         change (Datatypes.length (reg_class.all reg_class.arg)) with 8%nat. clear. blia.
       + eassumption.
@@ -692,8 +688,8 @@ Section LowerPipeline.
       assert (0 < bytes_per_word). { (* TODO: deduplicate *)
         unfold bytes_per_word; simpl; destruct width_cases as [EE | EE]; rewrite EE; cbv; trivial.
       }
-      split. 1: eexists _, _; ssplit.
-      + eapply map.getmany_of_list_extends. 1: eassumption.
+      do 2 eexists. split.
+      { eapply map.getmany_of_list_extends. 1: eassumption.
         match goal with
         | H: map.getmany_of_list finalRegsH _ = Some _ |-
              map.getmany_of_list finalRegsH _ = Some _ =>
@@ -704,8 +700,15 @@ Section LowerPipeline.
         f_equal.
         symmetry.
         eapply map.getmany_of_list_length.
-        exact GM.
-      + eassumption.
+        exact GM. }
+      ssplit.
+      + do 2 eexists. exists F. split; [eassumption|]. intros.
+        replace (rev rk') with (rev rk' ++ nil) by apply List.app_nil_r. split.
+        { subst kL. assumption. }
+        intros. eapply H10p5p2. 
+        -- rewrite app_nil_r. assumption.
+        -- constructor. reflexivity.
+        -- blia.
       + eapply only_differ_subset. 1: eassumption.
         rewrite ListSet.of_list_list_union.
         rewrite ?singleton_set_eq_of_list.
@@ -801,14 +804,6 @@ Section LowerPipeline.
       + assumption.
     Unshelve.
     all: try exact EmptyMetricLog.
-      + eexists. exists (plus F F0). split; [eassumption|]. intros.
-        replace (rev rk') with (rev rk' ++ nil) by apply List.app_nil_r.
-        eapply H9p5p2.
-        -- simpl. Search Semantics.predicts. instantiate (1 := nil). rewrite app_nil_r.
-           apply app_inv_tail in H9p0p1p0. subst.
-           eapply H9p0p1p1. blia.
-        -- constructor. reflexivity.
-        -- blia.
   Qed.
 
 End LowerPipeline.
