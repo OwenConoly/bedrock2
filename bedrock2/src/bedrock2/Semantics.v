@@ -41,14 +41,6 @@ Inductive qevent {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
 | qconsume_word : qevent
 | qend : qevent.
 
-Inductive abstract_trace {width: Z}{BW: Bitwidth width}{word: word.word width} : Type :=
-| empty
-| aleak_unit (after : abstract_trace)
-| aleak_bool (b : bool) (after : abstract_trace)
-| aleak_word (w : word) (after : abstract_trace)
-| aleak_list (l : list word) (after : abstract_trace)
-| aconsume_word (after : word -> abstract_trace).
-
 Section WithIOEvent.
   Context {width: Z}{BW: Bitwidth width}{word: word.word width}{mem: map.map word byte}.
 
