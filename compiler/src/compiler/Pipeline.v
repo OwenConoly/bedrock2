@@ -55,6 +55,7 @@ Require Import compiler.UseImmediateDef.
 Require Import compiler.UseImmediate.
 Require Import Coq.Logic.ClassicalChoice.
 Require Import Coq.Logic.Classical.
+Require Import compiler.FlatToRiscvDef.
 Import Utility.
 
 Section WithWordAndMem.
@@ -483,6 +484,11 @@ Section WithWordAndMem.
       (forall k1 x k2, k = k1 ++ x :: k2 -> pred k1 = Some (q x))/\
         pred k = Some qend.
 
+    Print predictsLE.
+    Definition predictsLE' pred k :=
+      (forall k1 x k2, k = k1 ++ x :: k2 -> pred k1 = Some (quotLE x))/\
+        pred k = Some qendLE.
+
     Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
     Proof. intros. cbn. congruence. Qed.
     Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
@@ -511,6 +517,23 @@ Section WithWordAndMem.
              -- intros. destruct k1; simpl in H0; congruence.
              -- assumption. }
         destruct IHpredicts as [H2 H3]. split.
+        -- intros. destruct k1; inversion H4; subst; simpl in *; try congruence.
+           rewrite H0. eapply H2. reflexivity.
+        -- rewrite H0. assumption.
+    Qed.
+
+    Lemma predictsLE'_iff_predictsLE pred k : predictsLE' pred k <-> predictsLE pred k.
+    Proof.
+      split.
+      - revert pred.
+        induction k as [|e k']; [|destruct e]; intros pred H; unfold predictsLE' in H; fwd.
+        { constructor. assumption. }
+        all: econstructor; [eapply Hp0; trace_alignment|reflexivity|eapply IHk'; cbv [predicts']; split; [intros; subst; eapply Hp0; trace_alignment|assumption] ].
+      - intros H. induction H.
+        2: { split.
+             -- intros. destruct k1; simpl in H0; congruence.
+             -- assumption. }
+        destruct IHpredictsLE as [H2 H3]. split.
         -- intros. destruct k1; inversion H4; subst; simpl in *; try congruence.
            rewrite H0. eapply H2. reflexivity.
         -- rewrite H0. assumption.
@@ -563,6 +586,22 @@ Section WithWordAndMem.
       - simpl. econstructor; auto.
     Qed.
 
+    Fixpoint predictorLE_of t : list LeakageEvent -> option qLeakageEvent :=
+      match t with
+      | a :: t' => fun t0 => match t0 with
+                        | [] => Some (quotLE a)
+                        | _ :: t0' => predictorLE_of t' t0'
+                        end
+      | [] => fun _ => Some qendLE
+      end.
+    
+    Lemma predictorLE_exists t : predictsLE (predictorLE_of t) t.
+    Proof.
+      induction t.
+      - constructor. reflexivity.
+      - simpl. econstructor; auto.
+    Qed.
+
     Lemma pred_really_ext' : forall t,
       exists P,
       forall f,
@@ -586,6 +625,29 @@ Section WithWordAndMem.
           exists nil. symmetry. apply app_nil_r.
     Qed.
 
+    Lemma predLE_really_ext' : forall t,
+      exists P,
+      forall f,
+        predictsLE f t ->
+      forall g,
+        predictsLE g t <-> (forall x, P x -> g x = f x).
+    Proof.
+      intros t. Print predicts'. exists (fun t0 => exists t0', t = t0 ++ t0').
+      intros. split; intros.
+      - fwd. apply predictsLE'_iff_predictsLE in H, H0. cbv [predictsLE'] in *.
+        destruct H as [H1 H2]. destruct H0 as [H01 H02].
+        specialize (H1 x). specialize (H01 x). destruct t0'.
+        + rewrite app_nil_r in *. rewrite H2, H02. reflexivity.
+        + clear H2 H02. specialize (H01 _ _ eq_refl). specialize (H1 _ _ eq_refl).
+          rewrite H1, H01. reflexivity.
+      - apply predictsLE'_iff_predictsLE. apply predictsLE'_iff_predictsLE in H.
+        cbv [predictsLE'] in *. split.
+        + destruct H as [H _]. intros. subst. specialize (H _ _ _ eq_refl).
+          specialize (H0 k1). rewrite H in H0. apply H0. eexists. reflexivity.
+        + specialize (H0 t). destruct H as [_ H]. rewrite H in H0. apply H0.
+          exists nil. symmetry. apply app_nil_r.
+    Qed.
+
     Lemma pred_really_ext : forall t,
       exists f P,
       forall g,
@@ -593,6 +655,15 @@ Section WithWordAndMem.
     Proof.
       intros t. exists (predictor_of t). pose proof (pred_really_ext' t) as [P H].
       exists P. apply H. apply predictor_exists.
+    Qed.
+
+    Lemma predLE_really_ext : forall t,
+      exists f P,
+      forall g,
+        predictsLE g t <-> (forall x, P x -> g x = f x).
+    Proof.
+      intros t. exists (predictorLE_of t). pose proof (predLE_really_ext' t) as [P H].
+      exists P. apply H. apply predictorLE_exists.
     Qed.
 
     Lemma defuel_predictor (f : nat -> trace -> option qevent) : exists (f' : trace -> option qevent),
@@ -606,12 +677,26 @@ Section WithWordAndMem.
       rewrite H' in H0. assert (H1 := H0 _ X). rewrite <- H1. apply defuel'.
       intros. rewrite H1. apply H in H2. rewrite H' in H2. apply H2. assumption.
     Qed.
+
+    Lemma defuel_predictorLE f : exists f',
+      forall t F,
+        (forall fuel, le F fuel -> predictsLE (f fuel) t) ->
+        predictsLE f' t.
+    Proof.
+      pose proof defuel' f as [f' defuel']. exists f'. intros t.
+      pose proof predLE_really_ext t as [eff [P H'] ].
+      intros. apply H'. intros. assert (H0 := H F ltac:(blia)).
+      rewrite H' in H0. assert (H1 := H0 _ X). rewrite <- H1. apply defuel'.
+      intros. rewrite H1. apply H in H2. rewrite H' in H2. apply H2. assumption.
+    Qed.
     
     Lemma defuel_predictor' : exists f', forall (f : nat -> trace -> option qevent),
       forall t F,
         (forall fuel, le F fuel -> predicts (f fuel) t) ->
         predicts (f' f) t.
     Proof. exact (choice _ defuel_predictor). Qed.
+
+    Definition defuel_predictorLE' := choice _ defuel_predictorLE.
 
     Lemma spilling_correct: phase_correct FlatWithZVars FlatWithRegs spill_functions.
     Proof.
@@ -651,7 +736,7 @@ Section WithWordAndMem.
 
     Lemma riscv_phase_correct (p_funcs stack_pastend ret_addr : word) : phase_correct FlatWithRegs (RiscvLang p_funcs stack_pastend ret_addr) (riscvPhase compile_ext_call).
     Proof.
-      pose proof (defuel predictsLE) as [defueler Hdefueler].
+      pose proof defuel_predictorLE' as [defueler Hdefueler].
       unfold FlatWithRegs, RiscvLang.
       split; cbn.
       - intros p1 ((? & finfo) & ?). intros. exact I.
@@ -733,32 +818,26 @@ Section WithWordAndMem.
         (* output of compilation: *)
         (instrs: list Instruction) (finfo: list (string * Z)) (req_stack_size: Z)
         (* function we choose to call: *)
-        (fname: string),
+        (fname: string) (p_funcs stack_hi ret_addr: word),
         valid_src_funs functions = true ->
         compile functions = Success (instrs, finfo, req_stack_size) ->
-        forall next, exists next',
-        forall
+        exists next',
         (* high-level initial state & post on final state: *)
-        (k: trace) (t: io_trace) (mH: mem) (argvals: list word) (post: io_trace -> mem -> list word -> Prop),
+        forall (t: io_trace) (mH: mem) (argvals: list word) (post: trace -> io_trace -> mem -> list word -> Prop),
         (exists (argnames retnames: list string) (fbody: cmd) l,
             map.get (map.of_list functions) fname = Some (argnames, retnames, fbody) /\
             map.of_list_zip argnames argvals = Some l /\
             forall mc,
-              Semantics.exec (map.of_list functions) fbody k t mH l mc
+              Semantics.exec (map.of_list functions) fbody [] t mH l mc
                 (fun k' t' m' l' mc' => exists retvals: list word,
                      map.getmany_of_list l' retnames = Some retvals /\
-                       post t' m' retvals /\
-                       exists k'' F,
-                         k' = k'' ++ k /\
-                           forall fuel,
-                             le F fuel ->
-                             predicts (next tt fuel) (rev k''))) ->
+                       post k' t' m' retvals)) ->
         exists (f_rel_pos: Z),
           map.get (map.of_list finfo) fname = Some f_rel_pos /\
           forall (* low-level machine on which we're going to run the compiled program: *)
                  (initial: MetricRiscvMachine)
                  (* ghost vars that help describe the low-level machine: *)
-                 (stack_lo stack_hi: word) (ret_addr p_funcs: word) (Rdata Rexec: mem -> Prop),
+                 (stack_lo : word) (Rdata Rexec: mem -> Prop),
             req_stack_size <= word.unsigned (word.sub stack_hi stack_lo) / bytes_per_word ->
             word.unsigned (word.sub stack_hi stack_lo) mod bytes_per_word = 0 ->
             initial.(getPc) = word.add p_funcs (word.of_Z f_rel_pos) ->
@@ -766,22 +845,22 @@ Section WithWordAndMem.
             word.unsigned ret_addr mod 4 = 0 ->
             arg_regs_contain initial.(getRegs) argvals ->
             initial.(getLog) = t ->
+            initial.(getTrace) = [] ->
             machine_ok p_funcs stack_lo stack_hi instrs mH Rdata Rexec initial ->
-            runsTo initial (fun final : MetricRiscvMachine =>
-              (exists mH' retvals,
-                arg_regs_contain (getRegs final) retvals /\
-                post final.(getLog) mH' retvals /\
-                map.only_differ initial.(getRegs) reg_class.caller_saved final.(getRegs) /\
-                final.(getPc) = ret_addr /\
-                  machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final) /\
-              exists tL F,
-              final.(getTrace) = tL ++ initial.(getTrace) /\
-                forall fuel,
-                  le F fuel ->
-                  predictsLE (next' (p_funcs, f_rel_pos, stack_hi) fuel) (rev tL)).
+            runsTo initial
+              (fun final : MetricRiscvMachine =>
+                 exists (mH' : mem) (retvals : list word),
+                   arg_regs_contain (getRegs final) retvals /\
+                     (exists kH : list Semantics.event,
+                         post kH (getLog final) mH' retvals /\
+                           (forall next : trace -> option qevent,
+                               predicts next (rev kH) -> predictsLE (next' next) (rev (getTrace final)))) /\
+                     map.only_differ (getRegs initial) reg_class.caller_saved (getRegs final) /\
+                     getPc final = ret_addr /\
+                     machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final).
     Proof.
       intros.
-      pose proof (phase_preserves_post composed_compiler_correct) as C.
+      pose proof (phase_preserves_post (composed_compiler_correct p_funcs stack_hi ret_addr)) as C.
       unfold Call, SrcLang, RiscvLang, locals_based_call_spec, riscv_call in C.
       eapply valid_src_funs_correct in H.
       specialize C with (1 := H).
@@ -791,393 +870,10 @@ Section WithWordAndMem.
         rewrite map.of_list_tuples. reflexivity.
       }
       specialize C with (1 := H0').
-      specialize (C fname next).
-      cbv iota in C.
+      specialize (C fname). destruct C as [next' C].
+      cbv iota in C. cbv [Predicts Leakage Predictor] in C.
       fwd. exists next'. intuition eauto 20.
       specialize C with (1 := H1). clear H1. fwd. exists f_rel_pos. intuition eauto 10.
     Qed.
-
-    Definition instrencode(p: list Instruction): list byte :=
-      List.flat_map (fun inst => HList.tuple.to_list (LittleEndian.split 4 (encode inst))) p.
-
-    Ltac hyp p :=
-      multimatch goal with
-      | H: context[p] |- _ => H
-      end.
-
-    (* combines the above theorem with WeakestPrecondition soundness,
-       and makes `map.get (map.of_list finfo) fname` a hyp rather than conclusion because
-       in concrete instantiations, users need to lookup that position themselves anyways *)
-    Check WeakestPrecondition.call.
-    Lemma compiler_correct_wp: forall
-        (* input of compilation: *)
-        (fs: list (string * (list string * list string * cmd)))
-        (* output of compilation: *)
-        (instrs: list Instruction) (finfo: list (string * Z)) (req_stack_size: Z)
-        (* function we choose to call: *)
-        (fname: string) next (f_rel_pos: Z),
-        valid_src_funs fs = true ->
-        compile fs = Success (instrs, finfo, req_stack_size) ->
-        exists next', forall
-        (* high-level initial state & post on final state: *)
-        (k: trace) (t: io_trace) (mH: mem) (argvals: list word) (post: io_trace -> mem -> list word -> Prop)
-        (* ghost vars that help describe the low-level machine: *)
-        (stack_lo stack_hi ret_addr p_funcs: word) (Rdata Rexec: mem -> Prop)
-        (* low-level machine on which we're going to run the compiled program: *)
-        (initial: MetricRiscvMachine),
-        NoDup (map fst fs) ->
-        WeakestPrecondition.call fs fname k t mH argvals
-          (fun k' t' m' rets =>
-             post t' m' rets /\
-               exists k'' F,
-                 k' = k'' ++ k /\
-                   forall fuel,
-                     le F fuel ->
-                     predicts (next tt fuel) (rev k'')) ->
-        map.get (map.of_list finfo) fname = Some f_rel_pos ->
-        req_stack_size <= word.unsigned (word.sub stack_hi stack_lo) / bytes_per_word ->
-        word.unsigned (word.sub stack_hi stack_lo) mod bytes_per_word = 0 ->
-        initial.(getPc) = word.add p_funcs (word.of_Z f_rel_pos) ->
-        map.get (getRegs initial) RegisterNames.ra = Some ret_addr ->
-        word.unsigned ret_addr mod 4 = 0 ->
-        arg_regs_contain initial.(getRegs) argvals ->
-        initial.(getLog) = t ->
-        machine_ok p_funcs stack_lo stack_hi instrs mH Rdata Rexec initial ->
-        runsTo initial (fun final : MetricRiscvMachine =>
-          (exists mH' retvals,
-            arg_regs_contain (getRegs final) retvals /\
-            post final.(getLog) mH' retvals /\
-            map.only_differ initial.(getRegs) reg_class.caller_saved final.(getRegs) /\
-            final.(getPc) = ret_addr /\
-              machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final) /\
-              exists tL F,
-                final.(getTrace) = tL ++ initial.(getTrace) /\
-                  forall fuel,
-                    le F fuel ->
-                    predictsLE (next' (p_funcs, f_rel_pos, stack_hi) fuel) (rev tL)).
-    Proof.
-      intros.
-      destruct (compiler_correct fs instrs finfo req_stack_size fname H H0 next) as [next' compiler_correct'].
-      exists next'. intros.
-      let H := hyp WeakestPrecondition.call in rename H into WP.
-      eapply WeakestPreconditionProperties.sound_call' in WP.
-      2: { eapply map.all_gets_from_map_of_NoDup_list; assumption. }
-      fwd.
-      edestruct compiler_correct' as (f_rel_pos' & G & C);
-        try eassumption.
-      - intros.
-        unfold map.of_list_zip in *. eauto 10.
-      - fwd. rewrite H3 in G. injection G as G. subst.
-        eapply C; clear C; try assumption; try congruence.
-    Qed.
-
-    
-Print FlatToRiscvDef.qLeakageEvent.
-Fixpoint trace_of_predictor so_far next fuel :=
-  match fuel with
-  | O => nil
-  | S fuel' =>
-      match next fuel so_far with
-      | Some (FlatToRiscvDef.qLE e) => e :: trace_of_predictor (app so_far (cons e nil)) next fuel'
-      | Some (FlatToRiscvDef.qendLE) => []
-      | None => []
-      end
-  end.
-
-Notation predictsLE := FlatToRiscvCommon.predictsLE.
-Print FlatToRiscvDef.qLeakageEvent.
-Lemma predictsLE_end f l :
-      predictsLE f l ->
-      f l = Some FlatToRiscvDef.qendLE.
-Proof.
-  intros H. induction H.
-  - rewrite H0. assumption.
-  - assumption.
-Qed.
-
-Lemma trace_of_predictor_works' so_far next F k :
-  (forall fuel,
-    (F <= fuel)%nat ->
-    predictsLE (next fuel) (so_far ++ k)) ->
-  exists F',
-    (forall fuel,
-        (F' <= fuel)%nat ->
-        k%list = trace_of_predictor so_far next fuel).
-Proof.
-  intros H. generalize dependent so_far. subst. induction k.
-  - intros. exists (S F). intros. destruct fuel as [|fuel']; [blia|]. simpl.
-    specialize (H (S fuel') ltac:(blia)). rewrite List.app_nil_r in H.
-    apply predictsLE_end in H. rewrite H. reflexivity.
-  - intros.
-    specialize (IHk (so_far ++ [a])%list). rewrite <- app_assoc in IHk.
-    specialize (IHk H). destruct IHk as [F' IHk]. 
-    exists (S (F + F')). intros. destruct fuel as [|fuel']; [blia|].
-    specialize (H (S fuel') ltac:(blia)). Search predictsLE.
-    apply FlatToRiscvFunctions.predictLE_cons in H. simpl. rewrite H. simpl. f_equal.
-    apply IHk. blia.
-Qed.
-
-Lemma trace_of_predictor_works next F k :
-  (forall fuel,
-    (F <= fuel)%nat ->
-    predictsLE (next fuel) k) ->
-  exists F',
-    (forall fuel,
-        (F' <= fuel)%nat ->
-        k = trace_of_predictor [] next fuel).
-Proof.
-  intros. replace k with ([] ++ k)%list by reflexivity. eapply trace_of_predictor_works'.
-  apply H.
-Qed.
-
-Require Import riscv.Utility.MonadT.
-
-Lemma predictsLE_ext p1 p2 l :
-  (forall x, p1 x = p2 x) ->
-  predictsLE p1 l ->
-  predictsLE p2 l.
-Proof.
-  intros H H0. induction H0.
-  - econstructor.
-    + rewrite <- H. assumption.
-    + intros. rewrite <- H. auto.
-    + assumption.
-  - constructor. rewrite <- H. assumption.
-Qed.
-
-Lemma predictLE_unique p l1 l2 :
-  predictsLE p l1 ->
-  predictsLE p l2 ->
-  l1 = l2.
-Proof.
-  intros. generalize dependent l2. generalize dependent p. induction l1.
-  - intros. destruct l2; [reflexivity|]. remember [] as thing. destruct H; try congruence.
-    destruct H0; try congruence. rewrite H0 in H. injection H as H.
-    cbv [FlatToRiscvDef.quotLE] in H. congruence.
-  - intros. destruct l2 eqn:E.
-    + clear IHl1. remember [] as thing. destruct H; try congruence. destruct H0; try congruence.
-      rewrite H0 in H. injection H as H.
-      cbv [FlatToRiscvDef.quotLE] in H. congruence.
-    + remember (a :: l1) as l1'. destruct H.
-      -- destruct H0.
-         ++ rewrite H0 in H. injection H as H. subst. f_equal. injection Heql1'. intros. subst.
-            eapply IHl1.
-            --- exact H2.
-            --- eapply predictsLE_ext. 2: eassumption. intros. rewrite <- H3, H1. reflexivity.
-         ++ rewrite H0 in H. injection H as H. cbv [FlatToRiscvDef.quotLE] in H. congruence.
-      -- destruct H0; congruence.
-Qed.
-
-(* This should be easy to prove, though. *)
-Lemma a_trace_sorta_exists :
-  forall next,
-  exists finalTrace,
-  forall initial P,
-  FlatToRiscvCommon.runsTo initial
-    (fun final : MetricRiscvMachine =>
-       P final /\
-         (exists (tL : list LeakageEvent) (F : nat),
-             getTrace final = (tL ++ getTrace initial)%list /\
-               (forall fuel : nat,
-                   (F <= fuel)%nat ->
-                   FlatToRiscvCommon.predictsLE (next fuel)
-                     (rev tL)))) ->
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\ exists F,
-           forall fuel : nat,
-             (F <= fuel)%nat ->
-             getTrace final = finalTrace fuel ++ getTrace initial).
-Proof.
-  intros. exists (fun fuel => (rev (trace_of_predictor nil next fuel))%list).
-  intros.
-  cbv [FlatToRiscvCommon.runsTo]. eapply runsToNonDet.runsTo_weaken.
-  1: eapply H. simpl. intros. destruct H0 as [H1 [tL [F [H2 H3] ] ] ].
-  split; [assumption|]. assert (H3' := H3).
-  apply trace_of_predictor_works in H3. destruct H3 as [F' H3].
-  intros. simpl in H. exists F'. intros. rewrite H2. f_equal.
-  rewrite <- (rev_involutive tL). f_equal. apply H3. apply H0.
-Qed.
-
-Require Import riscv.Platform.MetricSane.
-
-Print FlatToRiscvCommon.runsTo.
-Search runsToNonDet.runsTo.
-
-Print runsToNonDet.runsTo.
-
-Definition P : nat -> Prop := fun n => (n <= 5)%nat.
-
-Check run1_sane. Check (run1 _).
-Print mcomp_sane.
-Lemma runsTo_sane :
-  forall (st : MetricRiscvMachine) (post : MetricRiscvMachine -> Prop),
-    valid_machine st ->
-    FlatToRiscvCommon.runsTo st post ->
-    (exists (st' : MetricRiscvMachine), post st' /\ valid_machine st') /\
-      FlatToRiscvCommon.runsTo st
-        (fun (st' : MetricRiscvMachine) =>
-           (post st' /\ (exists diff : list LogItem, getLog st' = (diff ++ getLog st)%list)) /\
-             valid_machine st').
-Proof.
-  intros. induction H0.
-  - split.
-    + exists initial. split; assumption.
-    + constructor. split; [|assumption]. split; [assumption|]. exists nil. reflexivity.
-  - assert (H3 := run1_sane iset). cbv [mcomp_sane] in H3.
-    specialize (H3 initial (fun _ => midset) H H0).
-    destruct H3 as [ [_ [midst [H3 H4] ] ] H5].
-    split.
-    + specialize (H2 midst H3 H4). destruct H2 as [H2 H2'].  exact H2.
-    + Print runsToNonDet.runsTo. eapply runsToNonDet.runsToStep.
-      -- exact H5.
-      -- simpl. intros mid [ [H6 H7] H8]. specialize (H2 mid H6 H8).
-         destruct H2 as [_ H2]. eapply runsToNonDet.runsTo_weaken.
-         ++ exact H2.
-         ++ simpl. intros final [ [H9 [diff H10] ] H11].
-            split; [|assumption]. split; [assumption|]. rewrite H10.
-            destruct H7 as [diff' H7]. rewrite H7. eexists. rewrite <- app_assoc. reflexivity.
-Qed.
-
-Lemma last_step_useless_version :
-  forall
-    (finalTrace : nat -> list LeakageEvent)
-    (initial : MetricRiscvMachine)
-    (P : MetricRiscvMachine -> Prop),
-    valid_machine initial ->
-    
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\
-           exists F,
-           forall fuel : nat,
-             (F <= fuel)%nat ->
-             getTrace final = finalTrace fuel ++ getTrace initial) ->
-
-    exists n,
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\
-           getTrace final = finalTrace n ++ getTrace initial).
-Proof. Abort.
-
-Axiom em : forall P, P \/ ~P. 
-
-Lemma last_step :
-  forall (finalTrace : nat -> list LeakageEvent),
-    
-  exists (n : nat),
-  forall (initial : MetricRiscvMachine)
-         (P : MetricRiscvMachine -> Prop),
-    valid_machine initial ->
-    
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\
-           exists F,
-           forall fuel : nat,
-             (F <= fuel)%nat ->
-             getTrace final = finalTrace fuel ++ getTrace initial) ->
-    
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\
-           getTrace final = finalTrace n ++ getTrace initial).
-Proof.
-  intros finalTrace.
-  assert (H := em (exists F, forall fuel, (F <= fuel)%nat -> finalTrace fuel = finalTrace F)).
-  destruct H as [H|H].
-  - destruct H as [F H]. exists F. intros. eapply runsToNonDet.runsTo_weaken.
-    + eassumption.
-    + simpl. intros final [H2 [F' H3] ]. split; [assumption|].
-      specialize (H (F + F')%nat ltac:(blia)). specialize (H3 (F + F')%nat ltac:(blia)).
-      rewrite <- H. apply H3.
-  - exists O. intros. eapply runsToNonDet.runsTo_weaken.
-    + eassumption.
-    + simpl. intros. destruct H2 as [_ H2]. exfalso. apply H. destruct H2 as [F H2].
-      exists F. intros. assert (H4 := H2 F ltac:(blia)). assert (H5 := H2 fuel ltac:(blia)).
-      rewrite H4 in H5. Search (_ ++ _ = _ ++ _ -> _ = _). apply app_inv_tail in H5. symmetry.
-      assumption.
-Qed.
-
-Check a_trace_sorta_exists.
-Check last_step.
-
-Lemma predictor_thing_correct :
-  forall (next : nat -> list LeakageEvent -> option FlatToRiscvDef.qLeakageEvent),
-  exists finalTrace,
-    forall (initial : MetricRiscvMachine) (P : MetricRiscvMachine -> Prop),
-    valid_machine initial ->
-    FlatToRiscvCommon.runsTo initial
-      (fun final : MetricRiscvMachine =>
-         P final /\
-           (exists (tL : list LeakageEvent) (F : nat),
-               getTrace final = (tL ++ getTrace initial)%list /\
-                 (forall fuel : nat, (F <= fuel)%nat -> predictsLE (next fuel) (rev tL)))) ->
-      FlatToRiscvCommon.runsTo initial
-        (fun final : MetricRiscvMachine => P final /\ getTrace final = finalTrace ++ getTrace initial).
-Proof.
-  intros next.
-  assert (H := a_trace_sorta_exists next).
-  destruct H as [finalTrace H].
-  assert (H' := last_step finalTrace).
-  destruct H' as [n H'].
-  exists (finalTrace n). intros initial P H1 H2.
-  specialize (H initial P). specialize (H' initial P H1). apply H'. apply H. auto 20.
-Qed.
-
-    Lemma compiler_correct_wp': forall
-        (* input of compilation: *)
-        (fs: list (string * (list string * list string * cmd)))
-        (* output of compilation: *)
-        (instrs: list Instruction) (finfo: list (string * Z)) (req_stack_size: Z)
-        (* function we choose to call: *)
-        (stack_lo stack_hi ret_addr p_funcs: word)
-        (fname: string) next (f_rel_pos: Z),
-        (*can i move these three hyps down below the exists?*)
-        valid_src_funs fs = true ->
-        compile fs = Success (instrs, finfo, req_stack_size) ->
-        exists finalTrace, forall
-        (* high-level initial state & post on final state: *)
-        (k: trace) (t: io_trace) (mH: mem) (argvals: list word) (post: io_trace -> mem -> list word -> Prop) (initial: MetricRiscvMachine)
-        (* ghost vars that help describe the low-level machine: *)
-        (Rdata Rexec: mem -> Prop),
-        NoDup (map fst fs) ->
-        WeakestPrecondition.call fs fname k t mH argvals
-          (fun k' t' m' rets =>
-             post t' m' rets /\
-               exists k'' F,
-                 k' = k'' ++ k /\
-                   forall fuel,
-                     le F fuel ->
-                     predicts (next tt fuel) (rev k'')) ->
-        map.get (map.of_list finfo) fname = Some f_rel_pos ->
-        req_stack_size <= word.unsigned (word.sub stack_hi stack_lo) / bytes_per_word ->
-        word.unsigned (word.sub stack_hi stack_lo) mod bytes_per_word = 0 ->
-        initial.(getPc) = word.add p_funcs (word.of_Z f_rel_pos) ->
-        map.get (getRegs initial) RegisterNames.ra = Some ret_addr ->
-        word.unsigned ret_addr mod 4 = 0 ->
-        arg_regs_contain initial.(getRegs) argvals ->
-        initial.(getLog) = t ->
-        machine_ok p_funcs stack_lo stack_hi instrs mH Rdata Rexec initial ->
-        FlatToRiscvCommon.runsTo initial (fun final : MetricRiscvMachine =>
-          (exists mH' retvals,
-            arg_regs_contain (getRegs final) retvals /\
-            post final.(getLog) mH' retvals /\
-            map.only_differ initial.(getRegs) reg_class.caller_saved final.(getRegs) /\
-            final.(getPc) = ret_addr /\
-              machine_ok p_funcs stack_lo stack_hi instrs mH' Rdata Rexec final) /\
-              final.(getTrace) = finalTrace ++ initial.(getTrace)).
-    Proof.
-      intros. Check compiler_correct_wp.
-      assert (H' := compiler_correct_wp fs instrs finfo req_stack_size fname next f_rel_pos ltac:(assumption) ltac:(assumption)).
-      destruct H' as [next' H']. Check predictor_thing_correct.
-      assert (H'' := predictor_thing_correct (next' (p_funcs, f_rel_pos, stack_hi))).
-      destruct H'' as [finalTrace H''].
-      exists finalTrace. intros. apply H''.
-      - destruct H11 as (H11_1 & H11_2 & H11_3 & H11_4 & H11_5 & H11_6 & H11_7). assumption.
-      - eapply H'; eassumption.
-    Qed.
-
   End WithMoreParams.
 End WithWordAndMem.
