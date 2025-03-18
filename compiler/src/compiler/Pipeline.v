@@ -54,6 +54,7 @@ Require Import bedrock2.WeakestPreconditionProperties.
 Require Import compiler.UseImmediateDef.
 Require Import compiler.UseImmediate.
 Require Import Coq.Logic.ClassicalChoice.
+Require Import Coq.Logic.Classical.
 Import Utility.
 
 Section WithWordAndMem.
@@ -478,16 +479,143 @@ Section WithWordAndMem.
         + apply set_reg_range_to_vars_uses_standard_arg_regs.
     Qed.
 
-    Lemma defuel {T U: Type} (P : T -> U -> Prop) : exists pred,
-        forall fueled_pred F k,
-          (forall fuel, le F fuel ->
-                   P (fueled_pred fuel) k) ->
-          P (pred fueled_pred) k.
-    Proof. Admitted.
+    Definition predicts' (pred : trace -> option qevent) (k : trace) :=
+      (forall k1 x k2, k = k1 ++ x :: k2 -> pred k1 = Some (q x))/\
+        pred k = Some qend.
+
+    Lemma align_trace_cons {T} x xs cont t (H : xs = List.app cont t) : @List.cons T x xs = List.app (cons x cont) t.
+    Proof. intros. cbn. congruence. Qed.
+    Lemma align_trace_app {T} x xs cont t (H : xs = List.app cont t) : @List.app T x xs = List.app (List.app x cont) t.
+    Proof. intros. cbn. subst. rewrite List.app_assoc; trivial. Qed.
+
+    Ltac trace_alignment :=
+      repeat match goal with
+        | t := cons _ _ |- _ => subst t
+        end;
+      repeat (eapply align_trace_app
+              || eapply align_trace_cons
+              || exact (eq_refl (List.app nil _))).
+
+    Lemma app_one_l {A} (a : A) ll : (a :: ll = (cons a nil) ++ ll)%list.
+    Proof. reflexivity. Qed.
+    
+    Lemma predicts'_iff_predicts pred k : predicts' pred k <-> predicts pred k.
+    Proof.
+      split.
+      - revert pred.
+        induction k as [|e k']; [|destruct e]; intros pred H; unfold predicts' in H; fwd.
+        { constructor. assumption. }
+        all: econstructor; [eapply Hp0; trace_alignment|reflexivity|eapply IHk'; cbv [predicts']; split; [intros; subst; eapply Hp0; trace_alignment|assumption] ].
+      - intros H. induction H.
+        2: { split.
+             -- intros. destruct k1; simpl in H0; congruence.
+             -- assumption. }
+        destruct IHpredicts as [H2 H3]. split.
+        -- intros. destruct k1; inversion H4; subst; simpl in *; try congruence.
+           rewrite H0. eapply H2. reflexivity.
+        -- rewrite H0. assumption.
+    Qed.
+
+
+    (*given the function f and an input x for it:
+      either there exists a nat N such that for all n >= N, f n x = f N x,
+      or not.
+      suppose we have f with forall x, exists n, R (f n x).
+      Then there is F with forall x, R (F x)
+     *)
+    Lemma defuel' {X Y : Type} (f : nat -> X -> Y) : exists (f' : X -> Y),
+      forall x F,
+        (forall fuel, le F fuel -> f fuel x = f F x) ->
+        f' x = (f F x).
+    Proof.
+      apply (choice (fun x fx => forall F, (forall fuel, le F fuel -> f fuel x = f F x) -> fx = f F x)).
+      intros. assert (em := classic (exists F, forall n, le F n -> f n x = f F x)).
+      destruct em.
+      - destruct H as [F H]. exists (f F x). intros.
+        assert (H': le F F0 \/ le F0 F) by blia; destruct H' as [H'|H'].
+        + symmetry. apply H. assumption.
+        + apply H0. assumption.
+      - exists (f O x). intros. exfalso. apply H. exists F. assumption.
+    Qed.
+
+    Lemma defuel''' {X Y : Type} (f : nat -> X -> Y) : exists (f' : X -> Y),
+      forall P F,
+        (forall fuel, le F fuel -> (forall x, P x -> f fuel x = f F x)) ->
+        (forall x, P x -> f' x = (f F x)).
+    Proof.
+      pose proof defuel' f as [f' defuel']. exists f'. intros. apply defuel'.
+      intros. apply H; assumption.
+    Qed.
+
+    Fixpoint predictor_of (t : trace) : trace -> option qevent :=
+      match t with
+      | a :: t' => fun t0 => match t0 with
+                        | [] => Some (q a)
+                        | _ :: t0' => predictor_of t' t0'
+                        end
+      | [] => fun _ => Some qend
+      end.
+    
+    Lemma predictor_exists t : predicts (predictor_of t) t.
+    Proof.
+      induction t.
+      - constructor. reflexivity.
+      - simpl. econstructor; auto.
+    Qed.
+
+    Lemma pred_really_ext' : forall t,
+      exists P,
+      forall f,
+        predicts f t ->
+      forall g,
+        predicts g t <-> (forall x, P x -> g x = f x).
+    Proof.
+      intros t. Print predicts'. exists (fun t0 => exists t0', t = t0 ++ t0').
+      intros. split; intros.
+      - fwd. apply predicts'_iff_predicts in H, H0. cbv [predicts'] in *.
+        destruct H as [H1 H2]. destruct H0 as [H01 H02].
+        specialize (H1 x). specialize (H01 x). destruct t0'.
+        + rewrite app_nil_r in *. rewrite H2, H02. reflexivity.
+        + clear H2 H02. specialize (H01 _ _ eq_refl). specialize (H1 _ _ eq_refl).
+          rewrite H1, H01. reflexivity.
+      - apply predicts'_iff_predicts. apply predicts'_iff_predicts in H.
+        cbv [predicts'] in *. split.
+        + destruct H as [H _]. intros. subst. specialize (H _ _ _ eq_refl).
+          specialize (H0 k1). rewrite H in H0. apply H0. eexists. reflexivity.
+        + specialize (H0 t). destruct H as [_ H]. rewrite H in H0. apply H0.
+          exists nil. symmetry. apply app_nil_r.
+    Qed.
+
+    Lemma pred_really_ext : forall t,
+      exists f P,
+      forall g,
+        predicts g t <-> (forall x, P x -> g x = f x).
+    Proof.
+      intros t. exists (predictor_of t). pose proof (pred_really_ext' t) as [P H].
+      exists P. apply H. apply predictor_exists.
+    Qed.
+
+    Lemma defuel_predictor (f : nat -> trace -> option qevent) : exists (f' : trace -> option qevent),
+      forall t F,
+        (forall fuel, le F fuel -> predicts (f fuel) t) ->
+        predicts f' t.
+    Proof.
+      pose proof defuel' f as [f' defuel']. exists f'. intros t.
+      pose proof pred_really_ext t as [eff [P H'] ].
+      intros. apply H'. intros. assert (H0 := H F ltac:(blia)).
+      rewrite H' in H0. assert (H1 := H0 _ X). rewrite <- H1. apply defuel'.
+      intros. rewrite H1. apply H in H2. rewrite H' in H2. apply H2. assumption.
+    Qed.
+    
+    Lemma defuel_predictor' : exists f', forall (f : nat -> trace -> option qevent),
+      forall t F,
+        (forall fuel, le F fuel -> predicts (f fuel) t) ->
+        predicts (f' f) t.
+    Proof. exact (choice _ defuel_predictor). Qed.
 
     Lemma spilling_correct: phase_correct FlatWithZVars FlatWithRegs spill_functions.
     Proof.
-      pose proof (defuel predicts) as [defueler Hdefueler].
+      pose proof defuel_predictor' as [defueler Hdefueler].
       unfold FlatWithZVars, FlatWithRegs. split; cbn.
       1: exact spilling_preserves_valid.
       unfold locals_based_call_spec. intros.
@@ -515,11 +643,10 @@ Section WithWordAndMem.
       { unfold call_spec. intros * E. rewrite E in *. fwd. eauto. }
       simpl. intros. fwd. exists retvals. split; [assumption|].
       eexists. split; [eassumption|]. repeat rewrite app_nil_r.
-      intros next Hpred. pose proof choice as Choice.
+      intros next Hpred. 
       replace (argnames, retnames, fbody) with (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end) in H2p1p2.
-      { specialize H2p1p2 with (1 := Hpred).
-        specialize (Hdefueler _ _ _ H2p1p2). Check Hdefueler. apply Hdefueler. }
-      Search map.get p1 fname. rewrite H1p0. reflexivity.
+      { eapply Hdefueler with (F := F). intros. eapply H2p1p2; eauto. }
+      rewrite H1p0. reflexivity.
     Qed.
 
     Lemma riscv_phase_correct (p_funcs stack_pastend ret_addr : word) : phase_correct FlatWithRegs (RiscvLang p_funcs stack_pastend ret_addr) (riscvPhase compile_ext_call).
