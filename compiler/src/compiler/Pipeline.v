@@ -53,6 +53,7 @@ Require Import compiler.LowerPipeline.
 Require Import bedrock2.WeakestPreconditionProperties.
 Require Import compiler.UseImmediateDef.
 Require Import compiler.UseImmediate.
+Require Import Coq.Logic.ClassicalChoice.
 Import Utility.
 
 Section WithWordAndMem.
@@ -92,8 +93,8 @@ Section WithWordAndMem.
                   exists kH,
                     post kH t' m' a /\
                       forall next,
-                        L1.(Predicts) next kH ->
-                        L2.(Predicts) (next' next) kL);
+                        L1.(Predicts) next (rev kH) ->
+                        L2.(Predicts) (next' next) (rev kL));
   }.
 
   Arguments phase_correct : clear implicits.
@@ -247,19 +248,38 @@ Section WithWordAndMem.
         Call := locals_based_call_spec FlatImp.exec;
         WeakenCall := locals_based_call_spec_weaken FlatImp.exec.weaken;
       |}.
+
+    Print Lang.
+
+    Lemma riscv_call_weaken p_funcs stack_pastend ret_addr :
+      forall p funcname k t m argvals post1 post2,
+        riscv_call p p_funcs stack_pastend ret_addr funcname k t m argvals post1 ->
+          (forall k' t' m' retvals,
+              post1 k' t' m' retvals -> post2 k' t' m' retvals) ->
+          riscv_call p p_funcs stack_pastend ret_addr funcname k t m argvals post2.
+    Proof.
+      intros. cbv [riscv_call] in *. destruct p. destruct p.
+      destruct H as [f_rel_pos H]. exists f_rel_pos. intuition eauto.
+      cbv [runsTo]. eapply runsToNonDet.runsTo_weaken. 1: eapply H2.
+      all: try eassumption. simpl. intros. fwd. exists mH', retvals.
+      intuition eauto.
+    Qed.
+ 
     (* |                 *)
     (* | FlatToRiscv     *)
     (* V                 *)
-    Definition RiscvLang: Lang := {|
-      Program :=
-        list Instruction *      (* <- code of all functions concatenated       *)
-        string_keyed_map Z *    (* <- position (offset) for each function      *)
-        Z;                      (* <- required stack space in XLEN-bit words   *)
-      (* bounds in instructions are checked by `ptsto_instr` *)
-      Valid '(insts, finfo, req_stack_size) := True;
-      Call := (fun p fname next =>
-                 riscv_call p fname next);
-    |}.
+    Definition RiscvLang (p_funcs stack_pastend ret_addr : word) : Lang :=
+      {|
+        Program :=
+          list Instruction *      (* <- code of all functions concatenated       *)
+            string_keyed_map Z *    (* <- position (offset) for each function      *)
+            Z;                      (* <- required stack space in XLEN-bit words   *)
+        Predicts := predictsLE;
+        (* bounds in instructions are checked by `ptsto_instr` *)
+        Valid '(insts, finfo, req_stack_size) := True;
+        Call := (fun p => riscv_call p p_funcs stack_pastend ret_addr);
+        WeakenCall := riscv_call_weaken p_funcs stack_pastend ret_addr;
+      |}.
 
     Lemma flatten_functions_NoDup: forall funs funs',
         (forall f argnames retnames body,
@@ -284,7 +304,7 @@ Section WithWordAndMem.
         unfold valid_fun in *.
         intros. specialize H0 with (1 := H2). simpl in H0. eapply H0.
       }
-      unfold locals_based_call_spec. intros. eexists. intros. fwd.
+      unfold locals_based_call_spec. intros. exists (fun x => x). intros. fwd.
       pose proof H0 as GF.
       unfold flatten_functions in GF.
       eapply map.try_map_values_fw in GF. 2: eassumption.
@@ -314,7 +334,7 @@ Section WithWordAndMem.
           eapply ListSet.In_list_union_l. eapply ListSet.In_list_union_l. assumption.
         + eapply @freshNameGenState_disjoint_fbody.
       - simpl. intros. fwd. eauto 8 using map.getmany_of_list_extends.
-       Qed.
+    Qed.
 
     Lemma useimmediate_functions_NoDup: forall funs funs',
         (forall f argnames retnames body,
@@ -343,7 +363,7 @@ Section WithWordAndMem.
         simpl in H0. assumption.
       }
 
-      unfold locals_based_call_spec. intros. eexists. intros. fwd.
+      unfold locals_based_call_spec. intros. exists (fun x => x). intros. fwd.
       pose proof H0 as GI.
       unfold  useimmediate_functions in GI.
       eapply map.try_map_values_fw in GI. 2: eassumption.
@@ -353,7 +373,7 @@ Section WithWordAndMem.
       eapply exec.weaken.
       - eapply useImmediate_correct_aux.
         all: eauto.
-      - simpl. eauto 10.
+      - simpl. intros. fwd. eauto 10.
     Qed.
 
     Lemma regalloc_functions_NoDup: forall funs funs',
@@ -380,7 +400,7 @@ Section WithWordAndMem.
         eapply regalloc_functions_NoDup; eassumption.
       }
       unfold locals_based_call_spec.
-      intros. eexists. intros. fwd.
+      intros. exists (fun x => x). intros. fwd.
       pose proof H0 as GR.
       unfold regalloc_functions in GR.
       fwd. rename E into GR.
@@ -407,8 +427,8 @@ Section WithWordAndMem.
         edestruct putmany_of_list_zip_states_compat as (lL' & P' & Cp); try eassumption.
         1: eapply states_compat_empty.
         rewrite H1 in P'. inversion P'. exact Cp.
-      - simpl. intros. fwd. eexists. split. 2: split; [eassumption|].
-        1: eauto using states_compat_getmany. eauto.
+      - simpl. intros. fwd. eexists.
+        split; [eauto using states_compat_getmany|]. eauto.
     Qed.
 
     Ltac debool :=
@@ -458,14 +478,23 @@ Section WithWordAndMem.
         + apply set_reg_range_to_vars_uses_standard_arg_regs.
     Qed.
 
+    Lemma defuel {T U: Type} (P : T -> U -> Prop) : exists pred,
+        forall fueled_pred F k,
+          (forall fuel, le F fuel ->
+                   P (fueled_pred fuel) k) ->
+          P (pred fueled_pred) k.
+    Proof. Admitted.
+
     Lemma spilling_correct: phase_correct FlatWithZVars FlatWithRegs spill_functions.
     Proof.
+      pose proof (defuel predicts) as [defueler Hdefueler].
       unfold FlatWithZVars, FlatWithRegs. split; cbn.
       1: exact spilling_preserves_valid.
       unfold locals_based_call_spec. intros.
       Check snext_fun.
       Check (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end).
-      exists (fun _ fuel => (snext_fun p1 fuel (next tt fuel) [] (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end))).
+      (*exists (fun _ fuel => (snext_fun p1 fuel (next tt fuel) [] (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end))).*)
+      eexists.
       intros. fwd.
       pose proof H0 as GL.
       unfold spill_functions in GL.
@@ -484,30 +513,35 @@ Section WithWordAndMem.
       split. 1: exact G2. split. 1: eassumption.
       intros. eapply exec.weaken. 1: eapply spill_fun_correct; try eassumption.
       { unfold call_spec. intros * E. rewrite E in *. fwd. eauto. }
-      simpl. intros. fwd. exists retvals. split; [assumption|]. split; [assumption|].
-      do 2 eexists. split; [reflexivity|]. intros. eauto.
+      simpl. intros. fwd. exists retvals. split; [assumption|].
+      eexists. split; [eassumption|]. repeat rewrite app_nil_r.
+      intros next Hpred. pose proof choice as Choice.
+      replace (argnames, retnames, fbody) with (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end) in H2p1p2.
+      { specialize H2p1p2 with (1 := Hpred).
+        specialize (Hdefueler _ _ _ H2p1p2). Check Hdefueler. apply Hdefueler. }
+      Search map.get p1 fname. rewrite H1p0. reflexivity.
     Qed.
 
-    Lemma riscv_phase_correct: phase_correct FlatWithRegs RiscvLang (riscvPhase compile_ext_call).
+    Lemma riscv_phase_correct (p_funcs stack_pastend ret_addr : word) : phase_correct FlatWithRegs (RiscvLang p_funcs stack_pastend ret_addr) (riscvPhase compile_ext_call).
     Proof.
+      pose proof (defuel predictsLE) as [defueler Hdefueler].
       unfold FlatWithRegs, RiscvLang.
       split; cbn.
       - intros p1 ((? & finfo) & ?). intros. exact I.
-      - intros. assert (E: (exists x, map.get p1 fname = Some x) -> map.get p1 fname = Some (match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end)).
-        + intros. destruct H1 as [x H1]. destruct (map.get p1 fname); congruence.
-        + destruct (match map.get p1 fname with
-                    | Some finfo => finfo
-                    | None => ([], [], SSkip)
-                    end) as [ [argnames0 retnames0] fbody0 ].
-        (*cbv [locals_based_call_spec] in H1.
-        fwd.*) destruct p2 as [ [instrs finfo] req_stack_size]. Check flat_to_riscv_correct. eexists. intros.
-        eapply flat_to_riscv_correct; eauto.
-        cbv [locals_based_call_spec] in H1. fwd.
-        exists l.
-        assert (H1p0': map.get p1 fname = Some (argnames0, retnames0, fbody0)).
-        { eapply E. eexists. apply H1p0. }
-        rewrite H1p0 in H1p0'. injection H1p0'. intros. subst. clear H1p0'.
-        eauto.
+      - intros. set (finfo := match (map.get p1 fname) with | Some finfo => finfo | None => (nil, nil, SSkip) end).
+        destruct finfo as [ [argnames0 retnames0] fbody0 ] eqn:E.
+        destruct p2 as [ [instrs finfo_] req_stack_size] eqn:E'.
+        eexists. intros.
+        cbv [locals_based_call_spec] in H1. fwd. subst finfo. rewrite H1p0 in E.
+        inversion E. subst. pose proof flat_to_riscv_correct as F.
+        repeat specialize (F ltac:(assumption)).
+        specialize (F (instrs, finfo_, req_stack_size)).
+        do 2 specialize (F ltac:(assumption)). cbv beta match in F. idtac.
+        eapply riscv_call_weaken. 1: eapply F; eauto.
+        simpl. intros. fwd. eexists. rewrite app_nil_r in *. split; [eassumption|].
+        intros next Hnext. specialize H1p5 with (1 := Hnext).
+        specialize (Hdefueler _ _ _ H1p5). instantiate (1 := fun _ => _). simpl.
+        apply Hdefueler.
     Qed.
 
     Definition composed_compile:
@@ -519,17 +553,15 @@ Section WithWordAndMem.
       (compose_phases spill_functions
                       (riscvPhase compile_ext_call))))).
 
-    Lemma composed_compiler_correct: phase_correct SrcLang RiscvLang composed_compile.
+    Lemma composed_compiler_correct (p_funcs stack_pastend ret_addr : word) : phase_correct SrcLang (RiscvLang p_funcs stack_pastend ret_addr) composed_compile.
     Proof.
       unfold composed_compile.
       exact (compose_phases_correct flattening_correct
             (compose_phases_correct useimmediate_correct
             (compose_phases_correct regalloc_correct
             (compose_phases_correct spilling_correct
-                                    riscv_phase_correct)))).
+                                    (riscv_phase_correct _ _ _))))).
     Qed.
-    Check composed_compiler_correct.
-    Print phase_correct.
 
     Definition compile(funs: list (string * (list string * list string * cmd))):
       result (list Instruction * list (string * Z) * Z) :=
