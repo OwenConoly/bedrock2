@@ -36,6 +36,16 @@ forall (idx: nat), mids_and_post).
           (forall q k t m l mc n, sat (prefix' q k t m l mc n) suffix_good (whole' q k t m l mc n))
     | _, _ => False
     end.
+
+  Fixpoint post_of mp :=
+    match mp with
+    | and_then mid rest =>
+        fun q' k' t' m' l' mc' =>
+          forall q k t m l mc n,
+            mid q k t m l mc ->
+            post_of (rest q k t m l mc n) q' k' t' m' l' mc'
+    | postcond post => post
+    end.
 End needs_name.
 
 Section semantics.

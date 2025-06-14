@@ -436,82 +436,113 @@ Module exec.
         eval_bcond l cond = Some false ->
         exec bElse true (leak_bool false :: k) t m l (cost_SIf cond mc) post ->
         exec (SIf cond bThen bElse) true k t m l mc post
-    | loop: forall k t m l mc cond body1 body2 mid1 mid2 post,
+    | loop: forall k t m l mc cond body1 body2 prefix1 mid1 prefix2 mid2 post,
         (* This case is carefully crafted in such a way that recursive uses of exec
          only appear under forall and ->, but not under exists, /\, \/, to make sure the
          auto-generated induction principle contains an IH for all recursive uses. *)
-        exec body1 true k t m l mc mid1 ->
-        (forall q' k' t' m' l' mc',
-            mid1 q' k' t' m' l' mc' ->
+        exec body1 true k t m l mc prefix1 ->
+        sat prefix1 mid1 prefix2 ->
+        sat prefix2 mid2 post ->
+        (forall q' k' t' m' l' mc' post',
+            mid1 q' k' t' m' l' mc' post' ->
             eval_bcond l' cond <> None) ->
-        (forall k' t' m' l' mc',
-            mid1 k' t' m' l' mc' ->
+        (forall q' k' t' m' l' mc' post',
+            mid1 q' k' t' m' l' mc' post' ->
             eval_bcond l' cond = Some false ->
-            post (leak_bool false :: k') t' m' l' (cost_SLoop_false cond mc')) ->
-        (forall k' t' m' l' mc',
-            mid1 k' t' m' l' mc' ->
+            exists post'_,
+              post' = postcond post'_ /\
+                post'_ q' (leak_bool false :: k') t' m' l' (cost_SLoop_false cond mc')) ->
+        (forall q' k' t' m' l' mc' post',
+            mid1 q' k' t' m' l' mc' post' ->
             eval_bcond l' cond = Some true ->
-            exec body2 (leak_bool true :: k') t' m' l' mc' mid2) ->
-        (forall k'' t'' m'' l'' mc'',
-            mid2 k'' t'' m'' l'' mc'' ->
-            exec (SLoop body1 cond body2) k'' t'' m'' l''
-                 (cost_SLoop_true cond mc'') post) ->
-        exec (SLoop body1 cond body2) k t m l mc post
-    | seq: forall k t m l mc s1 s2 mid post,
-        exec s1 k t m l mc mid ->
-        (forall k' t' m' l' mc', mid k' t' m' l' mc' -> exec s2 k' t' m' l' mc' post) ->
-        exec (SSeq s1 s2) k t m l mc post
+            exec body2 q' (leak_bool true :: k') t' m' l' mc' post') ->
+        (forall q'' k'' t'' m'' l'' mc'' post'',
+            mid2 q'' k'' t'' m'' l'' mc'' post'' ->
+            exec (SLoop body1 cond body2) q'' k'' t'' m'' l''
+                 (cost_SLoop_true cond mc'') post'') ->
+        exec (SLoop body1 cond body2) true k t m l mc post
+  | seq: forall c1 c2 k t m l mc prefix post mid,
+      exec c1 true k t m l mc prefix ->
+      (forall q' k' t' m' l' mc' post', mid q' k' t' m' l' mc' post' -> exec c2 q' k' t' m' l' mc' post') ->
+      sat prefix mid post ->
+      exec (SSeq c1 c2) true k t m l mc post
     | skip: forall k t m l mc post,
-        post k t m l mc ->
-        exec SSkip k t m l mc post.
+        post true k t m l mc ->
+        exec SSkip true k t m l mc (postcond post)
+    | quit: forall c q k t m l mc post,
+        post false k t m l mc ->
+        exec c q k t m l mc (postcond post)
+    | mid: forall c q k t m l mc mid post,
+        mid q k t m l mc ->
+        (*the quantifier here slipped past the nondeterminism! this is the whole point*)
+        (forall n, exec c q k t m l mc (post q k t m l mc n)) ->
+        exec c q k t m l mc (and_then mid post).
 
-    Lemma det_step {pick_sp: PickSp} : forall k0 t0 m0 l0 mc0 s1 s2 k1 t1 m1 l1 mc1 post,
-        exec s1 k0 t0 m0 l0 mc0 (fun k1' t1' m1' l1' mc1' => k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1') ->
-        exec s2 k1 t1 m1 l1 mc1 post ->
-        exec (SSeq s1 s2) k0 t0 m0 l0 mc0 post.
+    Lemma seq_cps_sorta {pick_sp: PickSp} c1 c2 k t m l mc prefix post :
+      exec c1 true k t m l mc prefix ->
+      sat prefix (exec c2) post ->
+      exec (SSeq c1 c2) true k t m l mc post.
+    Proof.
+      intros. eapply seq with (mid := exec c2). 1: eassumption. 1: auto. 1: assumption.
+    Qed.
+
+    Lemma seq_cps_for_real {pick_sp: PickSp} c1 c2 k t m l mc post :
+      exec c1 true k t m l mc
+        (postcond (fun q' k' t' m' l' mc' =>
+                     exec c2 q' k' t' m' l' mc' post)) ->
+      exec (SSeq c1 c2) true k t m l mc post.
+    Proof. intros. eapply seq_cps_sorta. 1: apply H. simpl. auto. Qed.
+
+    Lemma det_step {pick_sp: PickSp} : forall k0 t0 m0 l0 mc0 s1 s2 q1 k1 t1 m1 l1 mc1 post,
+        exec s1 true k0 t0 m0 l0 mc0 (postcond (fun q1' k1' t1' m1' l1' mc1' => q1' = q1 /\ k1' = k1 /\ t1' = t1 /\ m1' = m1 /\ l1' = l1 /\ mc1 = mc1')) ->
+        exec s2 q1 k1 t1 m1 l1 mc1 post ->
+        exec (SSeq s1 s2) true k0 t0 m0 l0 mc0 post.
     Proof.
       intros.
-      eapply seq; [eassumption|].
-      intros. simpl in *. simp.
+      eapply seq_cps_sorta; [eassumption|].
+      simpl. intros. simpl in *. simp.
       assumption.
     Qed.
 
-    Lemma seq_cps {pick_sp: PickSp} : forall s1 s2 k t m (l: locals) mc post,
-        exec s1 k t m l mc (fun k' t' m' l' mc' => exec s2 k' t' m' l' mc' post) ->
-        exec (SSeq s1 s2) k t m l mc post.
-    Proof.
-      intros. eapply seq. 1: eassumption. simpl. clear. auto.
-    Qed.
-
-    Lemma call_cps {pick_sp: PickSp} : forall fname params rets binds args fbody argvs k t (l: locals) m mc st post,
+    Lemma call_cps_for_real {pick_sp: PickSp} : forall fname params rets binds args fbody argvs k t (l: locals) m mc st post,
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st ->
-        exec fbody (leak_unit :: k) t m st mc
-             (fun k' t' m' st' mc' =>
-                exists retvs l',
-                  map.getmany_of_list st' rets = Some retvs /\
-                    map.putmany_of_list_zip binds retvs l = Some l' /\
-                    post k' t' m' l' (cost_call phase mc')) ->
-      exec (SCall binds fname args) k t m l mc post.
+        exec fbody true (leak_unit :: k) t m st mc
+             (postcond (fun q' k' t' m' st' mc' =>
+                          exists retvs l',
+                            map.getmany_of_list st' rets = Some retvs /\
+                              map.putmany_of_list_zip binds retvs l = Some l' /\
+                              post q' k' t' m' l' (cost_call phase mc'))) ->
+      exec (SCall binds fname args) true k t m l mc (postcond post).
     Proof.
       intros. eapply call; try eassumption.
-      cbv beta. intros *. exact id.
+      cbv beta. simpl. intros. fwd. eexists. intuition eauto.
     Qed.
 
-    Lemma loop_cps {pick_sp: PickSp} : forall body1 cond body2 k t m l mc post,
-      exec body1 k t m l mc (fun k t m l mc => exists b,
-        eval_bcond l cond = Some b /\
-        (b = false -> post (leak_bool false :: k) t m l (cost_SLoop_false cond mc)) /\
-        (b = true -> exec body2 (leak_bool true :: k) t m l mc (fun k t m l mc =>
-           exec (SLoop body1 cond body2) k t m l
-                (cost_SLoop_true cond mc) post))) ->
-      exec (SLoop body1 cond body2) k t m l mc post.
+    Lemma loop_cps {pick_sp: PickSp} : forall body1 cond body2 k0 t0 m0 l0 mc0 prefix1 prefix2 post,
+        exec body1 true k0 t0 m0 l0 mc0 prefix1 ->
+        sat prefix1
+          (fun q' k' t' m' l' mc' post' =>
+             exists b,
+               eval_bcond l' cond = Some b /\
+                 (b = false ->
+                  exists P',
+                    post' = postcond P' /\
+                      P' q' (leak_bool false :: k') t' m' l' (cost_SLoop_false cond mc')) /\
+                 (b = true ->
+                    exec body2 q' (leak_bool true :: k') t' m' l' mc' prefix2 /\
+                      sat prefix2 (fun q'' k'' t'' m'' l'' mc'' post'' =>
+                                     exec (SLoop body1 cond body2) q'' k'' t'' m'' l''
+                                       (cost_SLoop_true cond mc'') post'') post'))
+          post ->
+      exec (SLoop body1 cond body2) true k0 t0 m0 l0 mc0 post.
     Proof.
-      intros. eapply loop. 1: eapply H. all: cbv beta; intros; simp.
-      - congruence.
-      - replace b with false in * by congruence. clear b. eauto. 
-      - replace b with true in * by congruence. clear b. eauto.
+      intros. eapply loop. 1: eapply H. 1: eassumption.
+      2: { simpl. intros. fwd. congruence. }
+      2: { simpl. intros. fwd. replace b with false in * by congruence. clear b. eauto. }
+      2: { simpl. intros. fwd. replace b with true in * by congruence. clear b.
+           iiiieauto.
       - assumption.
     Qed.
 
