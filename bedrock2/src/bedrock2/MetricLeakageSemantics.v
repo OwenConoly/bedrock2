@@ -14,6 +14,30 @@ Require Import Coq.Lists.List.
 
 Local Notation UNK := String.EmptyString.
 
+
+Section needs_name.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {varname: Type} {locals: map.map varname word}.
+
+  Local Notation metrics := MetricLog.
+
+  Inductive mids_and_post :=
+  | postcond (post: forall (q: bool) (k : leakage) (t : trace) (m : mem) (l : locals) (mc : metrics), Prop)
+  | and_then
+      (first_this_happens : forall (q: bool) (k : leakage) (t: trace) (m : mem) (l : locals) (mc: metrics), Prop)
+      (and_then_later_this_happens : forall (q : bool) (k : leakage) (t: trace) (m : mem) (l : locals) (mc: metrics), 
+forall (idx: nat), mids_and_post).
+
+  Fixpoint sat (prefix: mids_and_post) (suffix_good: bool -> leakage -> trace -> mem -> locals -> metrics -> mids_and_post -> Prop) (whole : mids_and_post) : Prop :=
+    match prefix, whole with
+    | postcond post, _ => (forall q k t m l mc, post q k t m l mc -> suffix_good q k t m l mc whole)
+    | and_then mid1 prefix', and_then mid2 whole' =>
+        (forall q k t m l mc, mid1 q k t m l mc -> mid2 q k t m l mc) /\
+          (forall q k t m l mc n, sat (prefix' q k t m l mc n) suffix_good (whole' q k t m l mc n))
+    | _, _ => False
+    end.
+End needs_name.
+
 Section semantics.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {locals: map.map String.string word}.
@@ -75,22 +99,6 @@ Module exec. Section WithParams.
   Context (e: env).
 
   Local Notation metrics := MetricLog.
-
-  Inductive mids_and_post :=
-  | postcond (post: forall (q: bool) (k : leakage) (t : trace) (m : mem) (l : locals) (mc : metrics), Prop)
-  | and_then
-      (first_this_happens : forall (q: bool) (k : leakage) (t: trace) (m : mem) (l : locals) (mc: metrics), Prop)
-      (and_then_later_this_happens : forall (q : bool) (k : leakage) (t: trace) (m : mem) (l : locals) (mc: metrics), 
-forall (idx: nat), mids_and_post).
-
-  Fixpoint sat (prefix: mids_and_post) (suffix_good: bool -> leakage -> trace -> mem -> locals -> metrics -> mids_and_post -> Prop) (whole : mids_and_post) : Prop :=
-    match prefix, whole with
-    | postcond post, _ => (forall q k t m l mc, post q k t m l mc -> suffix_good q k t m l mc whole)
-    | and_then mid1 prefix', and_then mid2 whole' =>
-        (forall q k t m l mc, mid1 q k t m l mc -> mid2 q k t m l mc) /\
-          (forall q k t m l mc n, sat (prefix' q k t m l mc n) suffix_good (whole' q k t m l mc n))
-    | _, _ => False
-    end.
   
   Inductive exec {pick_sp: PickSp} :
     cmd -> bool -> leakage -> trace -> mem -> locals -> metrics ->

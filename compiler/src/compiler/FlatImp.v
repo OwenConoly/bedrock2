@@ -316,9 +316,6 @@ Module exec.
 
     Local Notation metrics := MetricLog.
 
-    (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
-    Implicit Types post : leakage -> trace -> mem -> locals -> metrics -> Prop.
-
     Definition lookup_op_locals (l: locals) (o: operand) :=
       match o with
       | Var vo => map.get l vo
@@ -352,8 +349,8 @@ Module exec.
     (* alternative semantics which allow non-determinism *)
     Inductive exec {pick_sp: PickSp} :
       stmt varname ->
-      leakage -> trace -> mem -> locals -> metrics ->
-      (leakage -> trace -> mem -> locals -> metrics -> Prop)
+      bool -> leakage -> trace -> mem -> locals -> metrics ->
+      mids_and_post
     -> Prop :=
     | interact: forall k t m mKeep mGive l mc action argvars argvals resvars outcome post,
         map.split m mKeep mGive ->
@@ -363,79 +360,89 @@ Module exec.
             outcome mReceive resvals klist ->
             exists l', map.putmany_of_list_zip resvars resvals l = Some l' /\
             forall m', map.split m' mKeep mReceive ->
-            post (leak_list klist :: k) (((mGive, action, argvals), (mReceive, resvals)) :: t) m' l'
+            post true (leak_list klist :: k) (((mGive, action, argvals), (mReceive, resvals)) :: t) m' l'
                  (cost_interact phase mc)) ->
-        exec (SInteract resvars action argvars) k t m l mc post
-    | call: forall k t m l mc binds fname args params rets fbody argvs st0 post outcome,
+        exec (SInteract resvars action argvars) true k t m l mc (postcond post)
+    | call: forall k t m l mc binds fname args params rets fbody argvs st0 post prefix,
         map.get e fname = Some (params, rets, fbody) ->
         map.getmany_of_list l args = Some argvs ->
         map.putmany_of_list_zip params argvs map.empty = Some st0 ->
-        exec fbody (leak_unit :: k) t m st0 mc outcome ->
-        (forall k' t' m' mc' st1,
-            outcome k' t' m' st1 mc' ->
-            exists retvs l',
-              map.getmany_of_list st1 rets = Some retvs /\
-              map.putmany_of_list_zip binds retvs l = Some l' /\
-              post k' t' m' l' (cost_call phase mc')) ->
-        exec (SCall binds fname args) k t m l mc post
+        exec fbody true (leak_unit :: k) t m st0 mc prefix ->
+        (sat prefix (fun q' k' t' m' st1 mc' suffix =>
+                       exists post', suffix = postcond post' /\
+                                  exists retvs l',
+                                    map.getmany_of_list st1 rets = Some retvs /\
+                                      map.putmany_of_list_zip binds retvs l = Some l' /\
+                                      post' q' k' t' m' l' (cost_call phase mc')) post) ->
+        exec (SCall binds fname args) true k t m l mc post
     | load: forall k t m l mc sz x a o v addr post,
         map.get l a = Some addr ->
         load sz m (word.add addr (word.of_Z o)) = Some v ->
-        post (leak_word (word.add addr (word.of_Z o)) :: k) t m (map.put l x v) (cost_load isReg x a mc)->
-        exec (SLoad sz x a o) k t m l mc post
+        post true (leak_word (word.add addr (word.of_Z o)) :: k) t m (map.put l x v) (cost_load isReg x a mc)->
+        exec (SLoad sz x a o) true k t m l mc (postcond post)
     | store: forall k t m m' mc l sz a o addr v val post,
         map.get l a = Some addr ->
         map.get l v = Some val ->
         store sz m (word.add addr (word.of_Z o)) val = Some m' ->
-        post (leak_word (word.add addr (word.of_Z o)) :: k) t m' l (cost_store isReg a v mc) ->
-        exec (SStore sz a v o) k t m l mc post
+        post true (leak_word (word.add addr (word.of_Z o)) :: k) t m' l (cost_store isReg a v mc) ->
+        exec (SStore sz a v o) true k t m l mc (postcond post)
     | inlinetable: forall sz x table i v index k t m l mc post,
         (* compiled riscv code uses x as a tmp register and this shouldn't overwrite i *)
         x <> i ->
         map.get l i = Some index ->
         load sz (map.of_list_word table) index = Some v ->
-        post (leak_word index :: k) t m (map.put l x v) (cost_inlinetable isReg x i mc) ->
-        exec (SInlinetable sz x table i) k t m l mc post
-    | stackalloc: forall k t mSmall l mc x n body post,
-        n mod (bytes_per_word width) = 0 ->
-        (forall mStack mCombined,
-            let a := pick_sp k in
-            anybytes a n mStack ->
-            map.split mCombined mSmall mStack ->
-            exec body (leak_unit :: k) t mCombined (map.put l x a) mc
-             (fun k' t' mCombined' l' mc' =>
-              exists mSmall' mStack',
-                anybytes a n mStack' /\
-                map.split mCombined' mSmall' mStack' /\
-                post k' t' mSmall' l' (cost_stackalloc isReg x mc'))) ->
-        exec (SStackalloc x n body) k t mSmall l mc post
+        post true (leak_word index :: k) t m (map.put l x v) (cost_inlinetable isReg x i mc) ->
+        exec (SInlinetable sz x table i) true k t m l mc (postcond post)
+    | stackalloc: forall k t mSmall l mc x n body post prefix,
+        (n mod (bytes_per_word width) = 0 ->
+         forall mStack mCombined,
+           let a := pick_sp k in
+           anybytes a n mStack ->
+           map.split mCombined mSmall mStack ->
+           exec body true (leak_unit :: k) t mCombined (map.put l x a) mc (prefix mStack mCombined)) ->
+        (n mod (bytes_per_word width) = 0 ->
+         forall mStack mCombined,
+           let a := pick_sp k in
+           anybytes a n mStack ->
+           map.split mCombined mSmall mStack ->
+           sat
+             (prefix mStack mCombined)
+             (fun q' k' t' mCombined' l' mc' suffix =>
+                exists post',
+                  suffix = postcond post' /\
+                    exists mSmall' mStack',
+                      anybytes a n mStack' /\
+                        map.split mCombined' mSmall' mStack' /\
+                        post' q' k' t' mSmall' l' (cost_stackalloc isReg x mc'))
+             post) ->
+        exec (SStackalloc x n body) true k t mSmall l mc post
     | lit: forall k t m l mc x v post,
-        post k t m (map.put l x (word.of_Z v)) (cost_lit isReg x mc) ->
-        exec (SLit x v) k t m l mc post
+        post true k t m (map.put l x (word.of_Z v)) (cost_lit isReg x mc) ->
+        exec (SLit x v) true k t m l mc (postcond post)
     | op: forall k t m l mc x op y y' z z' post,
         map.get l y = Some y' ->
         lookup_op_locals l z = Some z' ->
-        post (leak_binop op y' z' ++ k) t m (map.put l x (interp_binop op y' z')) (cost_SOp x y z mc) ->
-        exec (SOp x op y z) k t m l mc post
+        post true (leak_binop op y' z' ++ k) t m (map.put l x (interp_binop op y' z')) (cost_SOp x y z mc) ->
+        exec (SOp x op y z) true k t m l mc (postcond post)
     | set: forall k t m l mc x y y' post,
         map.get l y = Some y' ->
-        post k t m (map.put l x y') (cost_set isReg x y mc) ->
-        exec (SSet x y) k t m l mc post
+        post true k t m (map.put l x y') (cost_set isReg x y mc) ->
+        exec (SSet x y) true k t m l mc (postcond post)
     | if_true: forall k t m l mc cond  bThen bElse post,
         eval_bcond l cond = Some true ->
-        exec bThen (leak_bool true :: k) t m l (cost_SIf cond mc) post ->
-        exec (SIf cond bThen bElse) k t m l mc post
+        exec bThen true (leak_bool true :: k) t m l (cost_SIf cond mc) post ->
+        exec (SIf cond bThen bElse) true k t m l mc post
     | if_false: forall k t m l mc cond bThen bElse post,
         eval_bcond l cond = Some false ->
-        exec bElse (leak_bool false :: k) t m l (cost_SIf cond mc) post ->
-        exec (SIf cond bThen bElse) k t m l mc post
+        exec bElse true (leak_bool false :: k) t m l (cost_SIf cond mc) post ->
+        exec (SIf cond bThen bElse) true k t m l mc post
     | loop: forall k t m l mc cond body1 body2 mid1 mid2 post,
         (* This case is carefully crafted in such a way that recursive uses of exec
          only appear under forall and ->, but not under exists, /\, \/, to make sure the
          auto-generated induction principle contains an IH for all recursive uses. *)
-        exec body1 k t m l mc mid1 ->
-        (forall k' t' m' l' mc',
-            mid1 k' t' m' l' mc' ->
+        exec body1 true k t m l mc mid1 ->
+        (forall q' k' t' m' l' mc',
+            mid1 q' k' t' m' l' mc' ->
             eval_bcond l' cond <> None) ->
         (forall k' t' m' l' mc',
             mid1 k' t' m' l' mc' ->
