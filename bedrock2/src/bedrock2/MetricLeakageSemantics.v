@@ -1,4 +1,4 @@
- Require Import coqutil.sanity coqutil.Byte.
+Require Import coqutil.sanity coqutil.Byte.
 Require Import coqutil.Tactics.fwd.
 Require Import coqutil.Map.Properties.
 Require coqutil.Map.SortedListString.
@@ -116,116 +116,158 @@ Module exec. Section WithParams.
   Context {ext_spec: ExtSpec}.
   Section WithEnv.
     Context (e: env).
+    Local Notation metrics := MetricLog.
 
-  Local Notation metrics := MetricLog.
+    Section Coex.
+      Context (coex : cmd -> AEP -> leakage -> trace -> mem -> locals -> metrics -> Prop).
+      Inductive diverging :=
+      | no
+      | want_to_step
+      | stepped.
+      Definition step (d : diverging) :=
+        match d with
+        | no => no
+        | want_to_step => stepped
+        | stepped => stepped
+        end.
 
-  Implicit Types post : bool -> AEP -> leakage -> trace -> mem -> locals -> metrics -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
+  Implicit Types post : diverging -> bool -> AEP -> leakage -> trace -> mem -> locals -> metrics -> Prop. (* COQBUG: unification finds Type instead of Prop and fails to downgrade *)
   Inductive exec {pick_sp: PickSp} :
-    cmd -> bool -> AEP -> leakage -> trace -> mem -> locals -> metrics ->
-    (bool -> AEP -> leakage -> trace -> mem -> locals -> metrics -> Prop) -> Prop :=
+    cmd -> diverging -> bool -> AEP -> leakage -> trace -> mem -> locals -> metrics ->
+    (diverging -> bool -> AEP -> leakage -> trace -> mem -> locals -> metrics -> Prop) -> Prop :=
   | skip
-    aep k t m l mc post
-    (_ : post true aep k t m l mc)
-    : exec cmd.skip true aep k t m l mc post
+    d aep k t m l mc post
+    (_ : post (step d) true aep k t m l mc)
+    : exec cmd.skip d true aep k t m l mc post
   | set x e
-    aep k t m l mc post
+    aep d k t m l mc post
     v k' mc' (_ : eval_expr m l e k mc = Some (v, k', mc'))
-    (_ : post true aep k' t m (map.put l x v) (cost_set isRegStr x UNK mc'))
-    : exec (cmd.set x e) true aep k t m l mc post
+    (_ : post d true aep k' t m (map.put l x v) (cost_set isRegStr x UNK mc'))
+    : exec (cmd.set x e) d true aep k t m l mc post
   | unset x
-    aep k t m l mc post
-    (_ : post true aep k t m (map.remove l x) mc)
-    : exec (cmd.unset x) true aep k t m l mc post
+    d aep k t m l mc post
+    (_ : post d true aep k t m (map.remove l x) mc)
+    : exec (cmd.unset x) d true aep k t m l mc post
   | store sz ea ev
-    aep k t m l mc post
+    d aep k t m l mc post
     a k' mc' (_ : eval_expr m l ea k mc = Some (a, k', mc'))
     v k'' mc'' (_ : eval_expr m l ev k' mc' = Some (v, k'', mc''))
     m' (_ : store sz m a v = Some m')
-    (_ : post true aep (leak_word a :: k'') t m' l (cost_store isRegStr UNK UNK mc''))
-    : exec (cmd.store sz ea ev) true aep k t m l mc post
+    (_ : post d true aep (leak_word a :: k'') t m' l (cost_store isRegStr UNK UNK mc''))
+    : exec (cmd.store sz ea ev) d true aep k t m l mc post
   | stackalloc x n body
-    aep k t mSmall l mc post
+    d aep k t mSmall l mc post
     (_ : Z.modulo n (bytes_per_word width) = 0)
     (_ : forall mStack mCombined,
         let a := pick_sp k in
         anybytes a n mStack ->
         map.split mCombined mSmall mStack ->
-        exec body true aep (leak_unit :: k) t mCombined (map.put l x a) (cost_stackalloc isRegStr x mc)
-          (fun q' aep' k' t' mCombined' l' mc' =>
+        exec body d true aep (leak_unit :: k) t mCombined (map.put l x a) (cost_stackalloc isRegStr x mc)
+          (fun d' q' aep' k' t' mCombined' l' mc' =>
              if q' then
                exists mSmall' mStack',
                  anybytes a n mStack' /\
                    map.split mCombined' mSmall' mStack' /\
-                   post q' aep' k' t' mSmall' l' mc'
-             else post q' aep' k' t' mCombined' l' mc'))
-     : exec (cmd.stackalloc x n body) true aep k t mSmall l mc post
-  | if_true aep k t m l mc e c1 c2 post
+                   post d' q' aep' k' t' mSmall' l' mc'
+             else post d' q' aep' k' t' mCombined' l' mc'))
+     : exec (cmd.stackalloc x n body) d true aep k t mSmall l mc post
+  | if_true d aep k t m l mc e c1 c2 post
     v k' mc' (_ : eval_expr m l e k mc = Some (v, k', mc'))
     (_ : word.unsigned v <> 0)
-    (_ : exec c1 true aep (leak_bool true :: k') t m l (cost_if isRegStr UNK (Some UNK) mc') post)
-    : exec (cmd.cond e c1 c2) true aep k t m l mc post
+    (_ : exec c1 d true aep (leak_bool true :: k') t m l (cost_if isRegStr UNK (Some UNK) mc') post)
+    : exec (cmd.cond e c1 c2) d true aep k t m l mc post
   | if_false e c1 c2
-    aep k t m l mc post
+    d aep k t m l mc post
     v k' mc' (_ : eval_expr m l e k mc = Some (v, k', mc'))
     (_ : word.unsigned v = 0)
-    (_ : exec c2 true aep (leak_bool false :: k') t m l (cost_if isRegStr UNK (Some UNK) mc') post)
-    : exec (cmd.cond e c1 c2) true aep k t m l mc post
+    (_ : exec c2 d true aep (leak_bool false :: k') t m l (cost_if isRegStr UNK (Some UNK) mc') post)
+    : exec (cmd.cond e c1 c2) d true aep k t m l mc post
   | seq c1 c2
-    aep k t m l mc post
-    mid (_ : exec c1 true aep k t m l mc mid)
-    (_ : forall q' aep' k' t' m' l' mc', mid q' aep' k' t' m' l' mc' -> exec c2 q' aep' k' t' m' l' mc' post)
-    : exec (cmd.seq c1 c2) true aep k t m l mc post
+    d aep k t m l mc post
+    mid (_ : exec c1 d true aep k t m l mc mid)
+    (_ : forall d' q' aep' k' t' m' l' mc', mid d' q' aep' k' t' m' l' mc' -> exec c2 d' q' aep' k' t' m' l' mc' post)
+    : exec (cmd.seq c1 c2) d true aep k t m l mc post
   | while_false e c
-    aep k t m l mc post
+    d aep k t m l mc post
     v k' mc' (_ : eval_expr m l e k mc = Some (v, k', mc'))
     (_ : word.unsigned v = 0)
-    (_ : post true aep (leak_bool false :: k') t m l (cost_loop_false isRegStr UNK (Some UNK) mc'))
-    : exec (cmd.while e c) true aep k t m l mc post
+    (_ : post d true aep (leak_bool false :: k') t m l (cost_loop_false isRegStr UNK (Some UNK) mc'))
+    : exec (cmd.while e c) d true aep k t m l mc post
   | while_true e c
-      aep k t m l mc post
+      d aep k t m l mc post
       v k' mc' (_ : eval_expr m l e k mc = Some (v, k', mc'))
       (_ : word.unsigned v <> 0)
-      mid (_ : exec c true aep (leak_bool true :: k') t m l mc' mid)
-      (_ : forall q' aep' k'' t' m' l' mc'',
-          mid q' aep' k'' t' m' l' mc'' ->
-          exec (cmd.while e c) q' aep' k'' t' m' l' (cost_loop_true isRegStr UNK (Some UNK) mc'') post)
-    : exec (cmd.while e c) true aep k t m l mc post
+      mid (_ : exec c d true aep (leak_bool true :: k') t m l mc' mid)
+      (_ : forall d' q' aep' k'' t' m' l' mc'',
+          mid d' q' aep' k'' t' m' l' mc'' ->
+          exec (cmd.while e c) d' q' aep' k'' t' m' l' (cost_loop_true isRegStr UNK (Some UNK) mc'') post)
+    : exec (cmd.while e c) d true aep k t m l mc post
   | call binds fname arges
-      aep k t m l mc post
+      d aep k t m l mc post
       params rets fbody (_ : map.get e fname = Some (params, rets, fbody))
       args k' mc' (_ : eval_call_args m l arges k mc = Some (args, k', mc'))
       lf (_ : map.of_list_zip params args = Some lf)
-      mid (_ : exec fbody true aep (leak_unit :: k') t m lf mc' mid)
-      (_ : forall q' aep' k'' t' m' st1 mc'',
-          mid q' aep' k'' t' m' st1 mc'' ->
+      mid (_ : exec fbody d true aep (leak_unit :: k') t m lf mc' mid)
+      (_ : forall d' q' aep' k'' t' m' st1 mc'',
+          mid d' q' aep' k'' t' m' st1 mc'' ->
           if q' then
             exists retvs, map.getmany_of_list st1 rets = Some retvs /\
                        exists l', map.putmany_of_list_zip binds retvs l = Some l' /\
-                               post true aep' k'' t' m' l'  (cost_call PreSpill mc'')
-          else post q' aep' k'' t' m' st1 (cost_call PreSpill mc''))
-    : exec (cmd.call binds fname arges) true aep k t m l mc post
+                               post d' true aep' k'' t' m' l'  (cost_call PreSpill mc'')
+          else post d' q' aep' k'' t' m' st1 (cost_call PreSpill mc''))
+    : exec (cmd.call binds fname arges) d true aep k t m l mc post
   | interact binds action arges
-      aep k t m l mc post
+      d aep k t m l mc post
       mKeep mGive (_: map.split m mKeep mGive)
       args k' mc' (_ :  eval_call_args m l arges k mc = Some (args, k', mc'))
       mid (_ : ext_spec t mGive action args mid)
       (_ : forall mReceive resvals klist, mid mReceive resvals klist ->
           exists l', map.putmany_of_list_zip binds resvals l = Some l' /\
           forall m', map.split m' mKeep mReceive ->
-          post true aep (leak_list klist :: k') (cons ((mGive, action, args), (mReceive, resvals)) t) m' l'
+          post d true aep (leak_list klist :: k') (cons ((mGive, action, args), (mReceive, resvals)) t) m' l'
             (cost_interact PreSpill mc'))
-    : exec (cmd.interact binds action arges) true aep k t m l mc post
-  | quit s q aep k t m l mc post
-      (_ : post false aep k t m l mc)
-    : exec s q aep k t m l mc post
-  | exec_A s aep k t m l mc post
-      (_ : forall x, exec s true (aep x) k t m l mc post)
-    : exec s true (AEP_A aep) k t m l mc post
-  | exec_E s aep k t m l mc post x
-      (_ : exec s true (aep x) k t m l mc post)
-    : exec s true (AEP_E aep) k t m l mc post
+    : exec (cmd.interact binds action arges) d true aep k t m l mc post
+  | quit s q d aep k t m l mc post
+      (_ : post d false aep k t m l mc)
+    : exec s d q aep k t m l mc post
+  | exec_A s d aep k t m l mc post
+      (_ : forall x, exec s d true (aep x) k t m l mc post)
+    : exec s d true (AEP_A aep) k t m l mc post
+  | exec_E s d aep k t m l mc post x
+      (_ : exec s d true (aep x) k t m l mc post)
+    : exec s d true (AEP_E aep) k t m l mc post
+  | start_diverging s aep k t m l mc post
+      (_ : exec s stepped true aep k t m l mc post)
+      (_ : forall q' aep' k' t' m' l' mc', post stepped q' aep' k' t' m' l' mc')
+    : exec s no true aep k t m l mc post
+  | diverge s aep k t m l mc post
+      (_ : coex s aep k t m l mc)
+    : exec s stepped true aep k t m l mc post
   .
+  End Coex.
 
+    CoInductive coex {pick_sp: PickSp} : (cmd -> AEP -> leakage -> trace -> mem -> locals -> MetricLog -> Prop)  :=
+    | coex_intro : forall s aep k t m l mc,
+        exec coex s want_to_step true aep k t m l mc (fun _ _ _ _ _ _ _ _ => False) ->
+        coex s aep k t m l mc.
+
+    Check exec. Print expr.
+    Lemma div {pick_sp: PickSp} aep k t m l mc post :
+      word.unsigned (word := word) (word.of_Z 1) <> 0 ->
+      (forall q' aep' k' t' m' l' mc', post stepped q' aep' k' t' m' l' mc') ->
+      exec coex (cmd.while (expr.literal 1) cmd.skip) no true aep k t m l mc post.
+    Proof.
+      intros H1 H2. apply start_diverging. 2: assumption.
+      clear H2. apply diverge. revert aep k t m l mc.
+      Guarded. cofix H. constructor. eapply while_true. 1: reflexivity.
+      1: congruence. 2: intros * H'; exact H'. constructor.
+      simpl. apply diverge. apply H. Show Proof.
+    Qed.
+
+    
+
+    
+  
   Context {word_ok: word.ok word} {mem_ok: map.ok mem} {ext_spec_ok: ext_spec.ok ext_spec}.
 
   Lemma seq_cps {pick_sp: PickSp} : forall s1 s2 aep k t m (l: locals) mc post,
